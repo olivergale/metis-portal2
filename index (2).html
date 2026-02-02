@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metis Portal</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            surface: { 
+              bg: '#2b2a27',
+              sidebar: '#242320',
+              card: '#353430',
+              hover: '#3d3c37'
+            },
+            text: {
+              primary: '#ececec',
+              secondary: '#a8a8a8',
+              muted: '#777777'
+            },
+            accent: { 
+              primary: '#d4a574',
+              hover: '#e0b88a',
+              muted: '#8b7355'
+            },
+            border: '#444340'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    
+    /* Prose styling for assistant messages - warm dark theme */
+    .prose { color: #ececec; line-height: 1.75; font-size: 15px; }
+    .prose h1, .prose h2, .prose h3, .prose h4 { color: #ffffff; font-weight: 600; margin-top: 1.25em; margin-bottom: 0.5em; }
+    .prose h1 { font-size: 1.375em; }
+    .prose h2 { font-size: 1.2em; }
+    .prose h3 { font-size: 1.1em; }
+    .prose p { margin: 0.625em 0; }
+    .prose ul, .prose ol { padding-left: 1.25em; margin: 0.625em 0; }
+    .prose li { margin: 0.25em 0; }
+    .prose ul { list-style-type: disc; }
+    .prose ol { list-style-type: decimal; }
+    .prose strong { color: #ffffff; font-weight: 600; }
+    .prose em { font-style: italic; color: #d4d4d4; }
+    .prose a { color: #d4a574; text-decoration: underline; }
+    .prose a:hover { color: #e0b88a; }
+    .prose blockquote { border-left: 3px solid #d4a574; padding-left: 1em; margin: 1em 0; color: #a8a8a8; font-style: italic; background: #353430; padding: 0.75em 1em; border-radius: 0 6px 6px 0; }
+    .prose hr { border-color: #444340; margin: 1.5em 0; }
+    .prose code { background: #3d3c37; padding: 2px 6px; border-radius: 4px; font-size: 0.875em; color: #e0b88a; }
+    .prose pre { margin: 1em 0; padding: 0; background: transparent; }
+    .prose pre code { padding: 1rem; display: block; overflow-x: auto; background: #1a1918; color: #d4d4d4; border-radius: 8px; font-size: 13px; border: 1px solid #333230; }
+    
+    .copy-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; }
+    .code-block:hover .copy-btn { opacity: 1; }
+    
+    .prose table { border-collapse: collapse; margin: 1rem 0; width: 100%; }
+    .prose th, .prose td { border: 1px solid #444340; padding: 8px 12px; text-align: left; }
+    .prose th { background: #353430; font-weight: 600; color: #ffffff; }
+    .prose td { color: #d4d4d4; }
+    
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #555550; border-radius: 3px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #666660; }
+    
+    /* Smooth transitions */
+    .sidebar-transition { transition: width 0.2s ease, opacity 0.2s ease; }
+    
+    /* Input focus ring */
+    .input-focus:focus { outline: none; box-shadow: 0 0 0 2px rgba(212, 165, 116, 0.3); border-color: #d4a574; }
+    
+    /* Message animations */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .message-animate { animation: fadeIn 0.2s ease-out; }
+    
+    /* Custom scrollbar for main content */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #2b2a27; }
+    ::-webkit-scrollbar-thumb { background: #4a4945; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #5a5955; }
+  </style>
+</head>
+<body class="bg-surface-bg text-text-primary">
+  <div id="root"></div>
+  <script>
+    var e = React.createElement;
+    var useState = React.useState;
+    var useEffect = React.useEffect;
+    var useRef = React.useRef;
+    
+    var SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
+    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc5NDI5MzYsImV4cCI6MjA1MzUxODkzNn0.kPykOvy2rXy1B9gHrWmQ6ArBq0VqdZdhNfpU20J3vvU';
+    var LANGFUSE_URL = 'https://us.cloud.langfuse.com';
+
+    function MessageContent(props) {
+      var content = props.content;
+      var containerRef = useRef(null);
+      
+      useEffect(function() {
+        if (containerRef.current && content) {
+          marked.setOptions({
+            highlight: function(code, lang) {
+              if (lang && hljs.getLanguage(lang)) {
+                return hljs.highlight(code, { language: lang }).value;
+              }
+              return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true
+          });
+          
+          containerRef.current.innerHTML = marked.parse(content);
+          
+          containerRef.current.querySelectorAll('pre').forEach(function(pre) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'code-block relative';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+            
+            var btn = document.createElement('button');
+            btn.className = 'copy-btn absolute bg-charcoal-700 hover:bg-charcoal-800 text-white text-xs px-2 py-1 rounded';
+            btn.textContent = 'Copy';
+            btn.onclick = function() {
+              navigator.clipboard.writeText(pre.textContent);
+              btn.textContent = 'Copied!';
+              setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+            };
+            wrapper.appendChild(btn);
+          });
+        }
+      }, [content]);
+      
+      return e('div', { ref: containerRef, className: 'prose max-w-none' });
+    }
+
+    function App() {
+      var threadsState = useState([]);
+      var threads = threadsState[0];
+      var setThreads = threadsState[1];
+      
+      var currentThreadState = useState(null);
+      var currentThread = currentThreadState[0];
+      var setCurrentThread = currentThreadState[1];
+      
+      var messagesState = useState([]);
+      var messages = messagesState[0];
+      var setMessages = messagesState[1];
+      
+      var inputState = useState('');
+      var input = inputState[0];
+      var setInput = inputState[1];
+      
+      var loadingState = useState(false);
+      var loading = loadingState[0];
+      var setLoading = loadingState[1];
+      
+      var projectCodeState = useState('METIS-001');
+      var projectCode = projectCodeState[0];
+      var setProjectCode = projectCodeState[1];
+      
+      var statsState = useState({ directives: 0, cost: 0, tokens: 0 });
+      var stats = statsState[0];
+      var setStats = statsState[1];
+      
+      var lastContextState = useState(null);
+      var lastContext = lastContextState[0];
+      var setLastContext = lastContextState[1];
+      
+      var observabilityState = useState(null);
+      var observability = observabilityState[0];
+      var setObservability = observabilityState[1];
+      
+      var sidebarOpenState = useState(true);
+      var sidebarOpen = sidebarOpenState[0];
+      var setSidebarOpen = sidebarOpenState[1];
+      
+      var messagesEndRef = useRef(null);
+
+      function loadThreads() {
+        fetch(SUPABASE_URL + '/functions/v1/portal-threads')
+          .then(function(res) { return res.json(); })
+          .then(function(data) { setThreads(data.threads || []); })
+          .catch(function(err) { console.error('Failed to load threads:', err); });
+      }
+
+      function loadThread(threadId) {
+        fetch(SUPABASE_URL + '/rest/v1/thread_messages?thread_id=eq.' + threadId + '&order=created_at.asc', {
+          headers: { 'apikey': SUPABASE_ANON_KEY }
+        })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            setMessages(data.map(function(m) {
+              return {
+                role: m.role,
+                content: m.content,
+                tokens: (m.input_tokens || 0) + (m.output_tokens || 0),
+                cost: m.cost_usd,
+                model: m.model_used,
+                trace_id: m.trace_id
+              };
+            }));
+            setCurrentThread(threadId);
+            
+            var thread = threads.find(function(t) { return t.id === threadId; });
+            if (thread) {
+              setStats(function(prev) {
+                return {
+                  directives: prev.directives,
+                  cost: parseFloat(thread.total_cost_usd) || 0,
+                  tokens: thread.total_tokens || 0
+                };
+              });
+            }
+          })
+          .catch(function(err) { console.error('Failed to load thread:', err); });
+      }
+
+      function sendMessage(evt) {
+        evt.preventDefault();
+        if (!input.trim() || loading) return;
+
+        var userMessage = input.trim();
+        setInput('');
+        setLoading(true);
+
+        setMessages(function(prev) {
+          return prev.concat([{ role: 'user', content: userMessage }]);
+        });
+
+        fetch(SUPABASE_URL + '/functions/v1/portal-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: userMessage,
+            thread_id: currentThread,
+            project_code: projectCode
+          })
+        })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.error) {
+              setMessages(function(prev) {
+                return prev.concat([{ role: 'error', content: data.error }]);
+              });
+            } else {
+              if (!currentThread && data.thread_id) {
+                setCurrentThread(data.thread_id);
+                loadThreads();
+              }
+              
+              setMessages(function(prev) {
+                return prev.concat([{
+                  role: 'assistant',
+                  content: data.message,
+                  tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+                  cost: data.usage?.cost_usd,
+                  latency: data.usage?.latency_ms,
+                  llm_latency: data.usage?.llm_latency_ms,
+                  trace_id: data.observability?.trace_id
+                }]);
+              });
+
+              setStats({
+                directives: data.context?.directives_applied || 0,
+                cost: stats.cost + (data.usage?.cost_usd || 0),
+                tokens: stats.tokens + (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+              });
+              
+              setLastContext(data.context);
+              setObservability(data.observability);
+            }
+          })
+          .catch(function(err) {
+            setMessages(function(prev) {
+              return prev.concat([{ role: 'error', content: 'Request failed: ' + err.message }]);
+            });
+          })
+          .finally(function() {
+            setLoading(false);
+          });
+      }
+
+      function newThread() {
+        setCurrentThread(null);
+        setMessages([]);
+        setStats({ directives: 0, cost: 0, tokens: 0 });
+        setLastContext(null);
+        setObservability(null);
+      }
+
+      useEffect(function() {
+        loadThreads();
+      }, []);
+
+      useEffect(function() {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [messages]);
+
+      return e('div', { className: 'h-screen flex bg-cream-50' },
+        // Sidebar
+        e('div', { 
+          className: 'sidebar-transition flex flex-col bg-cream-100 border-r border-cream-300 ' + (sidebarOpen ? 'w-72' : 'w-0 overflow-hidden')
+        },
+          // Header
+          e('div', { className: 'p-4 border-b border-cream-300' },
+            e('div', { className: 'flex items-center gap-2 mb-4' },
+              e('div', { className: 'w-8 h-8 rounded-lg bg-accent-500 flex items-center justify-center' },
+                e('span', { className: 'text-white font-semibold text-sm' }, 'M')
+              ),
+              e('span', { className: 'text-lg font-semibold text-charcoal-800' }, 'Metis')
+            ),
+            e('button', {
+              onClick: newThread,
+              className: 'w-full bg-charcoal-800 hover:bg-charcoal-900 text-cream-50 py-2.5 px-4 rounded-lg font-medium text-sm transition-colors'
+            }, 'New conversation')
+          ),
+          // Project selector
+          e('div', { className: 'p-4 border-b border-cream-300' },
+            e('label', { className: 'text-xs font-medium text-charcoal-700 block mb-1.5' }, 'Project'),
+            e('select', {
+              value: projectCode,
+              onChange: function(evt) { setProjectCode(evt.target.value); },
+              className: 'w-full bg-white border border-cream-300 rounded-lg px-3 py-2 text-sm input-focus'
+            },
+              e('option', { value: 'METIS-001' }, 'METIS-001'),
+              e('option', { value: 'ILMARINEN-001' }, 'ILMARINEN-001')
+            )
+          ),
+          // Thread list
+          e('div', { className: 'flex-1 overflow-y-auto scrollbar-thin p-3' },
+            e('div', { className: 'text-xs font-medium text-charcoal-700 px-2 mb-2 uppercase tracking-wide' }, 'History'),
+            threads.map(function(t) {
+              return e('button', {
+                key: t.id,
+                onClick: function() { loadThread(t.id); },
+                className: 'w-full text-left px-3 py-2.5 rounded-lg mb-1 text-sm transition-colors ' + 
+                  (currentThread === t.id ? 'bg-cream-200 text-charcoal-900' : 'text-charcoal-700 hover:bg-cream-200/50')
+              },
+                e('div', { className: 'truncate font-medium' }, t.title || 'Untitled'),
+                e('div', { className: 'text-xs text-charcoal-700/60 mt-0.5' }, t.message_count + ' messages')
+              );
+            })
+          ),
+          // Stats footer
+          e('div', { className: 'p-4 border-t border-cream-300 bg-cream-100/50' },
+            e('div', { className: 'text-xs text-charcoal-700 space-y-1' },
+              e('div', { className: 'flex justify-between' },
+                e('span', null, 'Directives'),
+                e('span', { className: 'font-medium text-green-700' }, stats.directives + ' active')
+              ),
+              e('div', { className: 'flex justify-between' },
+                e('span', null, 'Session cost'),
+                e('span', { className: 'font-medium' }, '$' + stats.cost.toFixed(4))
+              ),
+              e('div', { className: 'flex justify-between' },
+                e('span', null, 'Tokens'),
+                e('span', { className: 'font-medium' }, stats.tokens.toLocaleString())
+              )
+            ),
+            observability && observability.trace_id && e('a', {
+              href: LANGFUSE_URL + '/trace/' + observability.trace_id,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              className: 'block mt-3 text-xs text-accent-600 hover:text-accent-500 font-medium'
+            }, 'View trace in Langfuse →')
+          )
+        ),
+        // Main content
+        e('div', { className: 'flex-1 flex flex-col bg-white' },
+          // Header bar
+          e('div', { className: 'h-14 border-b border-cream-200 flex items-center px-4 gap-4 bg-white' },
+            e('button', {
+              onClick: function() { setSidebarOpen(!sidebarOpen); },
+              className: 'text-charcoal-700 hover:text-charcoal-900 p-1'
+            },
+              e('svg', { className: 'w-5 h-5', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' },
+                e('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 1.5, d: 'M4 6h16M4 12h16M4 18h16' })
+              )
+            ),
+            e('div', { className: 'flex-1' }),
+            lastContext && e('div', { className: 'flex gap-3 text-xs' },
+              lastContext.memory_recalled && e('span', { 
+                className: 'inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-100 text-purple-700'
+              }, 
+                e('svg', { className: 'w-3 h-3', fill: 'currentColor', viewBox: '0 0 20 20' },
+                  e('path', { d: 'M10 2a8 8 0 100 16 8 8 0 000-16zm0 14a6 6 0 110-12 6 6 0 010 12z' })
+                ),
+                'Memory'
+              ),
+              lastContext.work_order_created && e('span', { 
+                className: 'inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700'
+              },
+                e('svg', { className: 'w-3 h-3', fill: 'currentColor', viewBox: '0 0 20 20' },
+                  e('path', { fillRule: 'evenodd', d: 'M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6z', clipRule: 'evenodd' })
+                ),
+                lastContext.work_order_created
+              )
+            )
+          ),
+          // Messages area
+          e('div', { className: 'flex-1 overflow-y-auto scrollbar-thin' },
+            e('div', { className: 'max-w-3xl mx-auto px-4 py-6' },
+              messages.length === 0 && e('div', { className: 'h-96 flex items-center justify-center' },
+                e('div', { className: 'text-center' },
+                  e('div', { className: 'w-16 h-16 rounded-2xl bg-accent-500 flex items-center justify-center mx-auto mb-4' },
+                    e('span', { className: 'text-white font-bold text-2xl' }, 'M')
+                  ),
+                  e('h2', { className: 'text-xl font-semibold text-charcoal-800 mb-2' }, 'Metis Portal'),
+                  e('p', { className: 'text-charcoal-700/70 text-sm max-w-sm' }, 
+                    'AI orchestration with enforced directives, memory recall, and work order tracking.'
+                  ),
+                  e('p', { className: 'text-charcoal-700/50 text-xs mt-4' }, 'Observability by Langfuse')
+                )
+              ),
+              messages.map(function(msg, i) {
+                return e('div', {
+                  key: i,
+                  className: 'mb-6 message-animate'
+                },
+                  msg.role === 'user' ? (
+                    e('div', { className: 'flex justify-end' },
+                      e('div', { className: 'bg-charcoal-800 text-cream-50 rounded-2xl rounded-tr-sm px-4 py-3 max-w-2xl' },
+                        e('div', { className: 'whitespace-pre-wrap text-sm' }, msg.content)
+                      )
+                    )
+                  ) : msg.role === 'error' ? (
+                    e('div', { className: 'bg-red-50 border border-red-200 rounded-xl p-4' },
+                      e('div', { className: 'text-red-700 text-sm' }, msg.content)
+                    )
+                  ) : (
+                    e('div', { className: 'flex gap-3' },
+                      e('div', { className: 'w-8 h-8 rounded-lg bg-accent-500 flex items-center justify-center flex-shrink-0 mt-1' },
+                        e('span', { className: 'text-white font-semibold text-xs' }, 'M')
+                      ),
+                      e('div', { className: 'flex-1 min-w-0' },
+                        e('div', { className: 'bg-cream-50 rounded-2xl rounded-tl-sm px-5 py-4' },
+                          e(MessageContent, { content: msg.content })
+                        ),
+                        (msg.tokens || msg.latency || msg.trace_id) && e('div', {
+                          className: 'mt-2 px-2 text-xs text-charcoal-700/50 flex gap-3 flex-wrap'
+                        },
+                          msg.tokens > 0 && e('span', null, msg.tokens.toLocaleString() + ' tokens'),
+                          msg.cost > 0 && e('span', null, '$' + parseFloat(msg.cost).toFixed(4)),
+                          msg.latency > 0 && e('span', null, (msg.latency / 1000).toFixed(1) + 's'),
+                          msg.trace_id && e('a', {
+                            href: LANGFUSE_URL + '/trace/' + msg.trace_id,
+                            target: '_blank',
+                            rel: 'noopener noreferrer',
+                            className: 'text-accent-600 hover:text-accent-500'
+                          }, 'trace')
+                        )
+                      )
+                    )
+                  )
+                );
+              }),
+              loading && e('div', { className: 'mb-6 flex gap-3' },
+                e('div', { className: 'w-8 h-8 rounded-lg bg-accent-500 flex items-center justify-center flex-shrink-0' },
+                  e('span', { className: 'text-white font-semibold text-xs' }, 'M')
+                ),
+                e('div', { className: 'bg-cream-50 rounded-2xl rounded-tl-sm px-5 py-4' },
+                  e('div', { className: 'flex items-center gap-1' },
+                    e('span', { className: 'w-2 h-2 bg-charcoal-700/40 rounded-full animate-bounce', style: { animationDelay: '0ms' } }),
+                    e('span', { className: 'w-2 h-2 bg-charcoal-700/40 rounded-full animate-bounce', style: { animationDelay: '150ms' } }),
+                    e('span', { className: 'w-2 h-2 bg-charcoal-700/40 rounded-full animate-bounce', style: { animationDelay: '300ms' } })
+                  )
+                )
+              ),
+              e('div', { ref: messagesEndRef })
+            )
+          ),
+          // Input area
+          e('div', { className: 'border-t border-cream-200 bg-white p-4' },
+            e('div', { className: 'max-w-3xl mx-auto' },
+              e('form', { onSubmit: sendMessage, className: 'flex gap-3' },
+                e('input', {
+                  type: 'text',
+                  value: input,
+                  onChange: function(evt) { setInput(evt.target.value); },
+                  placeholder: 'Message Metis...',
+                  className: 'flex-1 bg-cream-50 border border-cream-300 rounded-xl px-4 py-3 text-sm input-focus',
+                  disabled: loading
+                }),
+                e('button', {
+                  type: 'submit',
+                  disabled: loading || !input.trim(),
+                  className: 'bg-charcoal-800 hover:bg-charcoal-900 disabled:bg-cream-300 disabled:text-charcoal-700/50 text-cream-50 px-5 py-3 rounded-xl font-medium text-sm transition-colors'
+                }, 
+                  e('svg', { className: 'w-5 h-5', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' },
+                    e('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2, d: 'M14 5l7 7m0 0l-7 7m7-7H3' })
+                  )
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+  </script>
+</body>
+</html>
