@@ -1,416 +1,1232 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Metis Portal</title>
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-  <style>
-    .prose { color: #e5e7eb; line-height: 1.75; }
-    .prose h1, .prose h2, .prose h3, .prose h4 { color: #f3f4f6; font-weight: 600; margin-top: 1.5em; margin-bottom: 0.5em; }
-    .prose h1 { font-size: 1.5em; }
-    .prose h2 { font-size: 1.25em; }
-    .prose h3 { font-size: 1.1em; }
-    .prose p { margin: 0.75em 0; }
-    .prose ul, .prose ol { padding-left: 1.5em; margin: 0.75em 0; }
-    .prose li { margin: 0.25em 0; }
-    .prose ul { list-style-type: disc; }
-    .prose ol { list-style-type: decimal; }
-    .prose strong { color: #f9fafb; font-weight: 600; }
-    .prose em { font-style: italic; }
-    .prose a { color: #60a5fa; text-decoration: underline; }
-    .prose blockquote { border-left: 3px solid #4b5563; padding-left: 1em; margin: 1em 0; color: #9ca3af; }
-    .prose hr { border-color: #374151; margin: 1.5em 0; }
-    .prose pre { margin: 0; padding: 0; background: transparent; }
-    .prose code { background: #1e1e1e; padding: 2px 6px; border-radius: 4px; font-size: 0.875em; }
-    .prose pre code { padding: 1rem; display: block; overflow-x: auto; background: #0d1117; border-radius: 8px; }
-    .copy-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; }
-    .code-block:hover .copy-btn { opacity: 1; }
-    .message-content table { border-collapse: collapse; margin: 1rem 0; }
-    .message-content th, .message-content td { border: 1px solid #374151; padding: 8px 12px; }
-    .message-content th { background: #1f2937; }
-    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
-    .scrollbar-thin::-webkit-scrollbar-track { background: #1f2937; }
-    .scrollbar-thin::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>METIS Portal</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* ============================================
+           METIS Portal - Claude-Style Warm Dark Theme
+           Theme Colors:
+           - Background: #2b2a27 (warm charcoal)
+           - Surface: #343330 (elevated surface)
+           - Border: #4a4843 (subtle borders)
+           - Text Primary: #ececec (soft white)
+           - Text Secondary: #a8a8a3 (muted)
+           - Accent: #d4a574 (warm gold)
+           - Accent Hover: #e0b88a
+           - Success: #7cb386
+           - Error: #d4746a
+           ============================================ */
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #2b2a27;
+            --bg-surface: #343330;
+            --bg-elevated: #3d3c38;
+            --bg-input: #252422;
+            --border-subtle: #4a4843;
+            --border-strong: #5a5853;
+            --text-primary: #ececec;
+            --text-secondary: #a8a8a3;
+            --text-muted: #7a7a75;
+            --accent: #d4a574;
+            --accent-hover: #e0b88a;
+            --accent-muted: rgba(212, 165, 116, 0.15);
+            --success: #7cb386;
+            --error: #d4746a;
+            --code-bg: #1e1d1b;
+            --scrollbar-track: #2b2a27;
+            --scrollbar-thumb: #4a4843;
+        }
+
+        html, body {
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--scrollbar-track);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-strong);
+        }
+
+        /* ============================================
+           Layout - Centered Container
+           ============================================ */
+
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ============================================
+           Header
+           ============================================ */
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            flex-shrink: 0;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            color: var(--bg-primary);
+        }
+
+        .logo-text {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .logo-version {
+            font-size: 12px;
+            color: var(--text-muted);
+            background: var(--bg-surface);
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-left: 8px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+
+        .status-dot.offline {
+            background: var(--error);
+        }
+
+        .header-btn {
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .header-btn:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        /* ============================================
+           Chat Container
+           ============================================ */
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 24px 0;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .message-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .message-avatar.user {
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+        }
+
+        .message-avatar.assistant {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            color: var(--bg-primary);
+        }
+
+        .message-role {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .message-time {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .message-content {
+            padding-left: 38px;
+            color: var(--text-primary);
+            font-size: 15px;
+            line-height: 1.7;
+        }
+
+        /* ============================================
+           Markdown Rendering
+           ============================================ */
+
+        .message-content h1,
+        .message-content h2,
+        .message-content h3 {
+            margin-top: 20px;
+            margin-bottom: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .message-content h1 { font-size: 1.5em; }
+        .message-content h2 { font-size: 1.3em; }
+        .message-content h3 { font-size: 1.1em; }
+
+        .message-content p {
+            margin-bottom: 12px;
+        }
+
+        .message-content ul,
+        .message-content ol {
+            margin-bottom: 12px;
+            padding-left: 24px;
+        }
+
+        .message-content li {
+            margin-bottom: 6px;
+        }
+
+        .message-content code {
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 0.9em;
+            color: var(--accent);
+        }
+
+        .message-content pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 16px;
+            margin: 12px 0;
+            overflow-x: auto;
+        }
+
+        .message-content pre code {
+            background: none;
+            padding: 0;
+            color: var(--text-primary);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .message-content blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 16px;
+            margin: 12px 0;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .message-content a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .message-content a:hover {
+            text-decoration: underline;
+        }
+
+        .message-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+        }
+
+        .message-content th,
+        .message-content td {
+            border: 1px solid var(--border-subtle);
+            padding: 10px 12px;
+            text-align: left;
+        }
+
+        .message-content th {
+            background: var(--bg-surface);
+            font-weight: 600;
+        }
+
+        .message-content hr {
+            border: none;
+            border-top: 1px solid var(--border-subtle);
+            margin: 20px 0;
+        }
+
+        /* ============================================
+           Metadata Display
+           ============================================ */
+
+        .message-meta {
+            margin-top: 12px;
+            padding: 12px 16px;
+            background: var(--bg-surface);
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
+        }
+
+        .meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            font-size: 12px;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-muted);
+        }
+
+        .meta-label {
+            color: var(--text-secondary);
+        }
+
+        .meta-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .meta-value.model {
+            color: var(--accent);
+        }
+
+        .meta-value.cost {
+            color: var(--success);
+        }
+
+        /* ============================================
+           Thinking/Reasoning Display
+           ============================================ */
+
+        .thinking-block {
+            margin-top: 12px;
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .thinking-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: var(--bg-surface);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .thinking-header:hover {
+            background: var(--bg-elevated);
+        }
+
+        .thinking-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .thinking-icon {
+            font-size: 14px;
+        }
+
+        .thinking-toggle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .thinking-content {
+            padding: 14px;
+            background: var(--bg-input);
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            display: none;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .thinking-content.expanded {
+            display: block;
+        }
+
+        /* ============================================
+           Input Area
+           ============================================ */
+
+        .input-area {
+            flex-shrink: 0;
+            padding: 20px 0;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-container {
+            flex: 1;
+            position: relative;
+        }
+
+        .chat-input {
+            width: 100%;
+            min-height: 52px;
+            max-height: 200px;
+            padding: 14px 18px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-size: 15px;
+            font-family: inherit;
+            line-height: 1.5;
+            resize: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-muted);
+        }
+
+        .chat-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .send-btn {
+            width: 52px;
+            height: 52px;
+            background: var(--accent);
+            border: none;
+            border-radius: 12px;
+            color: var(--bg-primary);
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .send-btn:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .send-btn:disabled {
+            background: var(--bg-elevated);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .send-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* ============================================
+           Loading State
+           ============================================ */
+
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 16px 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .loading-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: pulse 1.4s ease-in-out infinite;
+        }
+
+        .loading-dot:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes pulse {
+            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+            40% { opacity: 1; transform: scale(1); }
+        }
+
+        /* ============================================
+           Settings Modal
+           ============================================ */
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            animation: modalIn 0.2s ease;
+        }
+
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.95) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .form-hint {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            padding: 16px 24px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .btn-secondary {
+            padding: 10px 18px;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+
+        .btn-primary {
+            padding: 10px 18px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: var(--bg-primary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        /* ============================================
+           Welcome State
+           ============================================ */
+
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .welcome-icon {
+            width: 72px;
+            height: 72px;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: var(--bg-primary);
+            margin-bottom: 24px;
+        }
+
+        .welcome-title {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+
+        .welcome-subtitle {
+            font-size: 16px;
+            color: var(--text-secondary);
+            max-width: 400px;
+            line-height: 1.6;
+        }
+
+        .welcome-features {
+            display: flex;
+            gap: 24px;
+            margin-top: 32px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .welcome-feature {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .welcome-feature-icon {
+            color: var(--accent);
+        }
+
+        /* ============================================
+           Error State
+           ============================================ */
+
+        .error-message {
+            background: rgba(212, 116, 106, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            padding: 14px 16px;
+            color: var(--error);
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        /* ============================================
+           Responsive
+           ============================================ */
+
+        @media (max-width: 640px) {
+            .app-container {
+                padding: 0 16px;
+            }
+
+            .header {
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+
+            .welcome-features {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .meta-row {
+                flex-direction: column;
+                gap: 8px;
+            }
+        }
+    </style>
 </head>
-<body class="bg-gray-900 text-gray-100">
-  <div id="root"></div>
-  <script>
-    var e = React.createElement;
-    var useState = React.useState;
-    var useEffect = React.useEffect;
-    var useRef = React.useRef;
-    
-    var SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
-    var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc5NDI5MzYsImV4cCI6MjA1MzUxODkzNn0.kPykOvy2rXy1B9gHrWmQ6ArBq0VqdZdhNfpU20J3vvU';
-    var LANGFUSE_URL = 'https://us.cloud.langfuse.com';
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">M</div>
+                <span class="logo-text">METIS</span>
+                <span class="logo-version">v1.0.0</span>
+            </div>
+            <div class="header-actions">
+                <div class="status-indicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Connected</span>
+                </div>
+                <button class="header-btn" onclick="openSettings()">Settings</button>
+                <button class="header-btn" onclick="clearChat()">Clear</button>
+            </div>
+        </header>
 
-    function MessageContent(props) {
-      var content = props.content;
-      var containerRef = useRef(null);
-      
-      useEffect(function() {
-        if (containerRef.current && content) {
-          marked.setOptions({
-            highlight: function(code, lang) {
-              if (lang && hljs.getLanguage(lang)) {
-                return hljs.highlight(code, { language: lang }).value;
-              }
-              return hljs.highlightAuto(code).value;
-            },
-            breaks: true,
-            gfm: true
-          });
-          
-          containerRef.current.innerHTML = marked.parse(content);
-          
-          containerRef.current.querySelectorAll('pre').forEach(function(pre) {
-            var wrapper = document.createElement('div');
-            wrapper.className = 'code-block relative';
-            pre.parentNode.insertBefore(wrapper, pre);
-            wrapper.appendChild(pre);
+        <!-- Chat Container -->
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <!-- Welcome State -->
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">M</div>
+                    <h1 class="welcome-title">Welcome to METIS</h1>
+                    <p class="welcome-subtitle">
+                        Your AI orchestration advisor. Ask questions about strategy, analysis, or let me help route your requests to the right specialized agents.
+                    </p>
+                    <div class="welcome-features">
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Intelligent routing</span>
+                        </div>
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Multi-agent orchestration</span>
+                        </div>
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Quality gates & cost tracking</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <div class="input-wrapper">
+                <div class="input-container">
+                    <textarea 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="Ask METIS anything..."
+                        rows="1"
+                        onkeydown="handleKeyDown(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                </div>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Settings</h2>
+                <button class="modal-close" onclick="closeSettings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">API Endpoint</label>
+                    <input 
+                        type="text" 
+                        class="form-input" 
+                        id="apiEndpoint" 
+                        placeholder="https://your-api-endpoint.com"
+                    >
+                    <p class="form-hint">The METIS orchestration API endpoint</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API Key</label>
+                    <input 
+                        type="password" 
+                        class="form-input" 
+                        id="apiKey" 
+                        placeholder="Enter your API key"
+                    >
+                    <p class="form-hint">Your authentication key for the METIS API</p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Default Model</label>
+                    <select class="form-select" id="defaultModel">
+                        <option value="auto">Auto (Adaptive Routing)</option>
+                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                        <option value="claude-haiku-3-5-20241022">Claude Haiku 3.5</option>
+                        <option value="gpt-4o">GPT-4o</option>
+                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
+                <button class="btn-primary" onclick="saveSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // State
+        // ============================================
+        let isLoading = false;
+        let conversationHistory = [];
+
+        // ============================================
+        // Initialization
+        // ============================================
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            checkConnection();
+            document.getElementById('chatInput').focus();
+        });
+
+        // ============================================
+        // Settings Management
+        // ============================================
+        function loadSettings() {
+            const endpoint = localStorage.getItem('metis_endpoint') || '';
+            const apiKey = localStorage.getItem('metis_apiKey') || '';
+            const model = localStorage.getItem('metis_model') || 'auto';
             
-            var btn = document.createElement('button');
-            btn.className = 'copy-btn absolute bg-gray-700 hover:bg-gray-600 text-xs px-2 py-1 rounded';
-            btn.textContent = 'Copy';
-            btn.onclick = function() {
-              navigator.clipboard.writeText(pre.textContent);
-              btn.textContent = 'Copied!';
-              setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
-            };
-            wrapper.appendChild(btn);
-          });
+            document.getElementById('apiEndpoint').value = endpoint;
+            document.getElementById('apiKey').value = apiKey;
+            document.getElementById('defaultModel').value = model;
         }
-      }, [content]);
-      
-      return e('div', { ref: containerRef, className: 'message-content prose prose-invert max-w-none' });
-    }
 
-    function App() {
-      var threadsState = useState([]);
-      var threads = threadsState[0];
-      var setThreads = threadsState[1];
-      
-      var currentThreadState = useState(null);
-      var currentThread = currentThreadState[0];
-      var setCurrentThread = currentThreadState[1];
-      
-      var messagesState = useState([]);
-      var messages = messagesState[0];
-      var setMessages = messagesState[1];
-      
-      var inputState = useState('');
-      var input = inputState[0];
-      var setInput = inputState[1];
-      
-      var loadingState = useState(false);
-      var loading = loadingState[0];
-      var setLoading = loadingState[1];
-      
-      var projectCodeState = useState('METIS-001');
-      var projectCode = projectCodeState[0];
-      var setProjectCode = projectCodeState[1];
-      
-      var statsState = useState({ directives: 0, cost: 0, tokens: 0 });
-      var stats = statsState[0];
-      var setStats = statsState[1];
-      
-      var lastContextState = useState(null);
-      var lastContext = lastContextState[0];
-      var setLastContext = lastContextState[1];
-      
-      var observabilityState = useState(null);
-      var observability = observabilityState[0];
-      var setObservability = observabilityState[1];
-      
-      var sidebarOpenState = useState(true);
-      var sidebarOpen = sidebarOpenState[0];
-      var setSidebarOpen = sidebarOpenState[1];
-      
-      var messagesEndRef = useRef(null);
+        function saveSettings() {
+            const endpoint = document.getElementById('apiEndpoint').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const model = document.getElementById('defaultModel').value;
 
-      function loadThreads() {
-        fetch(SUPABASE_URL + '/functions/v1/portal-threads')
-          .then(function(res) { return res.json(); })
-          .then(function(data) { setThreads(data.threads || []); })
-          .catch(function(err) { console.error('Failed to load threads:', err); });
-      }
+            localStorage.setItem('metis_endpoint', endpoint);
+            localStorage.setItem('metis_apiKey', apiKey);
+            localStorage.setItem('metis_model', model);
 
-      function loadThread(threadId) {
-        fetch(SUPABASE_URL + '/rest/v1/thread_messages?thread_id=eq.' + threadId + '&order=created_at.asc', {
-          headers: { 'apikey': SUPABASE_ANON_KEY }
-        })
-          .then(function(res) { return res.json(); })
-          .then(function(data) {
-            setMessages(data.map(function(m) {
-              return {
-                role: m.role,
-                content: m.content,
-                tokens: (m.input_tokens || 0) + (m.output_tokens || 0),
-                cost: m.cost_usd,
-                model: m.model_used,
-                trace_id: m.trace_id
-              };
-            }));
-            setCurrentThread(threadId);
-            
-            var thread = threads.find(function(t) { return t.id === threadId; });
-            if (thread) {
-              setStats(function(prev) {
-                return {
-                  directives: prev.directives,
-                  cost: parseFloat(thread.total_cost_usd) || 0,
-                  tokens: thread.total_tokens || 0
-                };
-              });
-            }
-          })
-          .catch(function(err) { console.error('Failed to load thread:', err); });
-      }
+            closeSettings();
+            checkConnection();
+        }
 
-      function sendMessage(evt) {
-        evt.preventDefault();
-        if (!input.trim() || loading) return;
-        
-        var userMessage = input.trim();
-        setInput('');
-        setMessages(function(prev) { return prev.concat([{ role: 'user', content: userMessage }]); });
-        setLoading(true);
-        
-        fetch(SUPABASE_URL + '/functions/v1/portal-chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: userMessage,
-            thread_id: currentThread,
-            project_code: projectCode
-          })
-        })
-          .then(function(res) { return res.json(); })
-          .then(function(data) {
-            if (data.error) {
-              setMessages(function(prev) { return prev.concat([{ role: 'error', content: data.error }]); });
+        function openSettings() {
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        // ============================================
+        // Connection Check
+        // ============================================
+        function checkConnection() {
+            const endpoint = localStorage.getItem('metis_endpoint');
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+
+            if (endpoint) {
+                statusDot.classList.remove('offline');
+                statusText.textContent = 'Connected';
             } else {
-              var usage = data.usage || {};
-              var obs = data.observability || {};
-              setMessages(function(prev) {
-                return prev.concat([{
-                  role: 'assistant',
-                  content: data.message,
-                  tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
-                  cost: usage.cost_usd,
-                  latency: usage.latency_ms,
-                  llm_latency: usage.llm_latency_ms,
-                  trace_id: obs.trace_id
-                }]);
-              });
-              
-              if (!currentThread && data.thread_id) {
-                setCurrentThread(data.thread_id);
-                loadThreads();
-              }
-              
-              setLastContext(data.context);
-              setObservability(data.observability);
-              var ctx = data.context || {};
-              setStats(function(prev) {
-                return {
-                  directives: ctx.directives_applied || prev.directives,
-                  cost: prev.cost + (usage.cost_usd || 0),
-                  tokens: prev.tokens + (usage.input_tokens || 0) + (usage.output_tokens || 0)
-                };
-              });
+                statusDot.classList.add('offline');
+                statusText.textContent = 'Not configured';
             }
-          })
-          .catch(function(err) {
-            setMessages(function(prev) { return prev.concat([{ role: 'error', content: String(err) }]); });
-          })
-          .finally(function() {
-            setLoading(false);
-          });
-      }
-
-      function newThread() {
-        setCurrentThread(null);
-        setMessages([]);
-        setStats({ directives: 0, cost: 0, tokens: 0 });
-        setLastContext(null);
-        setObservability(null);
-      }
-
-      useEffect(function() {
-        loadThreads();
-      }, []);
-
-      useEffect(function() {
-        if (messagesEndRef.current) {
-          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-      }, [messages]);
 
-      return e('div', { className: 'h-screen flex' },
-        // Sidebar
-        e('div', { className: (sidebarOpen ? 'w-72' : 'w-0') + ' transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden' },
-          // Header
-          e('div', { className: 'p-4 border-b border-gray-700' },
-            e('div', { className: 'flex items-center justify-between mb-4' },
-              e('h1', { className: 'text-xl font-bold text-blue-400' }, 'Metis Portal')
-            ),
-            e('button', {
-              onClick: newThread,
-              className: 'w-full bg-blue-600 hover:bg-blue-500 text-white py-2 px-4 rounded-lg'
-            }, '+ New Thread')
-          ),
-          // Project selector
-          e('div', { className: 'p-4 border-b border-gray-700' },
-            e('label', { className: 'text-xs text-gray-400 block mb-1' }, 'Project'),
-            e('select', {
-              value: projectCode,
-              onChange: function(evt) { setProjectCode(evt.target.value); },
-              className: 'w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm'
-            },
-              e('option', { value: 'METIS-001' }, 'METIS-001'),
-              e('option', { value: 'ILMARINEN-001' }, 'ILMARINEN-001')
-            )
-          ),
-          // Thread list
-          e('div', { className: 'flex-1 overflow-y-auto scrollbar-thin p-2' },
-            e('div', { className: 'text-xs text-gray-400 px-2 mb-2' }, 'Recent Threads'),
-            threads.map(function(t) {
-              return e('button', {
-                key: t.id,
-                onClick: function() { loadThread(t.id); },
-                className: 'w-full text-left px-3 py-2 rounded-lg mb-1 text-sm ' + (currentThread === t.id ? 'bg-gray-700' : 'hover:bg-gray-700/50')
-              },
-                e('div', { className: 'truncate' }, t.title || 'Untitled'),
-                e('div', { className: 'text-xs text-gray-500' }, t.message_count + ' msgs | $' + parseFloat(t.total_cost_usd || 0).toFixed(4))
-              );
-            })
-          ),
-          // Stats
-          e('div', { className: 'p-4 border-t border-gray-700 text-xs text-gray-400' },
-            e('div', { className: 'flex justify-between mb-1' },
-              e('span', null, 'Directives'),
-              e('span', { className: 'text-green-400' }, stats.directives + ' active')
-            ),
-            e('div', { className: 'flex justify-between mb-1' },
-              e('span', null, 'Session Cost'),
-              e('span', null, '$' + stats.cost.toFixed(4))
-            ),
-            e('div', { className: 'flex justify-between mb-1' },
-              e('span', null, 'Tokens'),
-              e('span', null, stats.tokens.toLocaleString())
-            ),
-            observability && observability.trace_id && e('a', {
-              href: LANGFUSE_URL + '/trace/' + observability.trace_id,
-              target: '_blank',
-              rel: 'noopener noreferrer',
-              className: 'block mt-2 text-purple-400 hover:text-purple-300'
-            }, 'View in Langfuse')
-          )
-        ),
-        // Main content
-        e('div', { className: 'flex-1 flex flex-col' },
-          // Header
-          e('div', { className: 'h-14 border-b border-gray-700 flex items-center px-4 gap-4' },
-            e('button', {
-              onClick: function() { setSidebarOpen(!sidebarOpen); },
-              className: 'text-gray-400 hover:text-white'
-            },
-              e('svg', { className: 'w-6 h-6', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' },
-                e('path', { strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2, d: 'M4 6h16M4 12h16M4 18h16' })
-              )
-            ),
-            e('div', { className: 'text-sm text-gray-400' },
-              currentThread ? 'Thread: ' + currentThread.slice(0, 8) + '...' : 'New Conversation'
-            ),
-            lastContext && e('div', { className: 'flex gap-3 text-xs ml-auto' },
-              lastContext.memory_recalled && e('span', { className: 'text-purple-400' }, 'Memory'),
-              lastContext.work_order_created && e('span', { className: 'text-yellow-400' }, 'WO: ' + lastContext.work_order_created)
-            )
-          ),
-          // Messages
-          e('div', { className: 'flex-1 overflow-y-auto scrollbar-thin p-4' },
-            messages.length === 0 && e('div', { className: 'h-full flex items-center justify-center' },
-              e('div', { className: 'text-center text-gray-500' },
-                e('div', { className: 'text-6xl mb-4' }, '\u26A1'),
-                e('div', { className: 'text-xl mb-2' }, 'Metis Portal'),
-                e('div', { className: 'text-sm' }, 'AI orchestration with enforced directives, memory recall, and work order tracking.'),
-                e('div', { className: 'text-xs mt-4 text-gray-600' }, 'Observability powered by Langfuse')
-              )
-            ),
-            messages.map(function(msg, i) {
-              return e('div', {
-                key: i,
-                className: 'mb-4 ' + (msg.role === 'user' ? 'flex justify-end' : '')
-              },
-                e('div', {
-                  className: 'max-w-3xl ' + (
-                    msg.role === 'user' ? 'bg-blue-600 rounded-2xl rounded-br-sm px-4 py-2' :
-                    msg.role === 'error' ? 'bg-red-900/50 border border-red-700 rounded-lg p-4' :
-                    'bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3'
-                  )
-                },
-                  msg.role === 'assistant' ?
-                    e(MessageContent, { content: msg.content }) :
-                    e('div', { className: 'whitespace-pre-wrap' }, msg.content),
-                  msg.role === 'assistant' && (msg.tokens || msg.latency) && e('div', {
-                    className: 'mt-2 pt-2 border-t border-gray-700 text-xs text-gray-500 flex gap-4 flex-wrap'
-                  },
-                    msg.tokens > 0 && e('span', null, msg.tokens.toLocaleString() + ' tokens'),
-                    msg.cost > 0 && e('span', null, '$' + parseFloat(msg.cost).toFixed(4)),
-                    msg.latency > 0 && e('span', null, (msg.latency / 1000).toFixed(1) + 's'),
-                    msg.trace_id && e('a', {
-                      href: LANGFUSE_URL + '/trace/' + msg.trace_id,
-                      target: '_blank',
-                      rel: 'noopener noreferrer',
-                      className: 'text-purple-400 hover:text-purple-300'
-                    }, 'trace')
-                  )
-                )
-              );
-            }),
-            loading && e('div', { className: 'mb-4' },
-              e('div', { className: 'bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 max-w-3xl' },
-                e('div', { className: 'flex items-center gap-2 text-gray-400' },
-                  e('span', { className: 'animate-pulse' }, '\u2022'),
-                  e('span', { className: 'animate-pulse' }, '\u2022'),
-                  e('span', { className: 'animate-pulse' }, '\u2022'),
-                  e('span', { className: 'ml-2 text-sm' }, 'Metis is thinking...')
-                )
-              )
-            ),
-            e('div', { ref: messagesEndRef })
-          ),
-          // Input
-          e('div', { className: 'p-4 border-t border-gray-700' },
-            e('form', { onSubmit: sendMessage, className: 'flex gap-3' },
-              e('input', {
-                type: 'text',
-                value: input,
-                onChange: function(evt) { setInput(evt.target.value); },
-                placeholder: 'Message Metis...',
-                className: 'flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500',
-                disabled: loading
-              }),
-              e('button', {
-                type: 'submit',
-                disabled: loading || !input.trim(),
-                className: 'bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-6 py-3 rounded-xl font-medium transition-colors'
-              }, loading ? 'Sending...' : 'Send')
-            )
-          )
-        )
-      );
-    }
+        // ============================================
+        // Chat Functions
+        // ============================================
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(e(App));
-  </script>
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+
+            if (!message || isLoading) return;
+
+            const endpoint = localStorage.getItem('metis_endpoint');
+            const apiKey = localStorage.getItem('metis_apiKey');
+
+            if (!endpoint) {
+                showError('Please configure the API endpoint in Settings');
+                return;
+            }
+
+            // Hide welcome, add user message
+            document.getElementById('welcome').style.display = 'none';
+            addMessage('user', message);
+
+            // Clear input
+            input.value = '';
+            input.style.height = 'auto';
+
+            // Show loading
+            isLoading = true;
+            updateSendButton();
+            const loadingEl = showLoading();
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(apiKey && { 'Authorization': `Bearer ${apiKey}` })
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        model: localStorage.getItem('metis_model') || 'auto',
+                        conversation_history: conversationHistory
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Remove loading
+                loadingEl.remove();
+
+                // Add assistant message
+                addMessage('assistant', data.response || data.content, {
+                    model: data.model_used || data.model,
+                    tokens: data.total_tokens || data.usage?.total_tokens,
+                    cost: data.total_cost || data.cost,
+                    thinking: data.thinking || data.reasoning,
+                    latency: data.latency_ms
+                });
+
+                // Update conversation history
+                conversationHistory.push(
+                    { role: 'user', content: message },
+                    { role: 'assistant', content: data.response || data.content }
+                );
+
+            } catch (error) {
+                loadingEl.remove();
+                showError(error.message);
+            } finally {
+                isLoading = false;
+                updateSendButton();
+            }
+        }
+
+        function addMessage(role, content, meta = null) {
+            const messagesEl = document.getElementById('messages');
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message';
+
+            const avatar = role === 'user' ? 'U' : 'M';
+            const roleLabel = role === 'user' ? 'You' : 'METIS';
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            let metaHtml = '';
+            if (meta && role === 'assistant') {
+                const items = [];
+                if (meta.model) items.push(`<span class="meta-item"><span class="meta-label">Model:</span> <span class="meta-value model">${meta.model}</span></span>`);
+                if (meta.tokens) items.push(`<span class="meta-item"><span class="meta-label">Tokens:</span> <span class="meta-value">${meta.tokens.toLocaleString()}</span></span>`);
+                if (meta.cost) items.push(`<span class="meta-item"><span class="meta-label">Cost:</span> <span class="meta-value cost">$${meta.cost.toFixed(4)}</span></span>`);
+                if (meta.latency) items.push(`<span class="meta-item"><span class="meta-label">Latency:</span> <span class="meta-value">${meta.latency}ms</span></span>`);
+                
+                if (items.length > 0) {
+                    metaHtml = `<div class="message-meta"><div class="meta-row">${items.join('')}</div></div>`;
+                }
+            }
+
+            let thinkingHtml = '';
+            if (meta?.thinking) {
+                const thinkingId = 'thinking-' + Date.now();
+                thinkingHtml = `
+                    <div class="thinking-block">
+                        <div class="thinking-header" onclick="toggleThinking('${thinkingId}')">
+                            <span class="thinking-title">
+                                <span class="thinking-icon">💭</span>
+                                Reasoning
+                            </span>
+                            <span class="thinking-toggle">Click to expand</span>
+                        </div>
+                        <div class="thinking-content" id="${thinkingId}">${escapeHtml(meta.thinking)}</div>
+                    </div>
+                `;
+            }
+
+            // Parse markdown for assistant messages
+            const renderedContent = role === 'assistant' ? marked.parse(content) : escapeHtml(content);
+
+            messageEl.innerHTML = `
+                <div class="message-header">
+                    <div class="message-avatar ${role}">${avatar}</div>
+                    <span class="message-role">${roleLabel}</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-content">${renderedContent}</div>
+                ${thinkingHtml}
+                ${metaHtml}
+            `;
+
+            messagesEl.appendChild(messageEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function toggleThinking(id) {
+            const el = document.getElementById(id);
+            el.classList.toggle('expanded');
+            const toggle = el.previousElementSibling.querySelector('.thinking-toggle');
+            toggle.textContent = el.classList.contains('expanded') ? 'Click to collapse' : 'Click to expand';
+        }
+
+        function showLoading() {
+            const messagesEl = document.getElementById('messages');
+            const loadingEl = document.createElement('div');
+            loadingEl.className = 'loading';
+            loadingEl.innerHTML = `
+                <div class="loading-dots">
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                    <span class="loading-dot"></span>
+                </div>
+                <span>METIS is thinking...</span>
+            `;
+            messagesEl.appendChild(loadingEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return loadingEl;
+        }
+
+        function showError(message) {
+            const messagesEl = document.getElementById('messages');
+            const errorEl = document.createElement('div');
+            errorEl.className = 'error-message';
+            errorEl.textContent = message;
+            messagesEl.appendChild(errorEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+            setTimeout(() => errorEl.remove(), 5000);
+        }
+
+        function updateSendButton() {
+            const btn = document.getElementById('sendBtn');
+            btn.disabled = isLoading;
+        }
+
+        function clearChat() {
+            document.getElementById('messages').innerHTML = `
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">M</div>
+                    <h1 class="welcome-title">Welcome to METIS</h1>
+                    <p class="welcome-subtitle">
+                        Your AI orchestration advisor. Ask questions about strategy, analysis, or let me help route your requests to the right specialized agents.
+                    </p>
+                    <div class="welcome-features">
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Intelligent routing</span>
+                        </div>
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Multi-agent orchestration</span>
+                        </div>
+                        <div class="welcome-feature">
+                            <span class="welcome-feature-icon">✦</span>
+                            <span>Quality gates & cost tracking</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            conversationHistory = [];
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Close modal on outside click
+        document.getElementById('settingsModal').addEventListener('click', (e) => {
+            if (e.target.id === 'settingsModal') {
+                closeSettings();
+            }
+        });
+
+        // Configure marked options
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+        });
+    </script>
 </body>
 </html>
