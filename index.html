@@ -8,16 +8,6 @@
     <style>
         /* ============================================
            METIS Portal - Claude-Style Warm Dark Theme
-           Theme Colors:
-           - Background: #2b2a27 (warm charcoal)
-           - Surface: #343330 (elevated surface)
-           - Border: #4a4843 (subtle borders)
-           - Text Primary: #ececec (soft white)
-           - Text Secondary: #a8a8a3 (muted)
-           - Accent: #d4a574 (warm gold)
-           - Accent Hover: #e0b88a
-           - Success: #7cb386
-           - Error: #d4746a
            ============================================ */
 
         * {
@@ -54,28 +44,10 @@
             line-height: 1.6;
         }
 
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--scrollbar-track);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--scrollbar-thumb);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--border-strong);
-        }
-
-        /* ============================================
-           Layout - Centered Container
-           ============================================ */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+        ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
         .app-container {
             display: flex;
@@ -86,10 +58,7 @@
             padding: 0 24px;
         }
 
-        /* ============================================
-           Header
-           ============================================ */
-
+        /* Header */
         .header {
             display: flex;
             align-items: center;
@@ -155,9 +124,7 @@
             background: var(--success);
         }
 
-        .status-dot.offline {
-            background: var(--error);
-        }
+        .status-dot.offline { background: var(--error); }
 
         .header-btn {
             background: transparent;
@@ -176,10 +143,7 @@
             border-color: var(--border-strong);
         }
 
-        /* ============================================
-           Chat Container
-           ============================================ */
-
+        /* Chat Container */
         .chat-container {
             flex: 1;
             display: flex;
@@ -251,13 +215,8 @@
             line-height: 1.7;
         }
 
-        /* ============================================
-           Markdown Rendering
-           ============================================ */
-
-        .message-content h1,
-        .message-content h2,
-        .message-content h3 {
+        /* Markdown */
+        .message-content h1, .message-content h2, .message-content h3 {
             margin-top: 20px;
             margin-bottom: 12px;
             font-weight: 600;
@@ -268,19 +227,14 @@
         .message-content h2 { font-size: 1.3em; }
         .message-content h3 { font-size: 1.1em; }
 
-        .message-content p {
-            margin-bottom: 12px;
-        }
+        .message-content p { margin-bottom: 12px; }
 
-        .message-content ul,
-        .message-content ol {
+        .message-content ul, .message-content ol {
             margin-bottom: 12px;
             padding-left: 24px;
         }
 
-        .message-content li {
-            margin-bottom: 6px;
-        }
+        .message-content li { margin-bottom: 6px; }
 
         .message-content code {
             background: var(--code-bg);
@@ -316,14 +270,8 @@
             font-style: italic;
         }
 
-        .message-content a {
-            color: var(--accent);
-            text-decoration: none;
-        }
-
-        .message-content a:hover {
-            text-decoration: underline;
-        }
+        .message-content a { color: var(--accent); text-decoration: none; }
+        .message-content a:hover { text-decoration: underline; }
 
         .message-content table {
             width: 100%;
@@ -331,8 +279,7 @@
             margin: 12px 0;
         }
 
-        .message-content th,
-        .message-content td {
+        .message-content th, .message-content td {
             border: 1px solid var(--border-subtle);
             padding: 10px 12px;
             text-align: left;
@@ -349,10 +296,7 @@
             margin: 20px 0;
         }
 
-        /* ============================================
-           Metadata Display
-           ============================================ */
-
+        /* Metadata */
         .message-meta {
             margin-top: 12px;
             padding: 12px 16px;
@@ -375,83 +319,12 @@
             color: var(--text-muted);
         }
 
-        .meta-label {
-            color: var(--text-secondary);
-        }
+        .meta-label { color: var(--text-secondary); }
+        .meta-value { color: var(--text-primary); font-weight: 500; }
+        .meta-value.model { color: var(--accent); }
+        .meta-value.cost { color: var(--success); }
 
-        .meta-value {
-            color: var(--text-primary);
-            font-weight: 500;
-        }
-
-        .meta-value.model {
-            color: var(--accent);
-        }
-
-        .meta-value.cost {
-            color: var(--success);
-        }
-
-        /* ============================================
-           Thinking/Reasoning Display
-           ============================================ */
-
-        .thinking-block {
-            margin-top: 12px;
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .thinking-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 14px;
-            background: var(--bg-surface);
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .thinking-header:hover {
-            background: var(--bg-elevated);
-        }
-
-        .thinking-title {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: var(--text-secondary);
-        }
-
-        .thinking-icon {
-            font-size: 14px;
-        }
-
-        .thinking-toggle {
-            font-size: 12px;
-            color: var(--text-muted);
-        }
-
-        .thinking-content {
-            padding: 14px;
-            background: var(--bg-input);
-            font-size: 13px;
-            color: var(--text-secondary);
-            line-height: 1.6;
-            display: none;
-            border-top: 1px solid var(--border-subtle);
-        }
-
-        .thinking-content.expanded {
-            display: block;
-        }
-
-        /* ============================================
-           Input Area
-           ============================================ */
-
+        /* Input Area */
         .input-area {
             flex-shrink: 0;
             padding: 20px 0;
@@ -491,9 +364,7 @@
             box-shadow: 0 0 0 3px var(--accent-muted);
         }
 
-        .chat-input::placeholder {
-            color: var(--text-muted);
-        }
+        .chat-input::placeholder { color: var(--text-muted); }
 
         .send-btn {
             width: 52px;
@@ -522,15 +393,9 @@
             cursor: not-allowed;
         }
 
-        .send-btn svg {
-            width: 20px;
-            height: 20px;
-        }
+        .send-btn svg { width: 20px; height: 20px; }
 
-        /* ============================================
-           Loading State
-           ============================================ */
-
+        /* Loading */
         .loading {
             display: flex;
             align-items: center;
@@ -540,10 +405,7 @@
             font-size: 14px;
         }
 
-        .loading-dots {
-            display: flex;
-            gap: 4px;
-        }
+        .loading-dots { display: flex; gap: 4px; }
 
         .loading-dot {
             width: 6px;
@@ -561,159 +423,7 @@
             40% { opacity: 1; transform: scale(1); }
         }
 
-        /* ============================================
-           Settings Modal
-           ============================================ */
-
-        .modal-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.6);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            backdrop-filter: blur(4px);
-        }
-
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal {
-            background: var(--bg-surface);
-            border: 1px solid var(--border-subtle);
-            border-radius: 16px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
-            animation: modalIn 0.2s ease;
-        }
-
-        @keyframes modalIn {
-            from { opacity: 0; transform: scale(0.95) translateY(10px); }
-            to { opacity: 1; transform: scale(1) translateY(0); }
-        }
-
-        .modal-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-        .modal-title {
-            font-size: 18px;
-            font-weight: 600;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-size: 24px;
-            cursor: pointer;
-            padding: 4px;
-            line-height: 1;
-        }
-
-        .modal-close:hover {
-            color: var(--text-primary);
-        }
-
-        .modal-body {
-            padding: 24px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-label {
-            display: block;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-secondary);
-            margin-bottom: 8px;
-        }
-
-        .form-input {
-            width: 100%;
-            padding: 12px 14px;
-            background: var(--bg-input);
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 14px;
-            font-family: inherit;
-        }
-
-        .form-input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 12px 14px;
-            background: var(--bg-input);
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 14px;
-            cursor: pointer;
-        }
-
-        .form-hint {
-            font-size: 12px;
-            color: var(--text-muted);
-            margin-top: 6px;
-        }
-
-        .modal-footer {
-            display: flex;
-            gap: 12px;
-            justify-content: flex-end;
-            padding: 16px 24px;
-            border-top: 1px solid var(--border-subtle);
-        }
-
-        .btn-secondary {
-            padding: 10px 18px;
-            background: transparent;
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            color: var(--text-secondary);
-            font-size: 14px;
-            cursor: pointer;
-        }
-
-        .btn-secondary:hover {
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-        }
-
-        .btn-primary {
-            padding: 10px 18px;
-            background: var(--accent);
-            border: none;
-            border-radius: 8px;
-            color: var(--bg-primary);
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-        }
-
-        .btn-primary:hover {
-            background: var(--accent-hover);
-        }
-
-        /* ============================================
-           Welcome State
-           ============================================ */
-
+        /* Welcome */
         .welcome {
             flex: 1;
             display: flex;
@@ -767,14 +477,9 @@
             color: var(--text-muted);
         }
 
-        .welcome-feature-icon {
-            color: var(--accent);
-        }
+        .welcome-feature-icon { color: var(--accent); }
 
-        /* ============================================
-           Error State
-           ============================================ */
-
+        /* Error */
         .error-message {
             background: rgba(212, 116, 106, 0.1);
             border: 1px solid var(--error);
@@ -785,35 +490,17 @@
             margin-bottom: 16px;
         }
 
-        /* ============================================
-           Responsive
-           ============================================ */
-
+        /* Responsive */
         @media (max-width: 640px) {
-            .app-container {
-                padding: 0 16px;
-            }
-
-            .header {
-                flex-wrap: wrap;
-                gap: 12px;
-            }
-
-            .welcome-features {
-                flex-direction: column;
-                align-items: center;
-            }
-
-            .meta-row {
-                flex-direction: column;
-                gap: 8px;
-            }
+            .app-container { padding: 0 16px; }
+            .header { flex-wrap: wrap; gap: 12px; }
+            .welcome-features { flex-direction: column; align-items: center; }
+            .meta-row { flex-direction: column; gap: 8px; }
         }
     </style>
 </head>
 <body>
     <div class="app-container">
-        <!-- Header -->
         <header class="header">
             <div class="logo">
                 <div class="logo-icon">M</div>
@@ -825,15 +512,12 @@
                     <span class="status-dot" id="statusDot"></span>
                     <span id="statusText">Connected</span>
                 </div>
-                <button class="header-btn" onclick="openSettings()">Settings</button>
-                <button class="header-btn" onclick="clearChat()">Clear</button>
+                <button class="header-btn" onclick="clearChat()">New Chat</button>
             </div>
         </header>
 
-        <!-- Chat Container -->
         <div class="chat-container">
             <div class="messages" id="messages">
-                <!-- Welcome State -->
                 <div class="welcome" id="welcome">
                     <div class="welcome-icon">M</div>
                     <h1 class="welcome-title">Welcome to METIS</h1>
@@ -858,7 +542,6 @@
             </div>
         </div>
 
-        <!-- Input Area -->
         <div class="input-area">
             <div class="input-wrapper">
                 <div class="input-container">
@@ -881,118 +564,26 @@
         </div>
     </div>
 
-    <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 class="modal-title">Settings</h2>
-                <button class="modal-close" onclick="closeSettings()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">API Endpoint</label>
-                    <input 
-                        type="text" 
-                        class="form-input" 
-                        id="apiEndpoint" 
-                        placeholder="https://your-api-endpoint.com"
-                    >
-                    <p class="form-hint">The METIS orchestration API endpoint</p>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">API Key</label>
-                    <input 
-                        type="password" 
-                        class="form-input" 
-                        id="apiKey" 
-                        placeholder="Enter your API key"
-                    >
-                    <p class="form-hint">Your authentication key for the METIS API</p>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Default Model</label>
-                    <select class="form-select" id="defaultModel">
-                        <option value="auto">Auto (Adaptive Routing)</option>
-                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                        <option value="claude-haiku-3-5-20241022">Claude Haiku 3.5</option>
-                        <option value="gpt-4o">GPT-4o</option>
-                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeSettings()">Cancel</button>
-                <button class="btn-primary" onclick="saveSettings()">Save</button>
-            </div>
-        </div>
-    </div>
-
     <script>
+        // ============================================
+        // Configuration - Hardcoded for Supabase
+        // ============================================
+        const API_ENDPOINT = 'https://phfblljwuvzqzlbzkzpr.supabase.co/functions/v1/portal-chat';
+        
         // ============================================
         // State
         // ============================================
         let isLoading = false;
-        let conversationHistory = [];
+        let currentThreadId = null;
 
         // ============================================
         // Initialization
         // ============================================
         document.addEventListener('DOMContentLoaded', () => {
-            loadSettings();
-            checkConnection();
+            document.getElementById('statusDot').classList.remove('offline');
+            document.getElementById('statusText').textContent = 'Connected';
             document.getElementById('chatInput').focus();
         });
-
-        // ============================================
-        // Settings Management
-        // ============================================
-        function loadSettings() {
-            const endpoint = localStorage.getItem('metis_endpoint') || '';
-            const apiKey = localStorage.getItem('metis_apiKey') || '';
-            const model = localStorage.getItem('metis_model') || 'auto';
-            
-            document.getElementById('apiEndpoint').value = endpoint;
-            document.getElementById('apiKey').value = apiKey;
-            document.getElementById('defaultModel').value = model;
-        }
-
-        function saveSettings() {
-            const endpoint = document.getElementById('apiEndpoint').value.trim();
-            const apiKey = document.getElementById('apiKey').value.trim();
-            const model = document.getElementById('defaultModel').value;
-
-            localStorage.setItem('metis_endpoint', endpoint);
-            localStorage.setItem('metis_apiKey', apiKey);
-            localStorage.setItem('metis_model', model);
-
-            closeSettings();
-            checkConnection();
-        }
-
-        function openSettings() {
-            document.getElementById('settingsModal').classList.add('active');
-        }
-
-        function closeSettings() {
-            document.getElementById('settingsModal').classList.remove('active');
-        }
-
-        // ============================================
-        // Connection Check
-        // ============================================
-        function checkConnection() {
-            const endpoint = localStorage.getItem('metis_endpoint');
-            const statusDot = document.getElementById('statusDot');
-            const statusText = document.getElementById('statusText');
-
-            if (endpoint) {
-                statusDot.classList.remove('offline');
-                statusText.textContent = 'Connected';
-            } else {
-                statusDot.classList.add('offline');
-                statusText.textContent = 'Not configured';
-            }
-        }
 
         // ============================================
         // Chat Functions
@@ -1015,14 +606,6 @@
 
             if (!message || isLoading) return;
 
-            const endpoint = localStorage.getItem('metis_endpoint');
-            const apiKey = localStorage.getItem('metis_apiKey');
-
-            if (!endpoint) {
-                showError('Please configure the API endpoint in Settings');
-                return;
-            }
-
             // Hide welcome, add user message
             document.getElementById('welcome').style.display = 'none';
             addMessage('user', message);
@@ -1037,42 +620,45 @@
             const loadingEl = showLoading();
 
             try {
-                const response = await fetch(endpoint, {
+                const response = await fetch(API_ENDPOINT, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        ...(apiKey && { 'Authorization': `Bearer ${apiKey}` })
                     },
                     body: JSON.stringify({
                         message: message,
-                        model: localStorage.getItem('metis_model') || 'auto',
-                        conversation_history: conversationHistory
+                        thread_id: currentThreadId,
+                        project_code: 'METIS-001',
+                        user_id: 'portal-user'
                     })
                 });
 
                 if (!response.ok) {
-                    throw new Error(`API error: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `API error: ${response.status}`);
                 }
 
                 const data = await response.json();
                 
+                // Store thread_id for conversation continuity
+                if (data.thread_id) {
+                    currentThreadId = data.thread_id;
+                }
+
                 // Remove loading
                 loadingEl.remove();
 
-                // Add assistant message
-                addMessage('assistant', data.response || data.content, {
-                    model: data.model_used || data.model,
-                    tokens: data.total_tokens || data.usage?.total_tokens,
-                    cost: data.total_cost || data.cost,
-                    thinking: data.thinking || data.reasoning,
-                    latency: data.latency_ms
+                // Add assistant message with metadata
+                addMessage('assistant', data.message, {
+                    model: 'claude-sonnet-4',
+                    tokens: data.usage?.input_tokens + data.usage?.output_tokens,
+                    cost: data.usage?.cost_usd,
+                    latency: data.usage?.latency_ms,
+                    traceId: data.observability?.trace_id,
+                    workOrder: data.context?.work_order_created,
+                    memoryRecalled: data.context?.memory_recalled,
+                    sessionCaptured: data.session?.captured
                 });
-
-                // Update conversation history
-                conversationHistory.push(
-                    { role: 'user', content: message },
-                    { role: 'assistant', content: data.response || data.content }
-                );
 
             } catch (error) {
                 loadingEl.remove();
@@ -1099,30 +685,15 @@
                 if (meta.tokens) items.push(`<span class="meta-item"><span class="meta-label">Tokens:</span> <span class="meta-value">${meta.tokens.toLocaleString()}</span></span>`);
                 if (meta.cost) items.push(`<span class="meta-item"><span class="meta-label">Cost:</span> <span class="meta-value cost">$${meta.cost.toFixed(4)}</span></span>`);
                 if (meta.latency) items.push(`<span class="meta-item"><span class="meta-label">Latency:</span> <span class="meta-value">${meta.latency}ms</span></span>`);
+                if (meta.workOrder) items.push(`<span class="meta-item"><span class="meta-label">Work Order:</span> <span class="meta-value">${meta.workOrder}</span></span>`);
+                if (meta.memoryRecalled) items.push(`<span class="meta-item"><span class="meta-label">Memory:</span> <span class="meta-value">✓ recalled</span></span>`);
+                if (meta.sessionCaptured) items.push(`<span class="meta-item"><span class="meta-label">Session:</span> <span class="meta-value">✓ captured</span></span>`);
                 
                 if (items.length > 0) {
                     metaHtml = `<div class="message-meta"><div class="meta-row">${items.join('')}</div></div>`;
                 }
             }
 
-            let thinkingHtml = '';
-            if (meta?.thinking) {
-                const thinkingId = 'thinking-' + Date.now();
-                thinkingHtml = `
-                    <div class="thinking-block">
-                        <div class="thinking-header" onclick="toggleThinking('${thinkingId}')">
-                            <span class="thinking-title">
-                                <span class="thinking-icon">💭</span>
-                                Reasoning
-                            </span>
-                            <span class="thinking-toggle">Click to expand</span>
-                        </div>
-                        <div class="thinking-content" id="${thinkingId}">${escapeHtml(meta.thinking)}</div>
-                    </div>
-                `;
-            }
-
-            // Parse markdown for assistant messages
             const renderedContent = role === 'assistant' ? marked.parse(content) : escapeHtml(content);
 
             messageEl.innerHTML = `
@@ -1132,19 +703,11 @@
                     <span class="message-time">${time}</span>
                 </div>
                 <div class="message-content">${renderedContent}</div>
-                ${thinkingHtml}
                 ${metaHtml}
             `;
 
             messagesEl.appendChild(messageEl);
             messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-
-        function toggleThinking(id) {
-            const el = document.getElementById(id);
-            el.classList.toggle('expanded');
-            const toggle = el.previousElementSibling.querySelector('.thinking-toggle');
-            toggle.textContent = el.classList.contains('expanded') ? 'Click to collapse' : 'Click to expand';
         }
 
         function showLoading() {
@@ -1171,16 +734,15 @@
             errorEl.textContent = message;
             messagesEl.appendChild(errorEl);
             messagesEl.scrollTop = messagesEl.scrollHeight;
-
             setTimeout(() => errorEl.remove(), 5000);
         }
 
         function updateSendButton() {
-            const btn = document.getElementById('sendBtn');
-            btn.disabled = isLoading;
+            document.getElementById('sendBtn').disabled = isLoading;
         }
 
         function clearChat() {
+            currentThreadId = null;
             document.getElementById('messages').innerHTML = `
                 <div class="welcome" id="welcome">
                     <div class="welcome-icon">M</div>
@@ -1204,7 +766,6 @@
                     </div>
                 </div>
             `;
-            conversationHistory = [];
         }
 
         function escapeHtml(text) {
@@ -1213,14 +774,6 @@
             return div.innerHTML;
         }
 
-        // Close modal on outside click
-        document.getElementById('settingsModal').addEventListener('click', (e) => {
-            if (e.target.id === 'settingsModal') {
-                closeSettings();
-            }
-        });
-
-        // Configure marked options
         marked.setOptions({
             breaks: true,
             gfm: true,
