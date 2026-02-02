@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metis Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <style>
+    .prose pre { margin: 0; padding: 0; background: transparent; }
+    .prose code { background: #1e1e1e; padding: 2px 6px; border-radius: 4px; font-size: 0.875em; }
+    .prose pre code { padding: 1rem; display: block; overflow-x: auto; background: #0d1117; border-radius: 8px; }
+    .copy-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; }
+    .code-block:hover .copy-btn { opacity: 1; }
+    .message-content table { border-collapse: collapse; margin: 1rem 0; }
+    .message-content th, .message-content td { border: 1px solid #374151; padding: 8px 12px; }
+    .message-content th { background: #1f2937; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: #1f2937; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    
+    const SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc5NDI5MzYsImV4cCI6MjA1MzUxODkzNn0.kPykOvy2rXy1B9gHrWmQ6ArBq0VqdZdhNfpU20J3vvU';
+    const LANGFUSE_URL = 'https://us.cloud.langfuse.com';
+    
+    function MessageContent({ content }) {
+      const containerRef = useRef(null);
+      
+      useEffect(() => {
+        if (containerRef.current) {
+          marked.setOptions({
+            highlight: function(code, lang) {
+              if (lang && hljs.getLanguage(lang)) {
+                return hljs.highlight(code, { language: lang }).value;
+              }
+              return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true,
+          });
+          
+          containerRef.current.innerHTML = marked.parse(content);
+          
+          containerRef.current.querySelectorAll('pre').forEach((pre) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'code-block relative';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+            
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn absolute bg-gray-700 hover:bg-gray-600 text-xs px-2 py-1 rounded';
+            btn.textContent = 'Copy';
+            btn.onclick = () => {
+              navigator.clipboard.writeText(pre.textContent);
+              btn.textContent = 'Copied!';
+              setTimeout(() => btn.textContent = 'Copy', 2000);
+            };
+            wrapper.appendChild(btn);
+          });
+        }
+      }, [content]);
+      
+      return <div ref={containerRef} className="message-content prose prose-invert max-w-none" />;
+    }
+    
+    function App() {
+      const [threads, setThreads] = useState([]);
+      const [currentThread, setCurrentThread] = useState(null);
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [projectCode, setProjectCode] = useState('METIS-001');
+      const [stats, setStats] = useState({ directives: 0, cost: 0, tokens: 0 });
+      const [lastContext, setLastContext] = useState(null);
+      const [observability, setObservability] = useState(null);
+      const [sidebarOpen, setSidebarOpen] = useState(true);
+      const messagesEndRef = useRef(null);
+      
+      useEffect(() => {
+        loadThreads();
+      }, []);
+      
+      useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [messages]);
+      
+      async function loadThreads() {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/portal-threads`);
+          const data = await res.json();
+          setThreads(data.threads || []);
+        } catch (e) {
+          console.error('Failed to load threads:', e);
+        }
+      }
+      
+      async function loadThread(threadId) {
+        try {
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/thread_messages?thread_id=eq.${threadId}&order=created_at.asc`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY }
+          });
+          const data = await res.json();
+          setMessages(data.map(m => ({
+            role: m.role,
+            content: m.content,
+            tokens: (m.input_tokens || 0) + (m.output_tokens || 0),
+            cost: m.cost_usd,
+            model: m.model_used,
+            trace_id: m.trace_id,
+          })));
+          setCurrentThread(threadId);
+          
+          const thread = threads.find(t => t.id === threadId);
+          if (thread) {
+            setStats(prev => ({
+              ...prev,
+              cost: parseFloat(thread.total_cost_usd) || 0,
+              tokens: thread.total_tokens || 0,
+            }));
+          }
+        } catch (e) {
+          console.error('Failed to load thread:', e);
+        }
+      }
+      
+      async function sendMessage(e) {
+        e.preventDefault();
+        if (!input.trim() || loading) return;
+        
+        const userMessage = input.trim();
+        setInput('');
+        setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+        setLoading(true);
+        
+        try {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/portal-chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: userMessage,
+              thread_id: currentThread,
+              project_code: projectCode,
+            }),
+          });
+          
+          const data = await res.json();
+          
+          if (data.error) {
+            setMessages(prev => [...prev, { role: 'error', content: data.error }]);
+          } else {
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: data.message,
+              tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+              cost: data.usage?.cost_usd,
+              latency: data.usage?.latency_ms,
+              llm_latency: data.usage?.llm_latency_ms,
+              trace_id: data.observability?.trace_id,
+            }]);
+            
+            if (!currentThread && data.thread_id) {
+              setCurrentThread(data.thread_id);
+              loadThreads();
+            }
+            
+            setLastContext(data.context);
+            setObservability(data.observability);
+            setStats(prev => ({
+              ...prev,
+              directives: data.context?.directives_applied || prev.directives,
+              cost: prev.cost + (data.usage?.cost_usd || 0),
+              tokens: prev.tokens + (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+            }));
+          }
+        } catch (e) {
+          setMessages(prev => [...prev, { role: 'error', content: String(e) }]);
+        } finally {
+          setLoading(false);
+        }
+      }
+      
+      function newThread() {
+        setCurrentThread(null);
+        setMessages([]);
+        setStats({ directives: 0, cost: 0, tokens: 0 });
+        setLastContext(null);
+        setObservability(null);
+      }
+      
+      return (
+        <div className="h-screen flex">
+          {/* Sidebar */}
+          <div className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden`}>
+            <div className="p-4 border-b border-gray-700">
+              <div className="flex items-center justify-between mb-4">
+                <h1 className="text-xl font-bold text-blue-400">Metis Portal</h1>
+              </div>
+              <button
+                onClick={newThread}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 px-4 rounded-lg flex items-center justify-center gap-2"
+              >
+                <span>+ New Thread</span>
+              </button>
+            </div>
+            
+            <div className="p-4 border-b border-gray-700">
+              <label className="text-xs text-gray-400 block mb-1">Project</label>
+              <select
+                value={projectCode}
+                onChange={(e) => setProjectCode(e.target.value)}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+              >
+                <option value="METIS-001">METIS-001</option>
+                <option value="ILMARINEN-001">ILMARINEN-001</option>
+              </select>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-2">
+              <div className="text-xs text-gray-400 px-2 mb-2">Recent Threads</div>
+              {threads.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => loadThread(t.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg mb-1 text-sm truncate ${
+                    currentThread === t.id ? 'bg-gray-700' : 'hover:bg-gray-700/50'
+                  }`}
+                >
+                  <div className="truncate">{t.title || 'Untitled'}</div>
+                  <div className="text-xs text-gray-500">{t.message_count} msgs | ${parseFloat(t.total_cost_usd || 0).toFixed(4)}</div>
+                </button>
+              ))}
+            </div>
+            
+            {/* Stats */}
+            <div className="p-4 border-t border-gray-700 text-xs text-gray-400">
+              <div className="flex justify-between mb-1">
+                <span>Directives</span>
+                <span className="text-green-400">{stats.directives} active</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span>Session Cost</span>
+                <span>${stats.cost.toFixed(4)}</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span>Tokens</span>
+                <span>{stats.tokens.toLocaleString()}</span>
+              </div>
+              {observability?.trace_id && (
+                <a 
+                  href={`${LANGFUSE_URL}/trace/${observability.trace_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block mt-2 text-purple-400 hover:text-purple-300"
+                >
+                  View in Langfuse
+                </a>
+              )}
+            </div>
+          </div>
+          
+          {/* Main Content */}
+          <div className="flex-1 flex flex-col">
+            {/* Header */}
+            <div className="h-14 border-b border-gray-700 flex items-center px-4 gap-4">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="text-gray-400 hover:text-white"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <div className="text-sm text-gray-400">
+                {currentThread ? `Thread: ${currentThread.slice(0, 8)}...` : 'New Conversation'}
+              </div>
+              {lastContext && (
+                <div className="flex gap-3 text-xs ml-auto">
+                  {lastContext.memory_recalled && (
+                    <span className="text-purple-400 flex items-center gap-1">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 110-12 6 6 0 010 12zm-1-5h2v2H9v-2zm0-6h2v4H9V5z"/></svg>
+                      Memory
+                    </span>
+                  )}
+                  {lastContext.work_order_created && (
+                    <span className="text-yellow-400 flex items-center gap-1">
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd"/></svg>
+                      WO: {lastContext.work_order_created}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
+              {messages.length === 0 && (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center text-gray-500">
+                    <div className="text-6xl mb-4">&#9889;</div>
+                    <div className="text-xl mb-2">Metis Portal</div>
+                    <div className="text-sm">AI orchestration with enforced directives, memory recall, and work order tracking.</div>
+                    <div className="text-xs mt-4 text-gray-600">Observability powered by Langfuse</div>
+                  </div>
+                </div>
+              )}
+              
+              {messages.map((msg, i) => (
+                <div key={i} className={`mb-4 ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
+                  <div className={`max-w-3xl ${
+                    msg.role === 'user' 
+                      ? 'bg-blue-600 rounded-2xl rounded-br-sm px-4 py-2' 
+                      : msg.role === 'error'
+                      ? 'bg-red-900/50 border border-red-700 rounded-lg p-4'
+                      : 'bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3'
+                  }`}>
+                    {msg.role === 'assistant' ? (
+                      <MessageContent content={msg.content} />
+                    ) : (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
+                    
+                    {msg.role === 'assistant' && (msg.tokens || msg.latency) && (
+                      <div className="mt-2 pt-2 border-t border-gray-700 text-xs text-gray-500 flex gap-4 flex-wrap">
+                        {msg.tokens > 0 && <span>{msg.tokens.toLocaleString()} tokens</span>}
+                        {msg.cost > 0 && <span>${parseFloat(msg.cost).toFixed(4)}</span>}
+                        {msg.latency > 0 && <span>{(msg.latency / 1000).toFixed(1)}s total</span>}
+                        {msg.llm_latency > 0 && <span>{(msg.llm_latency / 1000).toFixed(1)}s LLM</span>}
+                        {msg.trace_id && (
+                          <a 
+                            href={`${LANGFUSE_URL}/trace/${msg.trace_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-400 hover:text-purple-300"
+                          >
+                            trace
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              
+              {loading && (
+                <div className="mb-4">
+                  <div className="bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 max-w-3xl">
+                    <div className="flex items-center gap-2 text-gray-400">
+                      <div className="animate-pulse">&#9679;</div>
+                      <div className="animate-pulse" style={{animationDelay: '0.2s'}}>&#9679;</div>
+                      <div className="animate-pulse" style={{animationDelay: '0.4s'}}>&#9679;</div>
+                      <span className="ml-2 text-sm">Metis is thinking...</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div ref={messagesEndRef} />
+            </div>
+            
+            {/* Input */}
+            <div className="p-4 border-t border-gray-700">
+              <form onSubmit={sendMessage} className="flex gap-3">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Message Metis..."
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500"
+                  disabled={loading}
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !input.trim()}
+                  className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white px-6 py-3 rounded-xl font-medium transition-colors"
+                >
+                  {loading ? 'Sending...' : 'Send'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
