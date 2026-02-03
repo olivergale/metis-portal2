@@ -674,6 +674,11 @@
             background: rgba(212, 116, 106, 0.3);
         }
 
+        .card-action-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         .card-quick-actions {
             display: flex;
             gap: 8px;
@@ -1099,6 +1104,7 @@
         .toast.success { border-left: 3px solid var(--status-done); }
         .toast.error { border-left: 3px solid var(--status-blocked); }
         .toast.info { border-left: 3px solid var(--status-assigned); }
+        .toast.warning { border-left: 3px solid var(--status-progress); }
     </style>
 </head>
 <body>
@@ -1191,7 +1197,7 @@
                 return () => clearTimeout(timer);
             }, [onClose]);
 
-            const icons = { success: '✓', error: '✕', info: 'ℹ' };
+            const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
             return (
                 <div className={`toast ${type}`}>
                     <span className="toast-icon">{icons[type]}</span>
@@ -1222,7 +1228,8 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded, actionLoading }) => {
+            const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
             
             const handleDragStart = (e) => {
@@ -1280,12 +1287,31 @@
                     {/* Quick action buttons - always visible */}
                     <div className="card-quick-actions">
                         {workOrder.status === 'draft' && !workOrder.approved_at && (
-                            <button 
+                            <button
                                 className="card-action-btn approve-btn"
                                 onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id); }}
+                                disabled={isLoading}
                             >
-                                ✓ Approve
+                                {isLoading === 'approve' ? 'Approving...' : '✓ Approve'}
                             </button>
+                        )}
+                        {workOrder.status === 'review' && (
+                            <>
+                                <button
+                                    className="card-action-btn approve-btn"
+                                    onClick={(e) => { e.stopPropagation(); onAccept(workOrder.id); }}
+                                    disabled={isLoading}
+                                >
+                                    {isLoading === 'accept' ? 'Accepting...' : '✓ Accept'}
+                                </button>
+                                <button
+                                    className="card-action-btn reject-btn"
+                                    onClick={(e) => { e.stopPropagation(); onReject(workOrder.id); }}
+                                    disabled={isLoading}
+                                >
+                                    {isLoading === 'reject' ? 'Rejecting...' : '✗ Reject'}
+                                </button>
+                            </>
                         )}
                     </div>
 
@@ -1302,32 +1328,8 @@
                                 </div>
                             )}
                             <div className="card-actions">
-                                {workOrder.status === 'draft' && !workOrder.approved_at && (
-                                    <button 
-                                        className="card-action-btn approve-btn"
-                                        onClick={() => onApprove(workOrder.id)}
-                                    >
-                                        ✓ Approve
-                                    </button>
-                                )}
-                                {workOrder.status === 'review' && (
-                                    <>
-                                        <button 
-                                            className="card-action-btn approve-btn"
-                                            onClick={() => onAccept(workOrder.id)}
-                                        >
-                                            ✓ Accept
-                                        </button>
-                                        <button 
-                                            className="card-action-btn reject-btn"
-                                            onClick={() => onReject(workOrder.id)}
-                                        >
-                                            ✗ Reject
-                                        </button>
-                                    </>
-                                )}
-                                {COLUMNS.filter(c => c.id !== workOrder.status).slice(0, 2).map(col => (
-                                    <button 
+                                {COLUMNS.filter(c => c.id !== workOrder.status).slice(0, 3).map(col => (
+                                    <button
                                         key={col.id}
                                         className="card-action-btn"
                                         onClick={() => onStatusChange(workOrder.id, col.id)}
@@ -1342,7 +1344,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded, actionLoading }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -1383,9 +1385,9 @@
                             </div>
                         ) : (
                             workOrders.map(wo => (
-                                <WorkOrderCard 
-                                    key={wo.id} 
-                                    workOrder={wo} 
+                                <WorkOrderCard
+                                    key={wo.id}
+                                    workOrder={wo}
                                     agents={agents}
                                     onStatusChange={onStatusChange}
                                     onExpand={onExpand}
@@ -1393,6 +1395,7 @@
                                     onAccept={onAccept}
                                     onReject={onReject}
                                     expanded={expanded}
+                                    actionLoading={actionLoading}
                                 />
                             ))
                         )}
@@ -1526,6 +1529,98 @@
             );
         };
 
+        const RejectModal = ({ isOpen, onClose, onReject, workOrderName }) => {
+            const [reason, setReason] = useState('');
+            const [submitting, setSubmitting] = useState(false);
+
+            if (!isOpen) return null;
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setSubmitting(true);
+                await onReject(reason);
+                setReason('');
+                setSubmitting(false);
+                onClose();
+            };
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+                        <div className="modal-header">
+                            <h2 className="modal-title">Reject Work Order</h2>
+                            <button className="modal-close" onClick={onClose}>×</button>
+                        </div>
+                        <form onSubmit={handleSubmit}>
+                            <div className="modal-body">
+                                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                                    Rejecting: <strong>{workOrderName}</strong>
+                                </p>
+                                <div className="form-group">
+                                    <label className="form-label">Reason (optional)</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        value={reason}
+                                        onChange={(e) => setReason(e.target.value)}
+                                        placeholder="Why is this being rejected?"
+                                        rows={3}
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={submitting} style={{ background: 'var(--status-blocked)' }}>
+                                    {submitting ? 'Rejecting...' : 'Reject'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // Error Boundary for graceful error handling
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '100vh',
+                            background: 'var(--bg-primary)',
+                            color: 'var(--text-primary)',
+                            padding: '20px',
+                            textAlign: 'center'
+                        }}>
+                            <h1 style={{ marginBottom: '16px', color: 'var(--status-blocked)' }}>Something went wrong</h1>
+                            <p style={{ marginBottom: '24px', color: 'var(--text-secondary)' }}>
+                                {this.state.error?.message || 'An unexpected error occurred'}
+                            </p>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => window.location.reload()}
+                            >
+                                Reload Page
+                            </button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         // ============================================
         // Main App
         // ============================================
@@ -1535,9 +1630,11 @@
             const [events, setEvents] = useState([]);
             const [loading, setLoading] = useState(true);
             const [showModal, setShowModal] = useState(false);
+            const [rejectModal, setRejectModal] = useState({ open: false, workOrderId: null, workOrderName: '' });
             const [expanded, setExpanded] = useState(null);
             const [toasts, setToasts] = useState([]);
             const [currentTime, setCurrentTime] = useState(new Date());
+            const [actionLoading, setActionLoading] = useState({});
 
             const addToast = (message, type = 'info') => {
                 const id = Date.now();
@@ -1575,6 +1672,15 @@
                 };
             }, [fetchData]);
 
+            // Mobile detection - show info toast
+            useEffect(() => {
+                const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+                const isMobile = window.innerWidth <= 768;
+                if (isTouchDevice && isMobile) {
+                    addToast('Drag-drop requires a mouse. Use action buttons to move items.', 'info');
+                }
+            }, []);
+
             const handleDrop = async (workOrderId, newStatus) => {
                 const wo = workOrders.find(w => w.id === workOrderId);
                 if (!wo || wo.status === newStatus) return;
@@ -1600,6 +1706,7 @@
             };
 
             const handleApprove = async (workOrderId) => {
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'approve' }));
                 try {
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/approve`, {
                         method: 'POST',
@@ -1611,7 +1718,7 @@
                     });
                     const data = await res.json();
                     if (data.approved) {
-                        setWorkOrders(prev => prev.map(w => 
+                        setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
                         ));
                         addToast('Work order approved - ready for execution', 'success');
@@ -1620,10 +1727,13 @@
                     }
                 } catch (err) {
                     addToast('Failed to approve: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
                 }
             };
 
             const handleAccept = async (workOrderId) => {
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'accept' }));
                 try {
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/accept`, {
                         method: 'POST',
@@ -1635,7 +1745,7 @@
                     });
                     const data = await res.json();
                     if (data.accepted) {
-                        setWorkOrders(prev => prev.map(w => 
+                        setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'done' } : w
                         ));
                         addToast('Work accepted - marked as done', 'success');
@@ -1644,11 +1754,19 @@
                     }
                 } catch (err) {
                     addToast('Failed to accept: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
                 }
             };
 
-            const handleReject = async (workOrderId) => {
-                const reason = prompt('Reason for rejection (optional):');
+            const openRejectModal = (workOrderId) => {
+                const wo = workOrders.find(w => w.id === workOrderId);
+                setRejectModal({ open: true, workOrderId, workOrderName: wo?.name || 'Unknown' });
+            };
+
+            const handleReject = async (reason) => {
+                const workOrderId = rejectModal.workOrderId;
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'reject' }));
                 try {
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/reject`, {
                         method: 'POST',
@@ -1660,7 +1778,7 @@
                     });
                     const data = await res.json();
                     if (data.rejected) {
-                        setWorkOrders(prev => prev.map(w => 
+                        setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'draft', approved_at: null } : w
                         ));
                         addToast('Work rejected - back to draft', 'warning');
@@ -1669,6 +1787,8 @@
                     }
                 } catch (err) {
                     addToast('Failed to reject: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
                 }
             };
 
@@ -1797,8 +1917,9 @@
                                         onExpand={setExpanded}
                                         onApprove={handleApprove}
                                         onAccept={handleAccept}
-                                        onReject={handleReject}
+                                        onReject={openRejectModal}
                                         expanded={expanded}
+                                        actionLoading={actionLoading}
                                     />
                                 ))}
                             </div>
@@ -1808,11 +1929,6 @@
                         <aside className="feed-sidebar">
                             <div className="feed-header">
                                 <div className="feed-title">Live Feed</div>
-                                <div className="feed-filters">
-                                    <span className="feed-filter active">All</span>
-                                    <span className="feed-filter">Tasks</span>
-                                    <span className="feed-filter">Comments</span>
-                                </div>
                             </div>
                             <div className="feed-content">
                                 <div className="feed-section">
@@ -1855,6 +1971,14 @@
                         agents={agents}
                     />
 
+                    {/* Reject Modal */}
+                    <RejectModal
+                        isOpen={rejectModal.open}
+                        onClose={() => setRejectModal({ open: false, workOrderId: null, workOrderName: '' })}
+                        onReject={handleReject}
+                        workOrderName={rejectModal.workOrderName}
+                    />
+
                     {/* Toasts */}
                     <div className="toast-container">
                         {toasts.map(toast => (
@@ -1870,7 +1994,11 @@
             );
         }
 
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render(
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        );
     </script>
 </body>
 </html>
