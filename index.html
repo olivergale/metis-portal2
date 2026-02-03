@@ -753,7 +753,7 @@
             }
 
             return `
-                <div class="message assistant" id="${msgId}" data-raw="${escapeHtml(msg.content)}">
+                <div class="message assistant" id="${msgId}" data-raw-content="${btoa(encodeURIComponent(msg.content))}">
                     <div class="msg-header">
                         <div class="msg-avatar">M</div>
                         <span class="msg-role">METIS</span>
@@ -884,8 +884,17 @@
             const msgEl = document.getElementById(msgId);
             if (!msgEl) return;
             
-            const rawContent = msgEl.getAttribute('data-raw');
-            const textToCopy = rawContent ? decodeHtmlEntities(rawContent) : msgEl.querySelector('.msg-content').innerText;
+            const rawEncoded = msgEl.getAttribute('data-raw-content');
+            let textToCopy;
+            if (rawEncoded) {
+                try {
+                    textToCopy = decodeURIComponent(atob(rawEncoded));
+                } catch (e) {
+                    textToCopy = msgEl.querySelector('.msg-content').innerText;
+                }
+            } else {
+                textToCopy = msgEl.querySelector('.msg-content').innerText;
+            }
             
             try {
                 await navigator.clipboard.writeText(textToCopy);
