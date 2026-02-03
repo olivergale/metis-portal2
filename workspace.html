@@ -654,6 +654,26 @@
             border-color: var(--border-strong);
         }
 
+        .card-action-btn.approve-btn {
+            background: rgba(125, 180, 130, 0.15);
+            border-color: #7db482;
+            color: #7db482;
+        }
+
+        .card-action-btn.approve-btn:hover {
+            background: rgba(125, 180, 130, 0.3);
+        }
+
+        .card-action-btn.reject-btn {
+            background: rgba(212, 116, 106, 0.15);
+            border-color: #d4746a;
+            color: #d4746a;
+        }
+
+        .card-action-btn.reject-btn:hover {
+            background: rgba(212, 116, 106, 0.3);
+        }
+
         /* ============================================
            Live Feed Sidebar
            ============================================ */
@@ -1190,7 +1210,7 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, expanded }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded }) => {
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
             
             const handleDragStart = (e) => {
@@ -1258,7 +1278,31 @@
                                 </div>
                             )}
                             <div className="card-actions">
-                                {COLUMNS.filter(c => c.id !== workOrder.status).slice(0, 3).map(col => (
+                                {workOrder.status === 'draft' && !workOrder.approved_at && (
+                                    <button 
+                                        className="card-action-btn approve-btn"
+                                        onClick={() => onApprove(workOrder.id)}
+                                    >
+                                        ✓ Approve
+                                    </button>
+                                )}
+                                {workOrder.status === 'review' && (
+                                    <>
+                                        <button 
+                                            className="card-action-btn approve-btn"
+                                            onClick={() => onAccept(workOrder.id)}
+                                        >
+                                            ✓ Accept
+                                        </button>
+                                        <button 
+                                            className="card-action-btn reject-btn"
+                                            onClick={() => onReject(workOrder.id)}
+                                        >
+                                            ✗ Reject
+                                        </button>
+                                    </>
+                                )}
+                                {COLUMNS.filter(c => c.id !== workOrder.status).slice(0, 2).map(col => (
                                     <button 
                                         key={col.id}
                                         className="card-action-btn"
@@ -1274,7 +1318,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, expanded }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -1321,6 +1365,9 @@
                                     agents={agents}
                                     onStatusChange={onStatusChange}
                                     onExpand={onExpand}
+                                    onApprove={onApprove}
+                                    onAccept={onAccept}
+                                    onReject={onReject}
                                     expanded={expanded}
                                 />
                             ))
@@ -1528,6 +1575,79 @@
                 }
             };
 
+            const handleApprove = async (workOrderId) => {
+                try {
+                    const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/approve`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                        },
+                        body: JSON.stringify({ work_order_id: workOrderId }),
+                    });
+                    const data = await res.json();
+                    if (data.approved) {
+                        setWorkOrders(prev => prev.map(w => 
+                            w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
+                        ));
+                        addToast('Work order approved - ready for execution', 'success');
+                    } else {
+                        addToast(data.error || 'Approval failed', 'error');
+                    }
+                } catch (err) {
+                    addToast('Failed to approve: ' + err.message, 'error');
+                }
+            };
+
+            const handleAccept = async (workOrderId) => {
+                try {
+                    const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/accept`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                        },
+                        body: JSON.stringify({ work_order_id: workOrderId }),
+                    });
+                    const data = await res.json();
+                    if (data.accepted) {
+                        setWorkOrders(prev => prev.map(w => 
+                            w.id === workOrderId ? { ...w, status: 'done' } : w
+                        ));
+                        addToast('Work accepted - marked as done', 'success');
+                    } else {
+                        addToast(data.error || 'Accept failed', 'error');
+                    }
+                } catch (err) {
+                    addToast('Failed to accept: ' + err.message, 'error');
+                }
+            };
+
+            const handleReject = async (workOrderId) => {
+                const reason = prompt('Reason for rejection (optional):');
+                try {
+                    const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/reject`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                        },
+                        body: JSON.stringify({ work_order_id: workOrderId, reason }),
+                    });
+                    const data = await res.json();
+                    if (data.rejected) {
+                        setWorkOrders(prev => prev.map(w => 
+                            w.id === workOrderId ? { ...w, status: 'draft', approved_at: null } : w
+                        ));
+                        addToast('Work rejected - back to draft', 'warning');
+                    } else {
+                        addToast(data.error || 'Reject failed', 'error');
+                    }
+                } catch (err) {
+                    addToast('Failed to reject: ' + err.message, 'error');
+                }
+            };
+
             const handleCreate = async (form) => {
                 if (!form.name || !form.objective) {
                     addToast('Name and objective are required', 'error');
@@ -1651,6 +1771,9 @@
                                         onDrop={handleDrop}
                                         onStatusChange={handleDrop}
                                         onExpand={setExpanded}
+                                        onApprove={handleApprove}
+                                        onAccept={handleAccept}
+                                        onReject={handleReject}
                                         expanded={expanded}
                                     />
                                 ))}
