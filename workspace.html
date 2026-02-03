@@ -1287,22 +1287,6 @@
                                 ✓ Approve
                             </button>
                         )}
-                        {workOrder.status === 'review' && (
-                            <>
-                                <button 
-                                    className="card-action-btn approve-btn"
-                                    onClick={(e) => { e.stopPropagation(); onAccept(workOrder.id); }}
-                                >
-                                    ✓ Accept
-                                </button>
-                                <button 
-                                    className="card-action-btn reject-btn"
-                                    onClick={(e) => { e.stopPropagation(); onReject(workOrder.id); }}
-                                >
-                                    ✗ Reject
-                                </button>
-                            </>
-                        )}
                     </div>
 
                     {expanded === workOrder.id && (
