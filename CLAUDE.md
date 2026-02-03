@@ -239,3 +239,70 @@ All interactions must call real Supabase endpoints. Manual checklist:
 - [ ] Reject returns to draft
 - [ ] Mobile responsive
 - [ ] Toast notifications
+## Examples of Good Fixes (Few-Shot Calibration)
+
+Research shows examples improve output quality by ~26%. Use these patterns:
+
+### API Integration Fix
+```
+Problem: Approve button returns 400 error
+Diagnosis: 
+  1. Opened DevTools → Network tab
+  2. Clicked button, saw request
+  3. Response: "work_order_id required" but it was sent
+  4. Checked API spec - needs `approved_by` field too
+Fix: Added `approved_by: 'user'` to request body (line 1610)
+Verification: 
+  1. curl -X POST .../approve -d '{"work_order_id":"...", "approved_by":"user"}'
+  2. Got 200, then tested in browser
+```
+
+### React State Bug
+```
+Problem: Button stuck in loading state after error
+Diagnosis:
+  1. Clicked button → spinner appeared
+  2. API returned 500 → spinner never stopped
+  3. Found setLoading(false) only in .then(), not .catch()
+Fix: Moved setLoading(false) to .finally() block
+Verification: Disconnected network, clicked button, saw error toast + button reset
+```
+
+### Missing API Endpoint
+```
+Problem: Frontend calls /status but gets 404
+Diagnosis:
+  1. Checked edge function code
+  2. Endpoint not implemented, only /poll exists
+Fix Options:
+  A) Add /status endpoint to edge function
+  B) Change frontend to use /poll + transform data
+  C) Use direct Supabase REST query
+Recommendation: A - matches API spec, single source of truth
+```
+
+### Drag-Drop Not Persisting
+```
+Problem: Card moves visually but reverts on refresh
+Diagnosis:
+  1. Drag works (optimistic UI updates state)
+  2. Network tab shows no API call
+  3. Found handleDrop() missing await on api() call
+Fix: Added await, added error handling to rollback UI on failure
+Verification: Dragged card, refreshed page, card stayed in new column
+```
+
+### Bad Fix Anti-Patterns
+
+❌ **Don't:**
+- Just `console.log` the error and move on
+- Hide broken UI instead of fixing functionality  
+- Skip error handling ("it works on my machine")
+- Change the API spec to match broken code
+- Remove features instead of fixing them
+
+✅ **Do:**
+- Trace the full request/response cycle
+- Test the API independently (curl) before blaming frontend
+- Add proper error states and user feedback
+- Verify fix works in both success and failure cases
