@@ -571,16 +571,52 @@
 
         /* Mobile */
         @media (max-width: 768px) {
-            .sidebar { display: none; }
+            .sidebar { 
+                position: fixed;
+                left: -260px;
+                top: 0;
+                bottom: 0;
+                z-index: 100;
+                transition: left 0.3s ease;
+            }
+            .sidebar.open { left: 0; }
+            .sidebar-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 99;
+            }
+            .sidebar-overlay.show { display: block; }
+            .mobile-menu-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 36px;
+                height: 36px;
+                border: none;
+                background: var(--bg-elevated);
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 18px;
+            }
             .chat-container { padding: 0 16px; }
             .message.user .msg-bubble { max-width: 90%; }
+        }
+        @media (min-width: 769px) {
+            .mobile-menu-btn { display: none; }
+            .sidebar-overlay { display: none !important; }
         }
     </style>
 </head>
 <body>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
     <div class="app">
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">METIS</div>
                 <div class="logo-sub">AI Orchestration Portal</div>
@@ -595,6 +631,7 @@
         <main class="main">
             <header class="header">
                 <div class="header-left">
+                    <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
                     <span class="thread-title" id="threadTitle">New Conversation</span>
                 </div>
                 <div class="header-actions">
@@ -649,6 +686,12 @@
 
         // Marked config
         marked.setOptions({ breaks: true, gfm: true, headerIds: false });
+
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebarOverlay').classList.toggle('show');
+        }
 
         // Load chat history on init
         loadChatHistory();
