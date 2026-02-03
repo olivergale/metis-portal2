@@ -7,6 +7,7 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         /* ============================================
@@ -1122,6 +1123,9 @@
             { id: 'blocked', name: 'Blocked', color: 'blocked' },
         ];
 
+        // Initialize Supabase client for realtime
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
         // ============================================
         // API Helpers
         // ============================================
@@ -1550,16 +1554,46 @@
 
             const fetchData = useCallback(async () => {
                 try {
-                    const [woRes, agentsRes, eventsRes] = await Promise.all([
-                        api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
+                    const [statusRes, agentsRes, eventsRes] = await Promise.all([
+                        fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/status`, {
+                            headers: { 'apikey': SUPABASE_ANON_KEY }
+                        }).then(r => r.json()),
                         api('/rest/v1/agents?select=*&order=name.asc'),
                         workspaceApi('get_events', { limit: 30 })
                     ]);
-                    setWorkOrders(woRes);
+
+                    // Combine all work orders from status endpoint
+                    const allWorkOrders = [
+                        ...(statusRes.pending || []).map(wo => ({ ...wo, status: wo.status || 'draft' })),
+                        ...(statusRes.in_progress || []).map(wo => ({ ...wo, status: wo.status || 'in_progress' })),
+                        ...(statusRes.awaiting_review || []).map(wo => ({ ...wo, status: wo.status || 'review' })),
+                    ];
+
+                    // If status endpoint returns limited data, fall back to full query for complete board
+                    if (allWorkOrders.length === 0) {
+                        const fullRes = await api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc');
+                        setWorkOrders(fullRes);
+                    } else {
+                        // Also fetch done/blocked items not in status response
+                        const doneBlockedRes = await api('/rest/v1/work_orders?select=*&status=in.(done,blocked)&order=updated_at.desc&limit=20');
+                        setWorkOrders([...allWorkOrders, ...(doneBlockedRes || [])]);
+                    }
+
                     setAgents(agentsRes);
                     setEvents(eventsRes.events || []);
                 } catch (err) {
-                    addToast('Failed to load data', 'error');
+                    console.error('fetchData error:', err);
+                    // Fallback to direct REST query if status endpoint fails
+                    try {
+                        const [woRes, agentsRes] = await Promise.all([
+                            api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
+                            api('/rest/v1/agents?select=*&order=name.asc'),
+                        ]);
+                        setWorkOrders(woRes);
+                        setAgents(agentsRes);
+                    } catch (fallbackErr) {
+                        addToast('Failed to load data', 'error');
+                    }
                 } finally {
                     setLoading(false);
                 }
@@ -1567,10 +1601,39 @@
 
             useEffect(() => {
                 fetchData();
-                const dataInterval = setInterval(fetchData, 30000);
+
+                // Subscribe to realtime changes on work_orders table
+                const channel = supabase
+                    .channel('work_orders_changes')
+                    .on(
+                        'postgres_changes',
+                        { event: '*', schema: 'public', table: 'work_orders' },
+                        (payload) => {
+                            console.log('Realtime update:', payload.eventType, payload);
+                            if (payload.eventType === 'INSERT') {
+                                setWorkOrders(prev => [payload.new, ...prev]);
+                                addToast('New work order added', 'info');
+                            } else if (payload.eventType === 'UPDATE') {
+                                setWorkOrders(prev => prev.map(w =>
+                                    w.id === payload.new.id ? payload.new : w
+                                ));
+                            } else if (payload.eventType === 'DELETE') {
+                                setWorkOrders(prev => prev.filter(w => w.id !== payload.old.id));
+                            }
+                        }
+                    )
+                    .subscribe((status) => {
+                        console.log('Realtime subscription status:', status);
+                        if (status === 'SUBSCRIBED') {
+                            addToast('Connected to realtime updates', 'success');
+                        }
+                    });
+
+                // Clock update interval
                 const timeInterval = setInterval(() => setCurrentTime(new Date()), 1000);
+
                 return () => {
-                    clearInterval(dataInterval);
+                    supabase.removeChannel(channel);
                     clearInterval(timeInterval);
                 };
             }, [fetchData]);
@@ -1607,7 +1670,7 @@
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
                         },
-                        body: JSON.stringify({ work_order_id: workOrderId }),
+                        body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'endgame' }),
                     });
                     const data = await res.json();
                     if (data.approved) {
