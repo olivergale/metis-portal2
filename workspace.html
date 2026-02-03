@@ -674,6 +674,18 @@
             background: rgba(212, 116, 106, 0.3);
         }
 
+        .card-quick-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border-default);
+        }
+
+        .card-quick-actions:empty {
+            display: none;
+        }
+
         /* ============================================
            Live Feed Sidebar
            ============================================ */
@@ -1263,6 +1275,34 @@
                             </span>
                         )}
                         <span className="card-meta">{timeAgo(workOrder.created_at)}</span>
+                    </div>
+
+                    {/* Quick action buttons - always visible */}
+                    <div className="card-quick-actions">
+                        {workOrder.status === 'draft' && !workOrder.approved_at && (
+                            <button 
+                                className="card-action-btn approve-btn"
+                                onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id); }}
+                            >
+                                ✓ Approve
+                            </button>
+                        )}
+                        {workOrder.status === 'review' && (
+                            <>
+                                <button 
+                                    className="card-action-btn approve-btn"
+                                    onClick={(e) => { e.stopPropagation(); onAccept(workOrder.id); }}
+                                >
+                                    ✓ Accept
+                                </button>
+                                <button 
+                                    className="card-action-btn reject-btn"
+                                    onClick={(e) => { e.stopPropagation(); onReject(workOrder.id); }}
+                                >
+                                    ✗ Reject
+                                </button>
+                            </>
+                        )}
                     </div>
 
                     {expanded === workOrder.id && (
