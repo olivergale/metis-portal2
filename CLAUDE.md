@@ -186,6 +186,48 @@ Base: `https://phfblljwuvzqzlbzkzpr.supabase.co/rest/v1`
 2. Add `.column-dot.{status}` CSS color
 3. Update Supabase enum if using constraints
 
+## Communication Style
+
+**Always end with actionable choices.** Never just report findings - provide recommendations with clear options.
+
+### Response Format
+
+For audits, analysis, or exploration:
+1. **Summary** - What was found
+2. **Prioritized issues** - Table or list ranked by impact
+3. **Recommended action** - Your best suggestion
+4. **Options** - 2-3 choices (A/B/C) for user to pick
+
+### Examples
+
+Bad:
+> "Here's what I found: [list of issues]"
+
+Good:
+> "Here's what I found: [list]. I recommend fixing X first because it blocks Y.
+>
+> **Options:**
+> - A) Fix X now (recommended)
+> - B) Fix Y first, then X
+> - C) Fix all in one PR"
+
+### Decision Points
+
+**Ask before:**
+- Making architectural changes
+- Deleting or removing code
+- Multiple valid approaches exist (present tradeoffs)
+
+**Clarify when:**
+- Intent is uncertain (limit to 2 questions max)
+
+### Don't
+
+- Give long reports without next steps
+- Make major changes without confirmation
+- Present options without a recommendation
+- Ask more than 2 questions at once
+
 ## Testing
 
 All interactions must call real Supabase endpoints. Manual checklist:
