@@ -1718,6 +1718,10 @@
                         body: JSON.stringify({ work_order_id: workOrderId }),
                     });
                     const data = await res.json();
+                    if (!res.ok) {
+                        addToast(`Approval failed (${res.status}): ${data.error || data.message || 'Unknown error'}`, 'error');
+                        return;
+                    }
                     if (data.approved) {
                         setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
@@ -1746,6 +1750,10 @@
                         body: JSON.stringify({ work_order_id: workOrderId }),
                     });
                     const data = await res.json();
+                    if (!res.ok) {
+                        addToast(`Accept failed (${res.status}): ${data.error || data.message || 'Unknown error'}`, 'error');
+                        return;
+                    }
                     if (data.accepted) {
                         setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'done' } : w
@@ -1780,6 +1788,10 @@
                         body: JSON.stringify({ work_order_id: workOrderId, reason }),
                     });
                     const data = await res.json();
+                    if (!res.ok) {
+                        addToast(`Reject failed (${res.status}): ${data.error || data.message || 'Unknown error'}`, 'error');
+                        return;
+                    }
                     if (data.rejected) {
                         setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'draft', approved_at: null } : w
