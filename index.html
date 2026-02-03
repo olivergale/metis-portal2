@@ -363,6 +363,53 @@
             margin: 16px 0;
         }
 
+        /* Copy buttons */
+        .copy-btn {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 11px;
+            padding: 4px 8px;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .copy-btn:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        .copy-btn.copied {
+            background: var(--accent-muted);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .msg-header .copy-btn {
+            margin-left: auto;
+        }
+
+        .code-block-wrapper {
+            position: relative;
+        }
+
+        .code-block-wrapper .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .code-block-wrapper:hover .copy-btn {
+            opacity: 1;
+        }
+
         /* Message metadata */
         .msg-meta {
             padding-left: 38px;
@@ -676,8 +723,16 @@
                 return `<div class="message user"><div class="msg-bubble">${escapeHtml(msg.content)}</div></div>`;
             }
             
-            const content = marked.parse(msg.content || '');
+            let content = marked.parse(msg.content || '');
+            // Wrap code blocks with copy button
+            content = content.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, 
+                (match, attrs, code) => {
+                    const escapedCode = code.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    return `<div class="code-block-wrapper"><pre><code${attrs}>${code}</code></pre><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>`;
+                });
+            
             const meta = msg.metadata || {};
+            const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2);
             
             let metaHtml = '';
             if (meta.input_tokens || meta.langfuse_url) {
@@ -698,11 +753,12 @@
             }
 
             return `
-                <div class="message assistant">
+                <div class="message assistant" id="${msgId}" data-raw="${escapeHtml(msg.content)}">
                     <div class="msg-header">
                         <div class="msg-avatar">M</div>
                         <span class="msg-role">METIS</span>
                         <span class="msg-time">${new Date().toLocaleTimeString()}</span>
+                        <button class="copy-btn" onclick="copyMessage('${msgId}')">Copy Response</button>
                     </div>
                     <div class="msg-content">${content}</div>
                     ${metaHtml}
@@ -822,6 +878,50 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        async function copyMessage(msgId) {
+            const msgEl = document.getElementById(msgId);
+            if (!msgEl) return;
+            
+            const rawContent = msgEl.getAttribute('data-raw');
+            const textToCopy = rawContent ? decodeHtmlEntities(rawContent) : msgEl.querySelector('.msg-content').innerText;
+            
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+                const btn = msgEl.querySelector('.msg-header .copy-btn');
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy Response';
+                    btn.classList.remove('copied');
+                }, 2000);
+            } catch (err) {
+                console.error('Copy failed:', err);
+            }
+        }
+
+        async function copyCode(btn) {
+            const wrapper = btn.closest('.code-block-wrapper');
+            const code = wrapper.querySelector('code').innerText;
+            
+            try {
+                await navigator.clipboard.writeText(code);
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            } catch (err) {
+                console.error('Copy failed:', err);
+            }
+        }
+
+        function decodeHtmlEntities(text) {
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = text;
+            return textarea.value;
         }
 
         function openSettings() {
