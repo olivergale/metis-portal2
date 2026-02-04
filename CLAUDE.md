@@ -1,8 +1,8 @@
-# CRITICAL: USE MCP TOOLS, NOT CURL
+# ARCHITECTURE NOTE: Claude Code Limitations
 
-**You have MCP (Model Context Protocol) tools available as native functions.**
+**Claude Code does NOT have MCP tools.** Only METIS (Claude.ai chat) has Supabase, Slack, Notion access.
 
-DO NOT use curl/fetch for Supabase. Instead, call MCP tools directly:
+Your options for data access:
 
 ```
 Supabase:execute_sql
@@ -10,7 +10,9 @@ Supabase:list_tables
 Supabase:get_logs
 ```
 
-These bypass network restrictions and work reliably. curl to Supabase will fail with exit code 56.
+1. Ask METIS to query and paste results
+2. Read from CLAUDE.md (METIS updates this with current state)
+3. Use the work-order-executor API endpoints (these work via fetch in browser)
 
 ---
 
