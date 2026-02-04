@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "url": "https://mcp.supabase.com/mcp",
+      "description": "Supabase database access - project phfblljwuvzqzlbzkzpr"
+    },
+    "slack": {
+      "url": "https://mcp.slack.com/mcp",
+      "description": "Slack messaging"
+    },
+    "notion": {
+      "url": "https://mcp.notion.com/mcp", 
+      "description": "Notion dashboard (read-only)"
+    },
+    "figma": {
+      "url": "https://mcp.figma.com/mcp",
+      "description": "Figma design assets"
+    }
+  }
+}
