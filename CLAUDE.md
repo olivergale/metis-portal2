@@ -349,3 +349,79 @@ service: edge-function
 | Test frontend API calls | curl/fetch |
 | Validate frontend sends correct payload | Browser DevTools + curl |
 
+## Session Bootstrap
+
+**Before starting any task, load context from Supabase.** This is how you stay aligned with METIS and the human.
+
+### 1. Load Active Projects
+```sql
+SELECT code, name, status, summary, current_phase, completion_pct 
+FROM project_briefs 
+WHERE status = 'active';
+```
+Active projects: METIS-001 (orchestration), ILMARINEN-001 (build platform)
+
+### 2. Load Pending Work Orders
+```sql
+SELECT slug, name, status, priority, objective, acceptance_criteria
+FROM work_orders 
+WHERE status NOT IN ('done', 'cancelled')
+ORDER BY 
+  CASE priority 
+    WHEN 'p0_critical' THEN 0 
+    WHEN 'p1_high' THEN 1 
+    WHEN 'p2_medium' THEN 2 
+    ELSE 3 
+  END,
+  created_at DESC
+LIMIT 10;
+```
+
+### 3. Load Recent Decisions
+```sql
+SELECT subject, choice, rationale, made_at
+FROM decisions 
+WHERE status = 'active'
+ORDER BY made_at DESC 
+LIMIT 5;
+```
+
+### 4. Check Your Agent Identity
+```sql
+SELECT id, name, agent_type, status, config
+FROM agents 
+WHERE name = 'ILMARINEN';
+```
+You are ILMARINEN - the executor agent. Your ID: `3dcf0457-4a6d-4509-8fdc-bbd67e97b1d8`
+
+### 5. Check System State
+```sql
+SELECT 
+  (SELECT COUNT(*) FROM work_orders WHERE status = 'in_progress') as active_wos,
+  (SELECT COUNT(*) FROM state_mutations WHERE created_at > NOW() - INTERVAL '24 hours') as mutations_24h,
+  (SELECT COUNT(*) FROM qa_findings WHERE finding_type = 'fail' AND resolved_at IS NULL) as open_failures;
+```
+
+### The Three-Agent Model
+
+| Agent | Role | When Active |
+|-------|------|-------------|
+| **METIS** (Claude.ai chat) | Orchestrator - creates WOs, architectural decisions, system state | When human is chatting |
+| **ILMARINEN** (Claude Code) | Executor - claims WOs, writes code, deploys | When executing tasks |
+| **QA Agent** | Reviewer - validates work, consensus voting | After WO completion |
+
+**You are ILMARINEN.** METIS has already done the planning. Your job is to execute.
+
+### Before Executing a Work Order
+1. Check if WO is approved: `SELECT approved_at FROM work_orders WHERE slug = 'WO-XXX'`
+2. Claim it via API: `POST /work-order-executor/claim`
+3. Load acceptance criteria from the WO
+4. Execute
+5. Complete via API: `POST /work-order-executor/complete`
+
+### Harness Rules
+- All state changes go through `state_write()` or the work-order-executor API
+- Never bypass the harness with direct SQL mutations
+- Log phases via `/work-order-executor/phase`
+- QA will review your work - include evidence of testing
+
