@@ -15,6 +15,11 @@
     "figma": {
       "url": "https://mcp.figma.com/mcp",
       "description": "Figma design assets"
+    },
+    "asana": {
+      "url": "https://mcp.asana.com/v2/mcp",
+      "transport": "sse",
+      "description": "Asana task management"
     }
   }
 }
