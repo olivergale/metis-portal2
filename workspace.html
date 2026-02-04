@@ -1714,7 +1714,7 @@
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
                         },
-                        body: JSON.stringify({ work_order_id: workOrderId }),
+                        body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'user' }),
                     });
                     const data = await res.json();
                     if (data.approved) {
