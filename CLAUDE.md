@@ -1,3 +1,19 @@
+# CRITICAL: USE MCP TOOLS, NOT CURL
+
+**You have MCP (Model Context Protocol) tools available as native functions.**
+
+DO NOT use curl/fetch for Supabase. Instead, call MCP tools directly:
+
+```
+Supabase:execute_sql
+Supabase:list_tables  
+Supabase:get_logs
+```
+
+These bypass network restrictions and work reliably. curl to Supabase will fail with exit code 56.
+
+---
+
 # METIS Portal
 
 ## Overview
@@ -424,4 +440,3 @@ SELECT
 - Never bypass the harness with direct SQL mutations
 - Log phases via `/work-order-executor/phase`
 - QA will review your work - include evidence of testing
-
