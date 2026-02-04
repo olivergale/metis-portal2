@@ -306,3 +306,46 @@ Verification: Dragged card, refreshed page, card stayed in new column
 - Test the API independently (curl) before blaming frontend
 - Add proper error states and user feedback
 - Verify fix works in both success and failure cases
+
+## Available MCP Connectors
+
+You have access to these MCP tools. Use them directly - do not use curl when MCP is available.
+
+### Supabase MCP
+Query the database directly instead of using REST API:
+```
+Supabase:execute_sql - Run SELECT/INSERT/UPDATE/DELETE
+Supabase:list_tables - See all tables
+Supabase:get_logs - Check edge function logs
+```
+
+**Project ID:** `phfblljwuvzqzlbzkzpr`
+
+**Example - Check work order status:**
+```
+Supabase:execute_sql
+project_id: phfblljwuvzqzlbzkzpr  
+query: SELECT id, slug, status FROM work_orders WHERE status != 'done' ORDER BY updated_at DESC LIMIT 10
+```
+
+**Example - Debug approve failure:**
+```
+Supabase:get_logs
+project_id: phfblljwuvzqzlbzkzpr
+service: edge-function
+```
+
+### Other Available MCPs
+- **Slack** - Send notifications
+- **Notion** - Read dashboard (read-only)
+- **Figma** - Design assets
+- **GitHub** - Already connected via repo access
+
+### When to Use MCP vs API
+| Task | Use |
+|------|-----|
+| Query database | Supabase MCP |
+| Check edge function logs | Supabase MCP |
+| Test frontend API calls | curl/fetch |
+| Validate frontend sends correct payload | Browser DevTools + curl |
+
