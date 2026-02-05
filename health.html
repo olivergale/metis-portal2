@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Health - ENDGAME</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #2b2a27;
+            --bg-surface: #353432;
+            --bg-elevated: #3f3e3b;
+            --bg-hover: #4a4946;
+            --text-primary: #ececec;
+            --text-secondary: #b8b8b6;
+            --text-muted: #888886;
+            --border-default: #4a4946;
+            --border-strong: #5a5956;
+            --accent: #d4a574;
+            --accent-hover: #e0b588;
+            --accent-subtle: rgba(212, 165, 116, 0.15);
+            --status-active: #34D399;
+            --status-warning: #FBBF24;
+            --status-error: #F87171;
+            --status-muted: #9CA3AF;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            height: 100%;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .layout {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* ── Nav ── */
+        .top-nav {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            padding: 12px 32px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .top-nav .logo {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--accent);
+            letter-spacing: 0.5px;
+        }
+
+        .top-nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 4px 0;
+            transition: color 0.15s;
+        }
+
+        .top-nav a:hover { color: var(--text-primary); }
+        .top-nav a.active {
+            color: var(--accent);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .nav-spacer { flex: 1; }
+
+        .connection-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .connection-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--status-muted);
+        }
+
+        .connection-dot.connected { background: var(--status-active); }
+        .connection-dot.error { background: var(--status-error); }
+
+        /* ── Content ── */
+        .content {
+            flex: 1;
+            padding: 32px;
+            max-width: 1280px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+        }
+
+        .page-header h1 {
+            font-size: 22px;
+            font-weight: 600;
+        }
+
+        .page-header .subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        /* ── Cards Grid ── */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-header h3 {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        .card-value {
+            font-size: 36px;
+            font-weight: 700;
+            line-height: 1.1;
+            color: var(--text-primary);
+        }
+
+        .card-value .unit {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-left: 4px;
+        }
+
+        .card-detail {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .card-detail .label {
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+
+        /* ── Status Badges ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.active { background: rgba(52,211,153,0.15); color: #34D399; }
+        .badge.warning { background: rgba(251,191,36,0.15); color: #FBBF24; }
+        .badge.error { background: rgba(248,113,113,0.15); color: #F87171; }
+        .badge.muted { background: rgba(156,163,175,0.15); color: #9CA3AF; }
+
+        .badge-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* ── WO Pipeline ── */
+        .pipeline {
+            display: flex;
+            gap: 2px;
+            margin-top: 8px;
+        }
+
+        .pipeline-segment {
+            height: 6px;
+            border-radius: 3px;
+            flex: 1;
+            transition: flex 0.3s;
+        }
+
+        /* ── Table ── */
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .wo-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .wo-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg-elevated);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .wo-item .slug {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            color: var(--accent);
+            min-width: 100px;
+        }
+
+        .wo-item .name {
+            flex: 1;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .wo-status {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .wo-status.in_progress { background: rgba(251,191,36,0.15); color: #FBBF24; }
+        .wo-status.draft { background: rgba(156,163,175,0.15); color: #9CA3AF; }
+        .wo-status.ready { background: rgba(96,165,250,0.15); color: #60A5FA; }
+        .wo-status.review { background: rgba(167,139,250,0.15); color: #A78BFA; }
+        .wo-status.done { background: rgba(52,211,153,0.15); color: #34D399; }
+        .wo-status.blocked { background: rgba(248,113,113,0.15); color: #F87171; }
+
+        /* ── Lesson Stats ── */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row .stat-label { color: var(--text-muted); }
+        .stat-row .stat-value { color: var(--text-primary); font-weight: 600; }
+
+        /* ── Phase Progress ── */
+        .phase-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-hover);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .phase-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, var(--accent), #e0b588);
+            transition: width 0.5s ease;
+        }
+
+        /* ── Wide cards ── */
+        .grid-wide {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 768px) {
+            .grid-wide { grid-template-columns: 1fr; }
+            .content { padding: 16px; }
+            .top-nav { padding: 12px 16px; gap: 16px; }
+        }
+
+        /* ── Skeleton loading ── */
+        .skeleton {
+            background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 4px;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .footer {
+            padding: 12px 32px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-default);
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <nav class="top-nav">
+            <span class="logo">ENDGAME</span>
+            <a href="index.html">Chat</a>
+            <a href="workspace.html">Workspace</a>
+            <a href="health.html" class="active">Health</a>
+            <span class="nav-spacer"></span>
+            <div class="connection-badge">
+                <span class="connection-dot" id="connDot"></span>
+                <span id="connLabel">Connecting...</span>
+            </div>
+        </nav>
+
+        <div class="content">
+            <div class="page-header">
+                <div>
+                    <h1>System Health</h1>
+                    <span class="subtitle" id="lastUpdated">Loading...</span>
+                </div>
+                <div>
+                    <span class="badge muted" id="phaseBadge">--</span>
+                </div>
+            </div>
+
+            <!-- Top-level KPIs -->
+            <div class="grid">
+                <!-- Daemon -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Daemon</h3>
+                        <span class="badge muted" id="daemonBadge">--</span>
+                    </div>
+                    <div class="card-value" id="daemonStatus">--</div>
+                    <div class="card-detail">
+                        <span class="label">Last heartbeat:</span>
+                        <span id="daemonHeartbeat">--</span>
+                    </div>
+                </div>
+
+                <!-- Phase Progress -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Phase Progress</h3>
+                    </div>
+                    <div class="card-value"><span id="completionPct">--</span><span class="unit">%</span></div>
+                    <div class="phase-bar">
+                        <div class="phase-bar-fill" id="phaseBarFill" style="width:0%"></div>
+                    </div>
+                    <div class="card-detail">
+                        <span class="label">Phase:</span>
+                        <span id="currentPhase">--</span>
+                    </div>
+                </div>
+
+                <!-- WO Pipeline -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>WO Pipeline</h3>
+                    </div>
+                    <div class="card-value"><span id="activeWoCount">--</span></div>
+                    <div class="pipeline" id="pipeline"></div>
+                    <div class="card-detail">
+                        <span id="pipelineDetail">--</span>
+                    </div>
+                </div>
+
+                <!-- Completed This Week -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Completed (7d)</h3>
+                    </div>
+                    <div class="card-value"><span id="completedCount">--</span></div>
+                    <div class="card-detail">
+                        <span class="label">Lessons:</span>
+                        <span id="lessonTotal">--</span>
+                        <span class="label" style="margin-left:12px">Directives:</span>
+                        <span id="directiveTotal">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detail sections -->
+            <div class="grid-wide">
+                <!-- Active Work Orders -->
+                <div class="card">
+                    <div class="section-title">Active Work Orders</div>
+                    <div class="wo-list" id="woList">
+                        <div class="wo-item"><span class="name" style="color:var(--text-muted)">Loading...</span></div>
+                    </div>
+                </div>
+
+                <!-- System Components -->
+                <div class="card">
+                    <div class="section-title">System Stats</div>
+                    <div id="systemStats">
+                        <div class="stat-row"><span class="stat-label">Loading...</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Completions -->
+            <div class="card">
+                <div class="section-title">Recent Completions (7d)</div>
+                <div class="wo-list" id="completionsList">
+                    <div class="wo-item"><span class="name" style="color:var(--text-muted)">Loading...</span></div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            Auto-refreshing every 10s &middot; ENDGAME-001
+        </footer>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjAzODgsImV4cCI6MjA4NTA5NjM4OH0.mWIj2vtQb1F2Pk540f_S9WwsZFwZK0n6oeqUmZgDZlA';
+
+        async function apiFetch(endpoint, method = 'GET', body = null) {
+            const opts = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                },
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(`${SUPABASE_URL}${endpoint}`, opts);
+            return res.json();
+        }
+
+        function setConnection(ok) {
+            const dot = document.getElementById('connDot');
+            const label = document.getElementById('connLabel');
+            dot.className = 'connection-dot ' + (ok ? 'connected' : 'error');
+            label.textContent = ok ? 'Connected' : 'Disconnected';
+        }
+
+        function relativeTime(iso) {
+            if (!iso) return '--';
+            const diff = Date.now() - new Date(iso).getTime();
+            if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+            if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+            if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+            return `${Math.floor(diff / 86400000)}d ago`;
+        }
+
+        function formatDate(iso) {
+            if (!iso) return '--';
+            return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        async function refresh() {
+            try {
+                const [context, status] = await Promise.all([
+                    apiFetch('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
+                    apiFetch('/functions/v1/work-order-executor/status'),
+                ]);
+
+                setConnection(true);
+                document.getElementById('lastUpdated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+                // Phase
+                const phase = context.phase_status || {};
+                const pct = phase.completion_pct || 0;
+                document.getElementById('completionPct').textContent = pct;
+                document.getElementById('phaseBarFill').style.width = pct + '%';
+                document.getElementById('currentPhase').textContent = `Phase ${phase.current_phase || '?'}`;
+                const phaseBadge = document.getElementById('phaseBadge');
+                phaseBadge.textContent = `Phase ${phase.current_phase || '?'} \u2014 ${pct}%`;
+                phaseBadge.className = 'badge ' + (pct >= 90 ? 'active' : pct >= 50 ? 'warning' : 'muted');
+
+                // Daemon
+                const daemon = context.daemon_status || {};
+                const daemonActive = daemon.status === 'active';
+                document.getElementById('daemonStatus').textContent = daemonActive ? 'Active' : (daemon.status || 'Unknown');
+                const db = document.getElementById('daemonBadge');
+                db.textContent = daemonActive ? 'Online' : 'Offline';
+                db.className = 'badge ' + (daemonActive ? 'active' : 'error');
+                document.getElementById('daemonHeartbeat').textContent = relativeTime(daemon.last_heartbeat);
+
+                // WO Pipeline
+                const summary = context.summary || {};
+                const inProg = (status.in_progress || []).length;
+                const pending = (status.pending || []).length;
+                const blocked = summary.blocked_work_orders || 0;
+                const drafts = summary.draft_work_orders || 0;
+                const total = inProg + pending + drafts + blocked;
+                document.getElementById('activeWoCount').textContent = total;
+                document.getElementById('pipelineDetail').textContent =
+                    `${inProg} in progress \u00b7 ${pending} pending \u00b7 ${drafts} draft \u00b7 ${blocked} blocked`;
+
+                const pipe = document.getElementById('pipeline');
+                pipe.innerHTML = '';
+                const segments = [
+                    { count: inProg, color: '#FBBF24' },
+                    { count: pending, color: '#60A5FA' },
+                    { count: drafts, color: '#9CA3AF' },
+                    { count: blocked, color: '#F87171' },
+                ];
+                segments.forEach(s => {
+                    if (s.count > 0) {
+                        const el = document.createElement('div');
+                        el.className = 'pipeline-segment';
+                        el.style.flex = s.count;
+                        el.style.background = s.color;
+                        pipe.appendChild(el);
+                    }
+                });
+                if (total === 0) {
+                    const el = document.createElement('div');
+                    el.className = 'pipeline-segment';
+                    el.style.flex = 1;
+                    el.style.background = 'var(--bg-hover)';
+                    pipe.appendChild(el);
+                }
+
+                // Completed
+                const completions = context.recent_completions || [];
+                document.getElementById('completedCount').textContent = completions.length;
+                const lessonStats = context.lesson_stats || {};
+                document.getElementById('lessonTotal').textContent = lessonStats.total || 0;
+                document.getElementById('directiveTotal').textContent = context.directive_count || 0;
+
+                // Active WO list
+                const wos = context.work_orders || [];
+                const woList = document.getElementById('woList');
+                if (wos.length === 0) {
+                    woList.innerHTML = '<div class="wo-item"><span class="name" style="color:var(--text-muted)">No active work orders</span></div>';
+                } else {
+                    woList.innerHTML = wos.map(wo => `
+                        <div class="wo-item">
+                            <span class="slug">${wo.slug}</span>
+                            <span class="name">${wo.name || ''}</span>
+                            <span class="wo-status ${wo.status}">${wo.status}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // Completions list
+                const compList = document.getElementById('completionsList');
+                if (completions.length === 0) {
+                    compList.innerHTML = '<div class="wo-item"><span class="name" style="color:var(--text-muted)">No completions this week</span></div>';
+                } else {
+                    compList.innerHTML = completions.map(wo => `
+                        <div class="wo-item">
+                            <span class="slug">${wo.slug}</span>
+                            <span class="name">${wo.name || ''}</span>
+                            <span class="wo-status done">${formatDate(wo.completed_at)}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // System stats
+                const statsEl = document.getElementById('systemStats');
+                const manifestCounts = status.manifest_counts || {};
+                const lessonsBySev = status.unpromoted_lessons || {};
+                const rows = [
+                    ['Completed (24h)', status.completed_24h || 0],
+                    ['Awaiting Review', (status.awaiting_review || []).length],
+                    ['Lessons (unpromoted)', Object.values(lessonsBySev).reduce((a, b) => a + b, 0)],
+                    ['Edge Functions', manifestCounts.edge_function || 0],
+                    ['RPC Functions', manifestCounts.rpc_function || 0],
+                    ['Triggers', manifestCounts.trigger || 0],
+                    ['Integrations', manifestCounts.api_integration || 0],
+                    ['Harness Version', status.harness_version || '--'],
+                ];
+                statsEl.innerHTML = rows.map(([l, v]) => `
+                    <div class="stat-row">
+                        <span class="stat-label">${l}</span>
+                        <span class="stat-value">${v}</span>
+                    </div>
+                `).join('');
+
+            } catch (err) {
+                console.error('Refresh error:', err);
+                setConnection(false);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 10000);
+    </script>
+</body>
+</html>
