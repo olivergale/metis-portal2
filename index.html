@@ -569,6 +569,45 @@
             cursor: not-allowed;
         }
 
+        /* Plan mode indicator */
+        .plan-badge {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(116, 165, 212, 0.15);
+            border: 1px solid #74a5d4;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #74a5d4;
+            font-weight: 500;
+        }
+        .plan-badge.active { display: flex; }
+        .plan-badge-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #74a5d4;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .build-btn {
+            display: none;
+            padding: 8px 16px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: var(--bg-primary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .build-btn:hover { background: var(--accent-hover); }
+        .build-btn.active { display: inline-flex; }
+
         .send-btn svg {
             width: 20px;
             height: 20px;
@@ -670,6 +709,10 @@
                     <span class="thread-title" id="threadTitle">New Conversation</span>
                 </div>
                 <div class="header-actions">
+                    <div class="plan-badge" id="planBadge">
+                        <span class="plan-badge-dot"></span>
+                        <span>Plan Mode</span>
+                    </div>
                     <div class="status">
                         <span class="status-dot"></span>
                         <span>Connected</span>
@@ -699,6 +742,7 @@
                                     oninput="autoResize(this)"
                                 ></textarea>
                             </div>
+                            <button class="build-btn" id="buildBtn" onclick="sendBuild()">Build it</button>
                             <button class="send-btn" id="sendBtn" onclick="send()">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -718,6 +762,7 @@
         let threadId = null;
         let history = [];
         let isStreaming = false;
+        let isPlanMode = false;
 
         // Marked config with Prism highlighting
         marked.setOptions({ 
@@ -789,6 +834,7 @@
         function newChat() {
             threadId = null;
             history = [];
+            updatePlanModeUI(false);
             document.getElementById('messages').innerHTML = `
                 <div class="welcome">
                     <div class="welcome-icon">✦</div>
@@ -919,7 +965,12 @@
                     };
                     history.push(assistantMsg);
                     appendMessage(assistantMsg);
-                    
+
+                    // Track plan mode from response
+                    if (data.context?.plan_mode !== undefined) {
+                        updatePlanModeUI(data.context.plan_mode);
+                    }
+
                     // Update thread title if new
                     if (data.context?.history_messages === 0) {
                         document.getElementById('threadTitle').textContent = msg.slice(0, 50);
@@ -1019,6 +1070,18 @@
             const textarea = document.createElement('textarea');
             textarea.innerHTML = text;
             return textarea.value;
+        }
+
+        function updatePlanModeUI(active) {
+            isPlanMode = active;
+            document.getElementById('planBadge').classList.toggle('active', active);
+            document.getElementById('buildBtn').classList.toggle('active', active);
+            document.getElementById('input').placeholder = active ? 'Explore your idea with METIS...' : 'Message METIS...';
+        }
+
+        function sendBuild() {
+            document.getElementById('input').value = 'Build it';
+            send();
         }
 
         function openSettings() {
