@@ -2339,6 +2339,7 @@
             };
 
             const handleApprove = async (workOrderId) => {
+                if (actionLoading[workOrderId]) return;
                 setActionLoading(prev => ({ ...prev, [workOrderId]: 'approve' }));
                 try {
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/approve`, {
@@ -2350,13 +2351,17 @@
                         body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'user' }),
                     });
                     const data = await res.json();
+                    if (!res.ok) {
+                        addToast(data.error || `Approval failed (${res.status})`, 'error');
+                        return;
+                    }
                     if (data.approved) {
                         setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
                         ));
                         addToast('Work order approved - ready for execution', 'success');
                     } else {
-                        addToast(data.error || 'Approval failed', 'error');
+                        addToast(data.error || data.message || 'Approval failed', 'error');
                     }
                 } catch (err) {
                     addToast('Failed to approve: ' + err.message, 'error');
@@ -2366,6 +2371,7 @@
             };
 
             const handleAccept = async (workOrderId) => {
+                if (actionLoading[workOrderId]) return;
                 setActionLoading(prev => ({ ...prev, [workOrderId]: 'accept' }));
                 try {
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/accept`, {
@@ -2377,11 +2383,15 @@
                         body: JSON.stringify({ work_order_id: workOrderId }),
                     });
                     const data = await res.json();
+                    if (!res.ok) {
+                        addToast(data.error || `Accept failed (${res.status})`, 'error');
+                        return;
+                    }
                     if (data.accepted) {
                         setWorkOrders(prev => prev.map(w =>
                             w.id === workOrderId ? { ...w, status: 'done' } : w
                         ));
-                        addToast('Work accepted - marked as done', 'success');
+                        addToast(data.already_done ? 'Already accepted' : 'Work accepted - marked as done', 'success');
                     } else {
                         addToast(data.error || 'Accept failed', 'error');
                     }
