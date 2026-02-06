@@ -265,6 +265,36 @@
         .wo-status.done { background: rgba(52,211,153,0.15); color: #34D399; }
         .wo-status.blocked { background: rgba(248,113,113,0.15); color: #F87171; }
 
+        /* ── State Integrity ── */
+        .check-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: var(--bg-elevated);
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .check-icon {
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .check-icon.pass { background: rgba(52,211,153,0.2); color: #34D399; }
+        .check-icon.fail { background: rgba(248,113,113,0.2); color: #F87171; }
+        .check-icon.warn { background: rgba(251,191,36,0.2); color: #FBBF24; }
+
+        .check-label { flex: 1; color: var(--text-secondary); }
+        .check-detail { font-size: 12px; color: var(--text-muted); }
+
         /* ── Lesson Stats ── */
         .stat-row {
             display: flex;
@@ -441,6 +471,17 @@
             </div>
         </div>
 
+        <!-- State Integrity Checks -->
+        <div class="content" style="padding-top:0; margin-top:-8px;">
+            <div class="card">
+                <div class="section-title">State Integrity</div>
+                <div id="integrityChecks">
+                    <div class="check-row"><span class="check-label" style="color:var(--text-muted)">Running checks...</span></div>
+                </div>
+                <div style="margin-top:8px; font-size:11px; color:var(--text-muted);" id="integrityTimestamp"></div>
+            </div>
+        </div>
+
         <footer class="footer">
             Auto-refreshing every 10s &middot; ENDGAME-001
         </footer>
@@ -606,6 +647,89 @@
                         <span class="stat-value">${v}</span>
                     </div>
                 `).join('');
+
+                // ── State Integrity Checks ──
+                const checks = [];
+
+                // Check 1: Phase status consistency
+                const phaseNum = phase.current_phase || 0;
+                const phasePct = phase.completion_pct || 0;
+                const phases = phase.phases || {};
+                const phaseKeys = Object.keys(phases);
+                const activePhases = phaseKeys.filter(k => phases[k]?.status === 'active');
+                const completedPhases = phaseKeys.filter(k => phases[k]?.status === 'complete');
+                if (activePhases.length === 1 && completedPhases.length === phaseNum - 1) {
+                    checks.push({ status: 'pass', label: 'Phase consistency', detail: `Phase ${phaseNum} active, ${completedPhases.length} complete` });
+                } else if (activePhases.length === 0 && phaseKeys.length > 0) {
+                    checks.push({ status: 'warn', label: 'Phase consistency', detail: 'No active phase detected' });
+                } else {
+                    checks.push({ status: 'pass', label: 'Phase consistency', detail: `${activePhases.length} active, ${completedPhases.length} complete` });
+                }
+
+                // Check 2: Stale in_progress WOs (>24h)
+                const activeWos = (context.work_orders || []).filter(w => w.status === 'in_progress');
+                const staleWos = activeWos.filter(w => {
+                    if (!w.started_at) return false;
+                    return (Date.now() - new Date(w.started_at).getTime()) > 86400000;
+                });
+                if (staleWos.length === 0) {
+                    checks.push({ status: 'pass', label: 'WO freshness', detail: `${activeWos.length} in_progress, none stale` });
+                } else {
+                    checks.push({ status: 'fail', label: 'WO freshness', detail: `${staleWos.length} WO(s) in_progress >24h: ${staleWos.map(w => w.slug).join(', ')}` });
+                }
+
+                // Check 3: Daemon heartbeat freshness
+                const hb = daemon.last_heartbeat;
+                if (hb) {
+                    const hbAge = Date.now() - new Date(hb).getTime();
+                    if (hbAge < 120000) {
+                        checks.push({ status: 'pass', label: 'Daemon heartbeat', detail: `${Math.floor(hbAge / 1000)}s ago` });
+                    } else if (hbAge < 600000) {
+                        checks.push({ status: 'warn', label: 'Daemon heartbeat', detail: `${Math.floor(hbAge / 60000)}m ago — may be delayed` });
+                    } else {
+                        checks.push({ status: 'fail', label: 'Daemon heartbeat', detail: `${Math.floor(hbAge / 60000)}m ago — daemon may be down` });
+                    }
+                } else {
+                    checks.push({ status: 'warn', label: 'Daemon heartbeat', detail: 'No heartbeat data' });
+                }
+
+                // Check 4: Lessons → Directives promotion pipeline
+                const lessonCount = lessonStats.total || 0;
+                const dirCount = context.directive_count || 0;
+                const unpromotedCount = Object.values(lessonsBySev || {}).reduce((a, b) => a + b, 0);
+                if (lessonCount > 0 && dirCount > 0) {
+                    checks.push({ status: 'pass', label: 'Learning pipeline', detail: `${lessonCount} lessons, ${dirCount} directives, ${unpromotedCount} unpromoted` });
+                } else if (lessonCount > 0 && dirCount === 0) {
+                    checks.push({ status: 'warn', label: 'Learning pipeline', detail: `${lessonCount} lessons but 0 directives — promoter may not have run` });
+                } else {
+                    checks.push({ status: 'pass', label: 'Learning pipeline', detail: 'No lessons yet' });
+                }
+
+                // Check 5: Manifest vs live edge functions
+                const manifestEfCount = manifestCounts.edge_function || 0;
+                if (manifestEfCount >= 20) {
+                    checks.push({ status: 'pass', label: 'Manifest coverage', detail: `${manifestEfCount} edge functions registered` });
+                } else {
+                    checks.push({ status: 'warn', label: 'Manifest coverage', detail: `Only ${manifestEfCount} edge functions in manifest — some may be unregistered` });
+                }
+
+                // Check 6: Context-load connectivity
+                if (context.agents && context.work_orders !== undefined) {
+                    checks.push({ status: 'pass', label: 'Context-load', detail: 'All data sources responding' });
+                } else {
+                    checks.push({ status: 'fail', label: 'Context-load', detail: 'Missing data sources in context response' });
+                }
+
+                // Render checks
+                const checksEl = document.getElementById('integrityChecks');
+                checksEl.innerHTML = checks.map(c => `
+                    <div class="check-row">
+                        <span class="check-icon ${c.status}">${c.status === 'pass' ? '✓' : c.status === 'fail' ? '✗' : '!'}</span>
+                        <span class="check-label">${c.label}</span>
+                        <span class="check-detail">${c.detail}</span>
+                    </div>
+                `).join('');
+                document.getElementById('integrityTimestamp').textContent = `Last checked: ${new Date().toLocaleTimeString()}`;
 
             } catch (err) {
                 console.error('Refresh error:', err);
