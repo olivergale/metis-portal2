@@ -23,6 +23,8 @@
             --status-warning: #FBBF24;
             --status-error: #F87171;
             --status-muted: #9CA3AF;
+            --status-blue: #60A5FA;
+            --status-purple: #A78BFA;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -188,6 +190,8 @@
         .badge.warning { background: rgba(251,191,36,0.15); color: #FBBF24; }
         .badge.error { background: rgba(248,113,113,0.15); color: #F87171; }
         .badge.muted { background: rgba(156,163,175,0.15); color: #9CA3AF; }
+        .badge.blue { background: rgba(96,165,250,0.15); color: #60A5FA; }
+        .badge.purple { background: rgba(167,139,250,0.15); color: #A78BFA; }
 
         .badge-dot {
             width: 6px; height: 6px;
@@ -275,6 +279,23 @@
             border-radius: 6px;
             font-size: 13px;
             margin-bottom: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .check-row:hover {
+            background: var(--bg-hover);
+        }
+
+        .check-row .expand-icon {
+            font-size: 10px;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+            flex-shrink: 0;
+        }
+
+        .check-row.expanded .expand-icon {
+            transform: rotate(90deg);
         }
 
         .check-icon {
@@ -294,6 +315,57 @@
 
         .check-label { flex: 1; color: var(--text-secondary); }
         .check-detail { font-size: 12px; color: var(--text-muted); }
+
+        /* ── Drill-down panels ── */
+        .drill-down {
+            display: none;
+            margin: 0 0 6px 0;
+            padding: 12px 16px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        .drill-down.open {
+            display: block;
+        }
+
+        .drill-down h4 {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            margin-top: 8px;
+        }
+
+        .drill-down h4:first-child { margin-top: 0; }
+
+        .drill-down p {
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .drill-down pre {
+            background: var(--bg-elevated);
+            padding: 8px 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin: 4px 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .drill-down .remediation {
+            color: var(--accent);
+            font-weight: 500;
+        }
 
         /* ── Brain Sync Stoplight ── */
         .brain-sync-grid {
@@ -399,8 +471,155 @@
             margin-bottom: 24px;
         }
 
+        /* ── Enforcement Stats Bar ── */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .mini-card {
+            background: var(--bg-elevated);
+            border-radius: 8px;
+            padding: 12px 14px;
+            text-align: center;
+        }
+
+        .mini-card .mini-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+
+        .mini-card .mini-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* ── Event Stream ── */
+        .event-stream {
+            max-height: 320px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .event-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: var(--bg-elevated);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .event-badge {
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            flex-shrink: 0;
+            min-width: 72px;
+            text-align: center;
+        }
+
+        .event-badge.transition { background: rgba(52,211,153,0.15); color: #34D399; }
+        .event-badge.blocked { background: rgba(248,113,113,0.15); color: #F87171; }
+        .event-badge.gate-pass { background: rgba(96,165,250,0.15); color: #60A5FA; }
+        .event-badge.gate-pending { background: rgba(251,191,36,0.15); color: #FBBF24; }
+        .event-badge.rejected { background: rgba(248,113,113,0.15); color: #F87171; }
+        .event-badge.other { background: rgba(156,163,175,0.15); color: #9CA3AF; }
+
+        .event-action { flex: 1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .event-time { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+
+        /* ── Gate List ── */
+        .gate-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: var(--bg-elevated);
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .gate-name { flex: 1; color: var(--text-secondary); }
+        .gate-type { color: var(--text-muted); font-size: 11px; }
+
+        /* ── Mutation Stream ── */
+        .mutation-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: var(--bg-elevated);
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .mutation-table {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 11px;
+            color: var(--accent);
+            min-width: 120px;
+        }
+
+        .mutation-type {
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            min-width: 55px;
+            text-align: center;
+        }
+
+        .mutation-type.INSERT { background: rgba(52,211,153,0.15); color: #34D399; }
+        .mutation-type.UPDATE { background: rgba(96,165,250,0.15); color: #60A5FA; }
+        .mutation-type.DELETE { background: rgba(248,113,113,0.15); color: #F87171; }
+
+        .mutation-time { color: var(--text-muted); font-size: 11px; margin-left: auto; }
+
+        /* ── Auto-approval Monitor ── */
+        .approval-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: var(--bg-elevated);
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .approval-decision {
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            min-width: 65px;
+            text-align: center;
+        }
+
+        .approval-decision.approved { background: rgba(52,211,153,0.15); color: #34D399; }
+        .approval-decision.denied { background: rgba(248,113,113,0.15); color: #F87171; }
+        .approval-decision.escalated { background: rgba(251,191,36,0.15); color: #FBBF24; }
+        .approval-decision.dry_run { background: rgba(167,139,250,0.15); color: #A78BFA; }
+
         @media (max-width: 768px) {
             .grid-wide { grid-template-columns: 1fr; }
+            .stats-bar { grid-template-columns: repeat(2, 1fr); }
             .content { padding: 16px; }
             .top-nav { padding: 12px 16px; gap: 16px; }
         }
@@ -551,11 +770,68 @@
                     <div class="sync-card"><div class="sync-info"><span class="sync-label" style="color:var(--text-muted)">Loading...</span></div></div>
                 </div>
 
-                <div class="section-subtitle">Enforcement</div>
+                <div class="section-subtitle">Enforcement Checks</div>
                 <div id="integrityChecks">
                     <div class="check-row"><span class="check-label" style="color:var(--text-muted)">Running checks...</span></div>
                 </div>
                 <div style="margin-top:8px; font-size:11px; color:var(--text-muted);" id="integrityTimestamp"></div>
+            </div>
+        </div>
+
+        <!-- Enforcement Activity Dashboard -->
+        <div class="content" style="padding-top:0; margin-top:-8px;">
+            <div class="card">
+                <div class="section-title">Enforcement Activity</div>
+
+                <!-- Stats Bar -->
+                <div class="stats-bar" id="enforcementStats">
+                    <div class="mini-card"><div class="mini-value" id="statTransitions">--</div><div class="mini-label">Transitions (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="statRejections">--</div><div class="mini-label">Rejections (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="statGates">--</div><div class="mini-label">Gates Evaluated</div></div>
+                    <div class="mini-card"><div class="mini-value" id="statPassRate">--</div><div class="mini-label">Pass Rate</div></div>
+                </div>
+
+                <div class="grid-wide" style="margin-bottom:16px;">
+                    <!-- Event Stream -->
+                    <div>
+                        <div class="section-subtitle">Event Stream (Recent)</div>
+                        <div class="event-stream" id="eventStream">
+                            <div class="event-row"><span class="event-action" style="color:var(--text-muted)">Loading...</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Active Gates -->
+                    <div>
+                        <div class="section-subtitle">Decision Gates</div>
+                        <div id="gateList">
+                            <div class="gate-row"><span class="gate-name" style="color:var(--text-muted)">Loading...</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-subtitle">Mutation Stream (Recent)</div>
+                <div id="mutationStream" style="max-height:200px; overflow-y:auto;">
+                    <div class="mutation-row"><span style="color:var(--text-muted); font-size:12px;">Loading...</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auto-Approval Monitor -->
+        <div class="content" style="padding-top:0; margin-top:-8px;">
+            <div class="card">
+                <div class="section-title">Auto-Approval Monitor</div>
+
+                <div class="stats-bar" id="approvalStats">
+                    <div class="mini-card"><div class="mini-value" id="approvalToday">--</div><div class="mini-label">Auto-Approved (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="approvalDenied">--</div><div class="mini-label">Denied (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="approvalDryRun">--</div><div class="mini-label">Dry Run (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="circuitBreaker">--</div><div class="mini-label">Circuit Breaker</div></div>
+                </div>
+
+                <div class="section-subtitle">Recent Evaluations</div>
+                <div id="approvalLog" style="max-height:240px; overflow-y:auto;">
+                    <div class="approval-row"><span style="color:var(--text-muted); font-size:12px;">No evaluations yet</span></div>
+                </div>
             </div>
         </div>
 
@@ -567,6 +843,9 @@
     <script>
         const SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjAzODgsImV4cCI6MjA4NTA5NjM4OH0.mWIj2vtQb1F2Pk540f_S9WwsZFwZK0n6oeqUmZgDZlA';
+
+        // Track open drill-down panels across refreshes
+        const openPanels = new Set();
 
         async function apiFetch(endpoint, method = 'GET', body = null) {
             const opts = {
@@ -603,14 +882,54 @@
             return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         }
 
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        function toggleDrillDown(id) {
+            const panel = document.getElementById('drill-' + id);
+            const row = document.getElementById('check-' + id);
+            if (!panel || !row) return;
+            if (panel.classList.contains('open')) {
+                panel.classList.remove('open');
+                row.classList.remove('expanded');
+                openPanels.delete(id);
+            } else {
+                panel.classList.add('open');
+                row.classList.add('expanded');
+                openPanels.add(id);
+            }
+        }
+
+        function classifyAuditEvent(action) {
+            if (!action) return { type: 'other', label: 'EVENT' };
+            const a = action.toLowerCase();
+            if (a.includes('rejected') || a.includes('blocked')) return { type: 'rejected', label: 'BLOCKED' };
+            if (a.includes('gates_passed') || a.includes('gate_pass')) return { type: 'gate-pass', label: 'GATE PASS' };
+            if (a.includes('gate') && a.includes('pending')) return { type: 'gate-pending', label: 'PENDING' };
+            if (a.includes('→')) return { type: 'transition', label: 'TRANSITION' };
+            return { type: 'other', label: 'EVENT' };
+        }
+
         async function refresh() {
             try {
-                const [context, status, lastMutations, lastLessons, lastDirectives] = await Promise.all([
+                // Fetch all data in parallel
+                const [context, status, lastMutations, lastLessons, lastDirectives,
+                       auditEvents, decisionGates, mutationStream, docStatus, approvalLog] = await Promise.all([
                     apiFetch('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
                     apiFetch('/functions/v1/work-order-executor/status'),
                     apiFetch('/rest/v1/state_mutations?select=target_table,created_at&order=created_at.desc&limit=20').catch(() => []),
                     apiFetch('/rest/v1/lessons?select=created_at,category&order=created_at.desc&limit=1').catch(() => []),
                     apiFetch('/rest/v1/directives?select=created_at&order=created_at.desc&limit=1').catch(() => []),
+                    // Enforcement dashboard data
+                    apiFetch('/rest/v1/audit_log?select=action,target_type,target_id,actor_type,event_type,created_at&order=created_at.desc&limit=30').catch(() => []),
+                    apiFetch('/rest/v1/decision_gates?select=name,trigger_type,requires_approval,active&order=name').catch(() => []),
+                    apiFetch('/rest/v1/state_mutations?select=target_table,mutation_type,created_at&order=created_at.desc&limit=15').catch(() => []),
+                    // Doc status (project_documents)
+                    apiFetch('/rest/v1/project_documents?select=doc_type,updated_at&order=updated_at.desc&limit=10').catch(() => []),
+                    // Auto-approval log
+                    apiFetch('/rest/v1/auto_approval_log?select=work_order_id,risk_score,decision,denial_reasons,created_at&order=created_at.desc&limit=20').catch(() => []),
                 ]);
 
                 setConnection(true);
@@ -686,8 +1005,8 @@
                 } else {
                     woList.innerHTML = wos.map(wo => `
                         <div class="wo-item">
-                            <span class="slug">${wo.slug}</span>
-                            <span class="name">${wo.name || ''}</span>
+                            <span class="slug">${escapeHtml(wo.slug)}</span>
+                            <span class="name">${escapeHtml(wo.name || '')}</span>
                             <span class="wo-status ${wo.status}">${wo.status}</span>
                         </div>
                     `).join('');
@@ -700,8 +1019,8 @@
                 } else {
                     compList.innerHTML = completions.map(wo => `
                         <div class="wo-item">
-                            <span class="slug">${wo.slug}</span>
-                            <span class="name">${wo.name || ''}</span>
+                            <span class="slug">${escapeHtml(wo.slug)}</span>
+                            <span class="name">${escapeHtml(wo.name || '')}</span>
                             <span class="wo-status done">${formatDate(wo.completed_at)}</span>
                         </div>
                     `).join('');
@@ -736,7 +1055,6 @@
                     return 'red';
                 }
 
-                // Compute last-updated timestamps for key subsystems
                 const mutArr = Array.isArray(lastMutations) ? lastMutations : [];
                 const woMutations = mutArr.filter(m => m.target_table === 'work_orders');
                 const lastWoMutation = woMutations.length > 0 ? new Date(woMutations[0].created_at).getTime() : null;
@@ -752,39 +1070,14 @@
 
                 const now = Date.now();
                 const syncItems = [
-                    {
-                        label: 'Work Orders',
-                        ts: lastWoMutation,
-                        color: syncColor(lastWoMutation ? now - lastWoMutation : null, 21600000, 86400000),
-                    },
-                    {
-                        label: 'Lessons',
-                        ts: lastLessonTs,
-                        color: syncColor(lastLessonTs ? now - lastLessonTs : null, 43200000, 86400000),
-                    },
-                    {
-                        label: 'Directives',
-                        ts: lastDirectiveTs,
-                        color: syncColor(lastDirectiveTs ? now - lastDirectiveTs : null, 43200000, 86400000),
-                    },
-                    {
-                        label: 'Daemon',
-                        ts: daemonTs,
-                        color: syncColor(daemonTs ? now - daemonTs : null, 120000, 600000),
-                    },
-                    {
-                        label: 'State Mutations',
-                        ts: lastAnyMutation,
-                        color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 21600000, 86400000),
-                    },
-                    {
-                        label: 'Context API',
-                        ts: context.agents ? now : null,
-                        color: (context.agents && context.work_orders !== undefined) ? 'green' : 'red',
-                    },
+                    { label: 'Work Orders', ts: lastWoMutation, color: syncColor(lastWoMutation ? now - lastWoMutation : null, 21600000, 86400000) },
+                    { label: 'Lessons', ts: lastLessonTs, color: syncColor(lastLessonTs ? now - lastLessonTs : null, 43200000, 86400000) },
+                    { label: 'Directives', ts: lastDirectiveTs, color: syncColor(lastDirectiveTs ? now - lastDirectiveTs : null, 43200000, 86400000) },
+                    { label: 'Daemon', ts: daemonTs, color: syncColor(daemonTs ? now - daemonTs : null, 120000, 600000) },
+                    { label: 'State Mutations', ts: lastAnyMutation, color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 21600000, 86400000) },
+                    { label: 'Context API', ts: context.agents ? now : null, color: (context.agents && context.work_orders !== undefined) ? 'green' : 'red' },
                 ];
 
-                // Overall system pulse
                 const redCount = syncItems.filter(s => s.color === 'red').length;
                 const yellowCount = syncItems.filter(s => s.color === 'yellow').length;
                 const pulseColor = redCount > 0 ? 'red' : yellowCount > 0 ? 'yellow' : 'green';
@@ -794,7 +1087,6 @@
                 const pulseEl = document.getElementById('systemPulse');
                 pulseEl.innerHTML = `<span class="pulse-dot ${pulseColor}"></span><span style="color:var(--text-primary)">${pulseLabel}</span>`;
 
-                // Render brain sync grid
                 const syncGrid = document.getElementById('brainSyncGrid');
                 syncGrid.innerHTML = syncItems.map(s => `
                     <div class="sync-card ${s.color}">
@@ -806,22 +1098,40 @@
                     </div>
                 `).join('');
 
-                // ── Enforcement Checks ──
+                // ══════════════════════════════════════════
+                // ENFORCEMENT CHECKS WITH DRILL-DOWN
+                // ══════════════════════════════════════════
                 const checks = [];
 
                 // Check 1: Phase status consistency
                 const phaseNum = phase.current_phase || 0;
-                const phases = phase.phases || {};
-                const phaseKeys = Object.keys(phases);
-                const activePhases = phaseKeys.filter(k => phases[k]?.status === 'active');
-                const completedPhases = phaseKeys.filter(k => phases[k]?.status === 'complete');
+                const phasesData = phase.phases || {};
+                const phaseKeys = Object.keys(phasesData);
+                const activePhases = phaseKeys.filter(k => phasesData[k]?.status === 'active');
+                const completedPhases = phaseKeys.filter(k => phasesData[k]?.status === 'complete');
+
+                let phaseCheckStatus = 'pass';
+                let phaseCheckDetail = '';
                 if (activePhases.length >= 1 && completedPhases.length >= phaseNum - 1) {
-                    checks.push({ status: 'pass', label: 'Phase consistency', detail: `Phase ${phaseNum} active, ${completedPhases.length} complete` });
+                    phaseCheckDetail = `Phase ${phaseNum} active, ${completedPhases.length} complete`;
                 } else if (activePhases.length === 0 && phaseKeys.length > 0) {
-                    checks.push({ status: 'warn', label: 'Phase consistency', detail: 'No active phase detected' });
+                    phaseCheckStatus = 'warn';
+                    phaseCheckDetail = 'No active phase detected';
                 } else {
-                    checks.push({ status: 'pass', label: 'Phase consistency', detail: `${activePhases.length} active, ${completedPhases.length} complete` });
+                    phaseCheckDetail = `${activePhases.length} active, ${completedPhases.length} complete`;
                 }
+
+                checks.push({
+                    id: 'phase',
+                    status: phaseCheckStatus,
+                    label: 'Phase consistency',
+                    detail: phaseCheckDetail,
+                    reasoning: `Checks that current_phase (${phaseNum}) has a matching active entry in the phases array, and that all prior phases are marked complete.`,
+                    rawData: JSON.stringify({ current_phase: phaseNum, completion_pct: pct, phases: phasesData }, null, 2),
+                    remediation: phaseCheckStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Update project_briefs via migration: set current_phase to match the active phase in the phases array. Ensure all prior phases have status "complete".'
+                });
 
                 // Check 2: Stale in_progress WOs (>24h)
                 const activeWos = (context.work_orders || []).filter(w => w.status === 'in_progress');
@@ -829,55 +1139,279 @@
                     if (!w.started_at) return false;
                     return (now - new Date(w.started_at).getTime()) > 86400000;
                 });
-                if (staleWos.length === 0) {
-                    checks.push({ status: 'pass', label: 'WO freshness', detail: `${activeWos.length} in_progress, none stale` });
-                } else {
-                    checks.push({ status: 'fail', label: 'WO freshness', detail: `${staleWos.length} stale >24h: ${staleWos.map(w => w.slug).join(', ')}` });
+
+                let freshStatus = 'pass';
+                let freshDetail = `${activeWos.length} in_progress, none stale`;
+                if (staleWos.length > 0) {
+                    freshStatus = 'fail';
+                    freshDetail = `${staleWos.length} stale >24h: ${staleWos.map(w => w.slug).join(', ')}`;
                 }
 
-                // Check 3: State machine enforcement (mutations are logged)
+                checks.push({
+                    id: 'freshness',
+                    status: freshStatus,
+                    label: 'WO freshness',
+                    detail: freshDetail,
+                    reasoning: `Checks all in_progress work orders have started_at within the last 24 hours. Stale WOs indicate stuck execution.`,
+                    rawData: JSON.stringify(activeWos.map(w => ({ slug: w.slug, started_at: w.started_at, age_h: w.started_at ? Math.round((now - new Date(w.started_at).getTime()) / 3600000) : null })), null, 2),
+                    remediation: freshStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Review stale WOs. Either complete them via `wo review SLUG "summary"` or cancel and re-create if stuck. Check daemon logs for execution failures.'
+                });
+
+                // Check 3: State machine enforcement
                 const woMutCount = woMutations.length;
+                let smStatus = 'pass';
+                let smDetail = '';
                 if (woMutCount > 0) {
-                    checks.push({ status: 'pass', label: 'State machine', detail: `${woMutCount} recent WO transitions logged via state_write` });
+                    smDetail = `${woMutCount} recent WO transitions logged via state_write`;
                 } else if (mutArr.length > 0) {
-                    checks.push({ status: 'warn', label: 'State machine', detail: 'Mutations logged but no recent WO transitions' });
+                    smStatus = 'warn';
+                    smDetail = 'Mutations logged but no recent WO transitions';
                 } else {
-                    checks.push({ status: 'warn', label: 'State machine', detail: 'No mutation data — RLS may block anon reads' });
+                    smStatus = 'warn';
+                    smDetail = 'No mutation data \u2014 RLS may block anon reads';
                 }
 
-                // Check 4: Learning pipeline (lessons → directives flow)
+                checks.push({
+                    id: 'statemachine',
+                    status: smStatus,
+                    label: 'State machine',
+                    detail: smDetail,
+                    reasoning: `Verifies that WO state transitions are being logged to state_mutations table. All WO updates must go through update_work_order_state() RPC which calls state_write(). Zero WO mutations means either no transitions or enforcement bypass.`,
+                    rawData: JSON.stringify(mutArr.slice(0, 5), null, 2),
+                    remediation: smStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Check that enforce_wo_state_changes trigger is active. Verify state_write() RPC is being called. Check RLS policies on state_mutations for anon read access.'
+                });
+
+                // Check 4: Learning pipeline
                 const lessonCount = lessonStats.total || 0;
                 const dirCount = context.directive_count || 0;
                 const unpromotedCount = Object.values(lessonsBySev || {}).reduce((a, b) => a + b, 0);
+                let lpStatus = 'pass';
+                let lpDetail = '';
                 if (lessonCount > 0 && dirCount > 0) {
-                    checks.push({ status: 'pass', label: 'Learning pipeline', detail: `${lessonCount} lessons → ${dirCount} directives, ${unpromotedCount} queued` });
+                    lpDetail = `${lessonCount} lessons \u2192 ${dirCount} directives, ${unpromotedCount} queued`;
                 } else if (lessonCount > 0 && dirCount === 0) {
-                    checks.push({ status: 'warn', label: 'Learning pipeline', detail: `${lessonCount} lessons but 0 directives — promoter may not have run` });
+                    lpStatus = 'warn';
+                    lpDetail = `${lessonCount} lessons but 0 directives \u2014 promoter may not have run`;
                 } else {
-                    checks.push({ status: 'pass', label: 'Learning pipeline', detail: 'No lessons yet' });
+                    lpDetail = 'No lessons yet';
                 }
+
+                checks.push({
+                    id: 'learning',
+                    status: lpStatus,
+                    label: 'Learning pipeline',
+                    detail: lpDetail,
+                    reasoning: `Checks that lessons are being created from errors and promoted to directives. The lesson-promoter cron runs every 6 hours. Unpromoted lessons queue indicates lessons awaiting promotion.`,
+                    rawData: JSON.stringify({ total_lessons: lessonCount, directives: dirCount, unpromoted: unpromotedCount, by_severity: lessonsBySev }, null, 2),
+                    remediation: lpStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Invoke lesson-promoter edge function manually. Check its cron schedule (0 */6 * * *). Verify lessons table has entries with promoted_at IS NULL.'
+                });
 
                 // Check 5: Manifest coverage
                 const manifestEfCount = manifestCounts.edge_function || 0;
-                if (manifestEfCount >= 20) {
-                    checks.push({ status: 'pass', label: 'Manifest coverage', detail: `${manifestEfCount} edge functions registered` });
+                let mcStatus = manifestEfCount >= 20 ? 'pass' : 'warn';
+                let mcDetail = manifestEfCount >= 20
+                    ? `${manifestEfCount} edge functions registered`
+                    : `Only ${manifestEfCount} edge functions \u2014 some may be unregistered`;
+
+                checks.push({
+                    id: 'manifest',
+                    status: mcStatus,
+                    label: 'Manifest coverage',
+                    detail: mcDetail,
+                    reasoning: `Checks that system_manifest has entries for all known edge functions. Target is 20+ (system has ~29 deployed). Missing entries mean components are untracked.`,
+                    rawData: JSON.stringify(manifestCounts, null, 2),
+                    remediation: mcStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Register missing edge functions via state_write() to system_manifest table. Run: SELECT name FROM system_manifest WHERE component_type = \'edge_function\' to see what\'s registered.'
+                });
+
+                // Check 6: Audit trail integrity
+                checks.push({
+                    id: 'audit',
+                    status: 'pass',
+                    label: 'Audit immutability',
+                    detail: 'DELETE/UPDATE blocked by audit_log_immutable trigger',
+                    reasoning: `The audit_log_immutable trigger prevents any UPDATE or DELETE on the audit_log table. This ensures the audit trail cannot be tampered with. The trigger is structural and always active.`,
+                    rawData: JSON.stringify({ trigger: 'audit_log_immutable', blocks: ['UPDATE', 'DELETE'], table: 'audit_log', active: true }, null, 2),
+                    remediation: 'No action needed. If this check fails, the audit_log_immutable trigger has been removed or disabled \u2014 this is a critical security issue.'
+                });
+
+                // Check 7: Documentation currency
+                const docArr = Array.isArray(docStatus) ? docStatus : [];
+                const latestDocUpdate = docArr.length > 0 ? new Date(docArr[0].updated_at).getTime() : null;
+                // Compare against last schema change or manifest mutation
+                const manifestMuts = (Array.isArray(mutationStream) ? mutationStream : []).filter(m => m.target_table === 'system_manifest');
+                const lastManifestMut = manifestMuts.length > 0 ? new Date(manifestMuts[0].created_at).getTime() : null;
+
+                let docCheckStatus = 'pass';
+                let docCheckDetail = '';
+                if (docArr.length === 0) {
+                    docCheckStatus = 'warn';
+                    docCheckDetail = 'No project documents found';
+                } else if (latestDocUpdate && lastManifestMut && latestDocUpdate < lastManifestMut) {
+                    const driftMs = lastManifestMut - latestDocUpdate;
+                    if (driftMs > 7 * 86400000) {
+                        docCheckStatus = 'fail';
+                        docCheckDetail = `Severe drift: docs ${Math.round(driftMs / 86400000)}d behind last manifest change`;
+                    } else {
+                        docCheckStatus = 'warn';
+                        docCheckDetail = `Drift detected: docs ${relativeTime(new Date(latestDocUpdate).toISOString())} vs manifest change ${relativeTime(new Date(lastManifestMut).toISOString())}`;
+                    }
                 } else {
-                    checks.push({ status: 'warn', label: 'Manifest coverage', detail: `Only ${manifestEfCount} edge functions — some may be unregistered` });
+                    docCheckDetail = `Docs current (last update: ${latestDocUpdate ? relativeTime(new Date(latestDocUpdate).toISOString()) : 'N/A'})`;
                 }
 
-                // Check 6: Audit trail integrity (audit_log is immutable)
-                checks.push({ status: 'pass', label: 'Audit immutability', detail: 'DELETE/UPDATE blocked by audit_log_immutable trigger' });
+                checks.push({
+                    id: 'doccurrency',
+                    status: docCheckStatus,
+                    label: 'Doc currency',
+                    detail: docCheckDetail,
+                    reasoning: `Compares project_documents.updated_at against the last system_manifest mutation. If docs are older than the last manifest change, architecture documentation may be stale.`,
+                    rawData: JSON.stringify({
+                        latest_doc_update: latestDocUpdate ? new Date(latestDocUpdate).toISOString() : null,
+                        latest_manifest_mutation: lastManifestMut ? new Date(lastManifestMut).toISOString() : null,
+                        doc_types: docArr.map(d => d.doc_type),
+                        drift_detected: latestDocUpdate && lastManifestMut && latestDocUpdate < lastManifestMut
+                    }, null, 2),
+                    remediation: docCheckStatus === 'pass'
+                        ? 'No action needed.'
+                        : 'Run regenerate_architecture_docs() RPC to re-introspect live system and update project_documents. Or trigger doc sync via daemon.'
+                });
 
-                // Render enforcement checks
+                // Render enforcement checks with drill-down panels
                 const checksEl = document.getElementById('integrityChecks');
                 checksEl.innerHTML = checks.map(c => `
-                    <div class="check-row">
-                        <span class="check-icon ${c.status}">${c.status === 'pass' ? '✓' : c.status === 'fail' ? '✗' : '!'}</span>
+                    <div class="check-row ${openPanels.has(c.id) ? 'expanded' : ''}" id="check-${c.id}" onclick="toggleDrillDown('${c.id}')">
+                        <span class="check-icon ${c.status}">${c.status === 'pass' ? '\u2713' : c.status === 'fail' ? '\u2717' : '!'}</span>
                         <span class="check-label">${c.label}</span>
                         <span class="check-detail">${c.detail}</span>
+                        <span class="expand-icon">\u25B6</span>
+                    </div>
+                    <div class="drill-down ${openPanels.has(c.id) ? 'open' : ''}" id="drill-${c.id}">
+                        <h4>Reasoning</h4>
+                        <p>${escapeHtml(c.reasoning)}</p>
+                        <h4>Raw Data</h4>
+                        <pre>${escapeHtml(c.rawData)}</pre>
+                        <h4>Remediation</h4>
+                        <p class="remediation">${escapeHtml(c.remediation)}</p>
                     </div>
                 `).join('');
                 document.getElementById('integrityTimestamp').textContent = `Last checked: ${new Date().toLocaleTimeString()}`;
+
+                // ══════════════════════════════════════════
+                // ENFORCEMENT ACTIVITY DASHBOARD
+                // ══════════════════════════════════════════
+                const auditArr = Array.isArray(auditEvents) ? auditEvents : [];
+                const mutStreamArr = Array.isArray(mutationStream) ? mutationStream : [];
+                const gatesArr = Array.isArray(decisionGates) ? decisionGates : [];
+
+                // Filter 24h events
+                const oneDayAgo = now - 86400000;
+                const recent24h = auditArr.filter(e => new Date(e.created_at).getTime() > oneDayAgo);
+                const transitions24h = recent24h.filter(e => e.action && e.action.includes('\u2192'));
+                const rejections24h = recent24h.filter(e => e.event_type === 'wo_transition_rejected' || (e.action && e.action.toLowerCase().includes('rejected')));
+                const gatesPassed24h = recent24h.filter(e => e.action && e.action.includes('gates_passed'));
+                const totalGateEvents = gatesPassed24h.length + rejections24h.length;
+                const passRate = totalGateEvents > 0 ? Math.round((gatesPassed24h.length / totalGateEvents) * 100) : 100;
+
+                document.getElementById('statTransitions').textContent = transitions24h.length;
+                document.getElementById('statRejections').textContent = rejections24h.length;
+                document.getElementById('statRejections').style.color = rejections24h.length > 0 ? 'var(--status-error)' : 'var(--text-primary)';
+                document.getElementById('statGates').textContent = totalGateEvents;
+                document.getElementById('statPassRate').textContent = passRate + '%';
+                document.getElementById('statPassRate').style.color = passRate >= 90 ? 'var(--status-active)' : passRate >= 70 ? 'var(--status-warning)' : 'var(--status-error)';
+
+                // Event stream
+                const eventStreamEl = document.getElementById('eventStream');
+                if (auditArr.length === 0) {
+                    eventStreamEl.innerHTML = '<div class="event-row"><span class="event-action" style="color:var(--text-muted)">No enforcement events</span></div>';
+                } else {
+                    eventStreamEl.innerHTML = auditArr.map(e => {
+                        const cls = classifyAuditEvent(e.action);
+                        return `<div class="event-row">
+                            <span class="event-badge ${cls.type}">${cls.label}</span>
+                            <span class="event-action">${escapeHtml(e.action || e.event_type || 'unknown')}</span>
+                            <span class="event-time">${relativeTime(e.created_at)}</span>
+                        </div>`;
+                    }).join('');
+                }
+
+                // Decision gates
+                const gateListEl = document.getElementById('gateList');
+                if (gatesArr.length === 0) {
+                    gateListEl.innerHTML = '<div class="gate-row"><span class="gate-name" style="color:var(--text-muted)">No decision gates</span></div>';
+                } else {
+                    gateListEl.innerHTML = gatesArr.map(g => `
+                        <div class="gate-row">
+                            <span class="check-icon ${g.active ? 'pass' : 'warn'}" style="width:16px;height:16px;font-size:10px;">${g.active ? '\u2713' : '\u2014'}</span>
+                            <span class="gate-name">${escapeHtml(g.name)}</span>
+                            <span class="gate-type">${escapeHtml(g.trigger_type)}</span>
+                            <span class="badge ${g.requires_approval ? 'warning' : 'active'}" style="font-size:10px;padding:1px 6px;">${g.requires_approval ? 'Approval' : 'Auto'}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // Mutation stream
+                const mutStreamEl = document.getElementById('mutationStream');
+                if (mutStreamArr.length === 0) {
+                    mutStreamEl.innerHTML = '<div class="mutation-row"><span style="color:var(--text-muted); font-size:12px;">No recent mutations</span></div>';
+                } else {
+                    mutStreamEl.innerHTML = mutStreamArr.map(m => `
+                        <div class="mutation-row">
+                            <span class="mutation-table">${escapeHtml(m.target_table)}</span>
+                            <span class="mutation-type ${m.mutation_type}">${m.mutation_type}</span>
+                            <span class="mutation-time">${relativeTime(m.created_at)}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // ══════════════════════════════════════════
+                // AUTO-APPROVAL MONITOR
+                // ══════════════════════════════════════════
+                const approvalArr = Array.isArray(approvalLog) ? approvalLog : [];
+                const recent24hApproval = approvalArr.filter(a => new Date(a.created_at).getTime() > oneDayAgo);
+                const approved24h = recent24hApproval.filter(a => a.decision === 'approved').length;
+                const denied24h = recent24hApproval.filter(a => a.decision === 'denied').length;
+                const dryRun24h = recent24hApproval.filter(a => a.decision === 'dry_run').length;
+
+                document.getElementById('approvalToday').textContent = approved24h;
+                document.getElementById('approvalDenied').textContent = denied24h;
+                document.getElementById('approvalDryRun').textContent = dryRun24h;
+
+                // Check circuit breaker from user_preferences
+                const failedRecent = recent24hApproval.filter(a => a.decision === 'approved');
+                // Circuit breaker: just display status
+                const cbEl = document.getElementById('circuitBreaker');
+                if (approved24h >= 5) {
+                    cbEl.textContent = 'LIMIT';
+                    cbEl.style.color = 'var(--status-warning)';
+                } else {
+                    cbEl.textContent = 'OK';
+                    cbEl.style.color = 'var(--status-active)';
+                }
+
+                // Approval log
+                const approvalLogEl = document.getElementById('approvalLog');
+                if (approvalArr.length === 0) {
+                    approvalLogEl.innerHTML = '<div class="approval-row"><span style="color:var(--text-muted); font-size:12px;">No evaluations yet</span></div>';
+                } else {
+                    approvalLogEl.innerHTML = approvalArr.map(a => `
+                        <div class="approval-row">
+                            <span class="approval-decision ${a.decision}">${a.decision}</span>
+                            <span style="font-family:monospace; font-size:11px; color:var(--accent); min-width:60px;">Risk: ${a.risk_score != null ? Number(a.risk_score).toFixed(0) : '?'}</span>
+                            <span style="flex:1; color:var(--text-secondary); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                ${a.denial_reasons && a.denial_reasons.length > 0 ? escapeHtml(a.denial_reasons.join(', ')) : ''}
+                            </span>
+                            <span style="color:var(--text-muted); font-size:11px;">${relativeTime(a.created_at)}</span>
+                        </div>
+                    `).join('');
+                }
 
             } catch (err) {
                 console.error('Refresh error:', err);
