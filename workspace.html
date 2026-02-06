@@ -97,6 +97,216 @@
         }
 
         /* ============================================
+           View Toggle
+           ============================================ */
+        .view-toggle {
+            display: flex;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 2px;
+            gap: 2px;
+        }
+
+        .view-toggle-btn {
+            padding: 6px 14px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: var(--font-sans);
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .view-toggle-btn.active {
+            background: var(--accent);
+            color: var(--text-inverse);
+        }
+
+        .view-toggle-btn:hover:not(.active) {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+
+        /* ============================================
+           Projects View
+           ============================================ */
+        .projects-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 20px;
+        }
+
+        .project-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .project-card:hover {
+            border-color: var(--accent);
+            box-shadow: var(--shadow-md);
+        }
+
+        .project-card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .project-card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .project-card-code {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--accent);
+            background: var(--accent-subtle);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .project-card-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .project-progress {
+            margin-bottom: 12px;
+        }
+
+        .project-progress-bar {
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        .project-progress-fill {
+            height: 100%;
+            background: var(--status-done);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .project-progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .project-wo-list {
+            border-top: 1px solid var(--border-default);
+            padding-top: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .project-wo-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            background: var(--bg-elevated);
+        }
+
+        .project-wo-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .project-wo-status.draft { background: var(--status-inbox); }
+        .project-wo-status.ready { background: var(--status-assigned); }
+        .project-wo-status.in_progress { background: var(--status-progress); }
+        .project-wo-status.review { background: var(--status-review); }
+        .project-wo-status.done { background: var(--status-done); }
+        .project-wo-status.blocked { background: var(--status-blocked); }
+
+        .project-wo-name {
+            flex: 1;
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .project-wo-commit {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
+            text-decoration: none;
+            padding: 2px 6px;
+            background: var(--accent-subtle);
+            border-radius: 4px;
+        }
+
+        .project-wo-commit:hover {
+            color: var(--accent-hover);
+        }
+
+        .project-repo-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--accent);
+            text-decoration: none;
+            margin-bottom: 12px;
+        }
+
+        .project-repo-link:hover {
+            color: var(--accent-hover);
+        }
+
+        .project-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-default);
+        }
+
+        .projects-empty {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .projects-empty-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        /* ============================================
            Layout
            ============================================ */
         .app {
@@ -1631,6 +1841,148 @@
         // ============================================
         // Main App
         // ============================================
+        // ============================================
+        // Projects View Component
+        // ============================================
+        const ProjectCard = ({ project, workOrders, onApproveAll }) => {
+            const projectWOs = workOrders
+                .filter(wo => wo.project_brief_id === project.id)
+                .sort((a, b) => {
+                    const seqA = a.client_info?.decomposition_sequence || 999;
+                    const seqB = b.client_info?.decomposition_sequence || 999;
+                    return seqA - seqB;
+                });
+
+            const completed = projectWOs.filter(wo => wo.status === 'done').length;
+            const total = projectWOs.length;
+            const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+            const drafts = projectWOs.filter(wo => wo.status === 'draft');
+
+            return (
+                <div className="project-card">
+                    <div className="project-card-header">
+                        <div className="project-card-title">{project.name}</div>
+                        <div className="project-card-code">{project.code}</div>
+                    </div>
+
+                    {project.description && (
+                        <div className="project-card-desc">{project.description}</div>
+                    )}
+
+                    {project.repo_url && (
+                        <a href={project.repo_url.replace('.git', '').replace('git@github.com:', 'https://github.com/')}
+                           target="_blank" rel="noopener" className="project-repo-link">
+                            ↗ {project.repo_url.split('/').slice(-2).join('/').replace('.git', '')}
+                        </a>
+                    )}
+
+                    {total > 0 && (
+                        <div className="project-progress">
+                            <div className="project-progress-bar">
+                                <div className="project-progress-fill" style={{width: `${pct}%`}}></div>
+                            </div>
+                            <div className="project-progress-text">
+                                <span>{completed}/{total} work orders complete</span>
+                                <span>{pct}%</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {projectWOs.length > 0 && (
+                        <div className="project-wo-list">
+                            {projectWOs.map(wo => {
+                                const delivery = wo.client_info?.delivery;
+                                const commitUrl = delivery?.commit_sha && project.repo_url
+                                    ? `${project.repo_url.replace('.git', '').replace('git@github.com:', 'https://github.com/')}/commit/${delivery.commit_sha}`
+                                    : null;
+
+                                return (
+                                    <div key={wo.id} className="project-wo-item">
+                                        <div className={`project-wo-status ${wo.status}`}></div>
+                                        <span className="project-wo-name" title={wo.name}>
+                                            {wo.slug}: {wo.name}
+                                        </span>
+                                        {commitUrl && (
+                                            <a href={commitUrl} target="_blank" rel="noopener" className="project-wo-commit">
+                                                {delivery.commit_sha.slice(0, 7)}
+                                            </a>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {drafts.length > 0 && (
+                        <div className="project-actions">
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => onApproveAll(drafts)}
+                                style={{fontSize: '12px', padding: '6px 12px'}}
+                            >
+                                Approve All ({drafts.length})
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const ProjectsView = ({ workOrders, onApproveAll, addToast }) => {
+            const [projects, setProjects] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchProjects = async () => {
+                    try {
+                        const res = await api('/rest/v1/project_briefs?select=*&order=created_at.desc');
+                        setProjects(res || []);
+                    } catch (err) {
+                        addToast('Failed to load projects', 'error');
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                fetchProjects();
+                const interval = setInterval(fetchProjects, 30000);
+                return () => clearInterval(interval);
+            }, []);
+
+            if (loading) {
+                return (
+                    <div className="projects-container">
+                        <div className="loading"><div className="spinner"></div></div>
+                    </div>
+                );
+            }
+
+            if (projects.length === 0) {
+                return (
+                    <div className="projects-container">
+                        <div className="projects-empty">
+                            <div className="projects-empty-title">No projects yet</div>
+                            <div>Tell METIS to "build me something" in Chat to start a project.</div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="projects-container">
+                    <div className="projects-grid">
+                        {projects.map(project => (
+                            <ProjectCard
+                                key={project.id}
+                                project={project}
+                                workOrders={workOrders}
+                                onApproveAll={onApproveAll}
+                            />
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
         function App() {
             const [workOrders, setWorkOrders] = useState([]);
             const [agents, setAgents] = useState([]);
@@ -1642,6 +1994,7 @@
             const [toasts, setToasts] = useState([]);
             const [currentTime, setCurrentTime] = useState(new Date());
             const [actionLoading, setActionLoading] = useState({});
+            const [activeView, setActiveView] = useState('kanban');
 
             const addToast = (message, type = 'info') => {
                 const id = Date.now();
@@ -1841,6 +2194,28 @@
                 }
             };
 
+            const handleApproveAll = async (drafts) => {
+                let approved = 0;
+                for (const wo of drafts) {
+                    try {
+                        await api('/rest/v1/rpc/update_work_order_state', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                p_work_order_id: wo.id,
+                                p_new_status: 'ready',
+                                p_actor: 'metis',
+                                p_reason: 'Batch approved from Projects view'
+                            }),
+                        });
+                        approved++;
+                    } catch (err) {
+                        console.error(`Failed to approve ${wo.slug}:`, err);
+                    }
+                }
+                addToast(`Approved ${approved}/${drafts.length} work orders`, approved === drafts.length ? 'success' : 'warning');
+                fetchData();
+            };
+
             const workOrdersByStatus = useMemo(() => {
                 return COLUMNS.reduce((acc, col) => {
                     acc[col.id] = workOrders.filter(wo => wo.status === col.id);
@@ -1907,37 +2282,56 @@
                             </div>
                         </aside>
 
-                        {/* Kanban Board */}
+                        {/* Main Content Area */}
                         <section className="board-container">
                             <div className="board-header">
-                                <span className="board-title">Mission Queue</span>
+                                <div style={{display:'flex',alignItems:'center',gap:'16px'}}>
+                                    <span className="board-title">{activeView === 'kanban' ? 'Mission Queue' : 'Projects'}</span>
+                                    <div className="view-toggle">
+                                        <button className={`view-toggle-btn ${activeView === 'kanban' ? 'active' : ''}`}
+                                                onClick={() => setActiveView('kanban')}>Kanban</button>
+                                        <button className={`view-toggle-btn ${activeView === 'projects' ? 'active' : ''}`}
+                                                onClick={() => setActiveView('projects')}>Projects</button>
+                                    </div>
+                                </div>
                                 <div className="board-actions">
                                     <button className="btn btn-secondary" onClick={fetchData}>
                                         ↻ Refresh
                                     </button>
-                                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-                                        + New Task
-                                    </button>
+                                    {activeView === 'kanban' && (
+                                        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+                                            + New Task
+                                        </button>
+                                    )}
                                 </div>
                             </div>
-                            <div className="board">
-                                {COLUMNS.map(column => (
-                                    <KanbanColumn
-                                        key={column.id}
-                                        column={column}
-                                        workOrders={workOrdersByStatus[column.id] || []}
-                                        agents={agents}
-                                        onDrop={handleDrop}
-                                        onStatusChange={handleDrop}
-                                        onExpand={setExpanded}
-                                        onApprove={handleApprove}
-                                        onAccept={handleAccept}
-                                        onReject={openRejectModal}
-                                        expanded={expanded}
-                                        actionLoading={actionLoading}
-                                    />
-                                ))}
-                            </div>
+
+                            {activeView === 'kanban' ? (
+                                <div className="board">
+                                    {COLUMNS.map(column => (
+                                        <KanbanColumn
+                                            key={column.id}
+                                            column={column}
+                                            workOrders={workOrdersByStatus[column.id] || []}
+                                            agents={agents}
+                                            onDrop={handleDrop}
+                                            onStatusChange={handleDrop}
+                                            onExpand={setExpanded}
+                                            onApprove={handleApprove}
+                                            onAccept={handleAccept}
+                                            onReject={openRejectModal}
+                                            expanded={expanded}
+                                            actionLoading={actionLoading}
+                                        />
+                                    ))}
+                                </div>
+                            ) : (
+                                <ProjectsView
+                                    workOrders={workOrders}
+                                    onApproveAll={handleApproveAll}
+                                    addToast={addToast}
+                                />
+                            )}
                         </section>
 
                         {/* Live Feed Sidebar */}
