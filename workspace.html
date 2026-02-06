@@ -1320,7 +1320,7 @@
         .live-log-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.6);
+            background: rgba(0,0,0,0.7);
             z-index: 1000;
             display: flex;
             align-items: center;
@@ -1328,23 +1328,24 @@
         }
 
         .live-log-panel {
-            width: min(90vw, 900px);
-            height: min(80vh, 700px);
-            background: var(--bg-primary);
-            border: 1px solid var(--border);
+            width: min(92vw, 960px);
+            height: min(85vh, 800px);
+            background: #1e1e1e;
+            border: 1px solid #333;
             border-radius: 12px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
         }
 
         .live-log-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg-elevated);
+            padding: 14px 20px;
+            border-bottom: 1px solid #333;
+            background: #252525;
         }
 
         .live-log-header-left {
@@ -1356,21 +1357,22 @@
         .live-log-title {
             font-size: 15px;
             font-weight: 600;
-            color: var(--text-primary);
+            color: #e8e8e8;
         }
 
         .live-log-slug {
             font-size: 12px;
-            color: var(--text-muted);
-            font-family: monospace;
+            color: #777;
+            font-family: 'SF Mono', 'Fira Code', monospace;
         }
 
         .live-log-pulse {
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             background: var(--status-progress);
             animation: pulse 1.5s ease-in-out infinite;
+            flex-shrink: 0;
         }
 
         .live-log-pulse.complete {
@@ -1391,7 +1393,7 @@
         .live-log-close {
             background: none;
             border: none;
-            color: var(--text-muted);
+            color: #777;
             font-size: 20px;
             cursor: pointer;
             padding: 4px 8px;
@@ -1399,56 +1401,203 @@
         }
 
         .live-log-close:hover {
-            background: var(--bg-hover);
-            color: var(--text-primary);
+            background: #333;
+            color: #e8e8e8;
         }
 
         .live-log-body {
             flex: 1;
             overflow-y: auto;
-            padding: 16px 20px;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            color: var(--text-secondary);
+            padding: 12px 0;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #ccc;
         }
 
-        .live-log-entry {
-            margin-bottom: 4px;
+        .live-log-body::-webkit-scrollbar { width: 6px; }
+        .live-log-body::-webkit-scrollbar-track { background: transparent; }
+        .live-log-body::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+        /* Event wrapper */
+        .log-event {
+            padding: 2px 20px;
+            border-left: 3px solid transparent;
+            margin: 0;
+        }
+
+        /* System events (start/complete/error) */
+        .log-event.evt-execution_start {
+            background: rgba(96, 165, 250, 0.08);
+            border-left-color: #60A5FA;
+            padding: 10px 20px;
+            margin-bottom: 8px;
+            color: #60A5FA;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .log-event.evt-execution_complete {
+            background: rgba(52, 211, 153, 0.08);
+            border-left-color: #34D399;
+            padding: 10px 20px;
+            margin-top: 8px;
+            color: #34D399;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .log-event.evt-execution_error {
+            background: rgba(248, 113, 113, 0.1);
+            border-left-color: #F87171;
+            padding: 10px 20px;
+            margin-top: 8px;
+            color: #F87171;
+            font-weight: 600;
+        }
+
+        /* Thinking/reasoning text */
+        .log-event.evt-thinking {
+            color: #999;
+            font-style: italic;
+            padding: 4px 20px;
+            border-left-color: #444;
             white-space: pre-wrap;
             word-break: break-word;
         }
 
-        .live-log-entry.phase-execution_start {
-            color: var(--status-assigned);
-            font-weight: 600;
-            margin-bottom: 8px;
-            padding: 4px 0;
+        /* Tool call header */
+        .log-event.evt-tool_call {
+            background: rgba(212, 165, 116, 0.08);
+            border-left-color: var(--accent);
+            padding: 8px 20px;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        .live-log-entry.phase-execution_complete {
-            color: var(--status-done);
+        .tool-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(212, 165, 116, 0.2);
+            color: var(--accent);
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 12px;
             font-weight: 600;
-            margin-top: 8px;
-            padding: 4px 0;
+            letter-spacing: 0.3px;
         }
 
-        .live-log-entry.phase-execution_error {
-            color: var(--status-blocked);
-            font-weight: 600;
-            margin-top: 8px;
+        .tool-badge-icon {
+            font-size: 10px;
         }
 
-        .live-log-ts {
-            color: var(--text-muted);
-            margin-right: 8px;
+        /* Tool input */
+        .log-event.evt-tool_input {
+            background: #1a1a1a;
+            border-left-color: var(--accent);
+            padding: 6px 20px;
+            margin-bottom: 2px;
+        }
+
+        .tool-input-content {
+            background: #151515;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #b0b0b0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        /* Tool result */
+        .log-event.evt-tool_result {
+            border-left-color: #4ade80;
+            padding: 6px 20px;
+            margin-bottom: 10px;
+        }
+
+        .tool-result-content {
+            background: rgba(74, 222, 128, 0.04);
+            border: 1px solid rgba(74, 222, 128, 0.12);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #a0a0a0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .tool-result-header {
             font-size: 11px;
+            color: #4ade80;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        /* Result summary */
+        .log-event.evt-result {
+            background: rgba(52, 211, 153, 0.06);
+            border-left-color: #34D399;
+            padding: 10px 20px;
+            margin-top: 6px;
+            color: #d0d0d0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* System messages */
+        .log-event.evt-system {
+            color: #60A5FA;
+            padding: 6px 20px;
+            border-left-color: #60A5FA;
+            font-size: 12px;
+        }
+
+        /* Error messages */
+        .log-event.evt-error {
+            background: rgba(248, 113, 113, 0.06);
+            border-left-color: #F87171;
+            color: #F87171;
+            padding: 8px 20px;
+            margin: 4px 0;
+        }
+
+        /* Status/text fallbacks */
+        .log-event.evt-status,
+        .log-event.evt-text {
+            color: #888;
+            padding: 2px 20px;
+            font-size: 12px;
+        }
+
+        /* Timestamp */
+        .log-ts {
+            color: #555;
+            font-size: 11px;
+            margin-right: 10px;
+            user-select: none;
+            flex-shrink: 0;
         }
 
         .live-log-empty {
             text-align: center;
-            color: var(--text-muted);
-            padding: 40px 20px;
+            color: #666;
+            padding: 60px 20px;
+            font-size: 14px;
+        }
+
+        .live-log-empty-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.4;
         }
 
         .live-log-footer {
@@ -1456,10 +1605,43 @@
             align-items: center;
             justify-content: space-between;
             padding: 10px 20px;
-            border-top: 1px solid var(--border);
-            background: var(--bg-elevated);
+            border-top: 1px solid #333;
+            background: #252525;
             font-size: 12px;
-            color: var(--text-muted);
+            color: #777;
+        }
+
+        .live-log-stats {
+            display: flex;
+            gap: 16px;
+        }
+
+        .live-log-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .live-log-stat-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .collapsible-toggle {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 8px;
+        }
+
+        .collapsible-toggle:hover {
+            background: #333;
+            color: #aaa;
         }
 
         .watch-btn {
@@ -1611,6 +1793,7 @@
             const [status, setStatus] = useState('streaming');
             const bodyRef = useRef(null);
             const [autoScroll, setAutoScroll] = useState(true);
+            const [collapsed, setCollapsed] = useState({});
 
             useEffect(() => {
                 if (!workOrder) return;
@@ -1625,13 +1808,11 @@
                         if (!active) return;
                         setLogEntries(entries || []);
 
-                        // Detect completion/error
                         const phases = (entries || []).map(e => e.phase);
                         if (phases.includes('execution_complete')) setStatus('complete');
                         else if (phases.includes('execution_error')) setStatus('error');
                         else setStatus('streaming');
 
-                        // Auto-scroll if new entries arrived
                         if (entries && entries.length > lastCount && autoScroll && bodyRef.current) {
                             setTimeout(() => {
                                 if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
@@ -1644,7 +1825,7 @@
                 };
 
                 fetchLogs();
-                const interval = setInterval(fetchLogs, 2000);
+                const interval = setInterval(fetchLogs, 1000);
                 return () => { active = false; clearInterval(interval); };
             }, [workOrder?.id, autoScroll]);
 
@@ -1658,6 +1839,159 @@
                 if (!ts) return '';
                 const d = new Date(ts);
                 return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            };
+
+            const toggleCollapse = (id) => {
+                setCollapsed(prev => ({ ...prev, [id]: !prev[id] }));
+            };
+
+            // Compute stats
+            const toolCalls = logEntries.filter(e => e.detail?.event_type === 'tool_call').length;
+            const thinkingBlocks = logEntries.filter(e => e.detail?.event_type === 'thinking').length;
+            const streamEvents = logEntries.filter(e => e.phase === 'stream').length;
+
+            const renderEvent = (entry, i) => {
+                const detail = entry.detail || {};
+                const eventType = detail.event_type || entry.phase;
+                const content = detail.content || '';
+                const toolName = detail.tool_name || '';
+                const ts = formatTime(detail.ts || entry.created_at);
+                const key = entry.id || i;
+                const isCollapsed = collapsed[key];
+
+                // Phase-level events (execution_start, execution_complete, execution_error)
+                if (entry.phase === 'execution_start') {
+                    return (
+                        <div key={key} className="log-event evt-execution_start">
+                            <span className="log-ts">{ts}</span>
+                            {content}
+                        </div>
+                    );
+                }
+                if (entry.phase === 'execution_complete') {
+                    return (
+                        <div key={key} className="log-event evt-execution_complete">
+                            <span className="log-ts">{ts}</span>
+                            {content}
+                        </div>
+                    );
+                }
+                if (entry.phase === 'execution_error') {
+                    return (
+                        <div key={key} className="log-event evt-execution_error">
+                            <span className="log-ts">{ts}</span>
+                            {content}
+                        </div>
+                    );
+                }
+
+                // Semantic event types from daemon v4 stream parser
+                switch (eventType) {
+                    case 'thinking':
+                        return (
+                            <div key={key} className="log-event evt-thinking">
+                                <span className="log-ts">{ts}</span>
+                                {content.length > 500 ? (
+                                    <>
+                                        {isCollapsed ? content.slice(0, 120) + '...' : content}
+                                        <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
+                                            {isCollapsed ? 'show more' : 'collapse'}
+                                        </button>
+                                    </>
+                                ) : content}
+                            </div>
+                        );
+
+                    case 'tool_call':
+                        return (
+                            <div key={key} className="log-event evt-tool_call">
+                                <span className="log-ts">{ts}</span>
+                                <span className="tool-badge">
+                                    <span className="tool-badge-icon">&#9881;</span>
+                                    {toolName || content}
+                                </span>
+                            </div>
+                        );
+
+                    case 'tool_input':
+                        return (
+                            <div key={key} className="log-event evt-tool_input">
+                                <div className="tool-input-content">
+                                    {isCollapsed ? content.slice(0, 80) + '...' : content}
+                                </div>
+                                {content.length > 120 && (
+                                    <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
+                                        {isCollapsed ? 'expand' : 'collapse'}
+                                    </button>
+                                )}
+                            </div>
+                        );
+
+                    case 'tool_result':
+                        return (
+                            <div key={key} className="log-event evt-tool_result">
+                                <div className="tool-result-header">
+                                    {toolName ? `Result from ${toolName}` : 'Tool Result'}
+                                </div>
+                                <div className="tool-result-content">
+                                    {content.length > 400 ? (
+                                        <>
+                                            {isCollapsed ? content.slice(0, 150) + '...' : content}
+                                            <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
+                                                {isCollapsed ? 'show full' : 'collapse'}
+                                            </button>
+                                        </>
+                                    ) : content}
+                                </div>
+                            </div>
+                        );
+
+                    case 'result':
+                        return (
+                            <div key={key} className="log-event evt-result">
+                                <span className="log-ts">{ts}</span>
+                                <strong style={{ color: '#34D399', marginRight: 8 }}>Final Result</strong>
+                                <div style={{ marginTop: 6 }}>{content}</div>
+                            </div>
+                        );
+
+                    case 'system':
+                        if (!content) return null;
+                        return (
+                            <div key={key} className="log-event evt-system">
+                                <span className="log-ts">{ts}</span>
+                                {content}
+                            </div>
+                        );
+
+                    case 'error':
+                        return (
+                            <div key={key} className="log-event evt-error">
+                                <span className="log-ts">{ts}</span>
+                                {content}
+                            </div>
+                        );
+
+                    case 'status':
+                    case 'text':
+                        return (
+                            <div key={key} className="log-event evt-status">
+                                <span className="log-ts">{ts}</span>
+                                {content}
+                            </div>
+                        );
+
+                    default:
+                        // Legacy format fallback (pre-semantic batched entries)
+                        // Skip entries with no meaningful content
+                        if (!content && !detail.tool_name) return null;
+                        return (
+                            <div key={key} className="log-event evt-text">
+                                <span className="log-ts">{ts}</span>
+                                {content || ''}
+                            </div>
+                        );
+                }
             };
 
             return (
@@ -1678,22 +2012,31 @@
                         <div className="live-log-body" ref={bodyRef} onScroll={handleScroll}>
                             {logEntries.length === 0 ? (
                                 <div className="live-log-empty">
+                                    <div className="live-log-empty-icon">&#9672;</div>
                                     {workOrder.status === 'in_progress'
-                                        ? 'Waiting for execution output...'
+                                        ? 'Waiting for Claude CLI to begin...'
                                         : 'No execution logs for this work order.'}
                                 </div>
                             ) : (
-                                logEntries.map((entry, i) => (
-                                    <div key={entry.id || i} className={`live-log-entry phase-${entry.phase}`}>
-                                        <span className="live-log-ts">{formatTime(entry.detail?.ts || entry.created_at)}</span>
-                                        {entry.detail?.content || JSON.stringify(entry.detail)}
-                                    </div>
-                                ))
+                                logEntries.map((entry, i) => renderEvent(entry, i))
                             )}
                         </div>
                         <div className="live-log-footer">
-                            <span>{logEntries.length} entries</span>
-                            <span>{autoScroll ? 'Auto-scrolling' : 'Scroll paused'}</span>
+                            <div className="live-log-stats">
+                                <span className="live-log-stat">
+                                    <span className="live-log-stat-dot" style={{ background: '#999' }}></span>
+                                    {thinkingBlocks} reasoning
+                                </span>
+                                <span className="live-log-stat">
+                                    <span className="live-log-stat-dot" style={{ background: 'var(--accent)' }}></span>
+                                    {toolCalls} tool calls
+                                </span>
+                                <span className="live-log-stat">
+                                    <span className="live-log-stat-dot" style={{ background: '#60A5FA' }}></span>
+                                    {streamEvents} events
+                                </span>
+                            </div>
+                            <span>{autoScroll ? 'Auto-scrolling' : 'Scroll paused — scroll to bottom to resume'}</span>
                         </div>
                     </div>
                 </div>
@@ -2010,8 +2353,12 @@
             );
         };
 
-        const DuplicateWarningModal = ({ isOpen, onClose, onApproveAnyway, workOrderName, duplicates }) => {
+        const DuplicateWarningModal = ({ isOpen, onClose, onApproveAnyway, workOrderId, workOrderName, duplicates, onRefresh, addToast }) => {
             const [submitting, setSubmitting] = useState(false);
+            const [consolidating, setConsolidating] = useState(false);
+            const [consolidationResult, setConsolidationResult] = useState(null);
+            const [editedName, setEditedName] = useState('');
+            const [editedObjective, setEditedObjective] = useState('');
             if (!isOpen) return null;
 
             const highMatches = (duplicates || []).filter(d => d.relevance > 0.3 || (d.recommendation && (d.recommendation.includes('EXISTS') || d.recommendation.includes('COMPLETED') || d.recommendation.includes('IN PROGRESS'))));
@@ -2023,9 +2370,139 @@
                 onClose();
             };
 
+            const handleConsolidate = async () => {
+                setConsolidating(true);
+                try {
+                    const res = await api('/functions/v1/work-order-executor/consolidate', {
+                        method: 'POST',
+                        body: JSON.stringify({ work_order_id: workOrderId, duplicates }),
+                    });
+                    setConsolidationResult(res);
+                    setEditedName(res.refined?.name || '');
+                    setEditedObjective(res.refined?.objective || '');
+                } catch (err) {
+                    console.error('Consolidation failed:', err);
+                    addToast('Consolidation failed: ' + err.message, 'error');
+                }
+                setConsolidating(false);
+            };
+
+            const handleSaveAndApprove = async () => {
+                setSubmitting(true);
+                try {
+                    // Save edited refinement
+                    await api(`/rest/v1/work_orders?id=eq.${workOrderId}`, {
+                        method: 'PATCH',
+                        headers: { 'Prefer': 'return=minimal' },
+                        body: JSON.stringify({
+                            name: editedName,
+                            objective: editedObjective,
+                            duplicate_check: null,
+                            updated_at: new Date().toISOString(),
+                        }),
+                    });
+                    // Re-approve (fresh duplicate check with refined scope)
+                    await onApproveAnyway();
+                    if (onRefresh) onRefresh();
+                } catch (err) {
+                    console.error('Save and approve failed:', err);
+                    addToast('Save failed: ' + err.message, 'error');
+                }
+                setSubmitting(false);
+                onClose();
+            };
+
+            const handleCancelWO = async () => {
+                setSubmitting(true);
+                try {
+                    await api(`/rest/v1/work_orders?id=eq.${workOrderId}`, {
+                        method: 'PATCH',
+                        headers: { 'Prefer': 'return=minimal' },
+                        body: JSON.stringify({ status: 'cancelled', updated_at: new Date().toISOString() }),
+                    });
+                    addToast('Work order cancelled', 'info');
+                    if (onRefresh) onRefresh();
+                } catch (err) {
+                    addToast('Cancel failed: ' + err.message, 'error');
+                }
+                setSubmitting(false);
+                onClose();
+            };
+
+            // Consolidation result view
+            if (consolidationResult) {
+                const cr = consolidationResult;
+                return (
+                    <div className="modal-overlay" onClick={onClose}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+                            <div className="modal-header">
+                                <h2 className="modal-title">
+                                    {cr.fully_covered ? 'Already Covered' : 'Refined Work Order'}
+                                </h2>
+                                <button className="modal-close" onClick={onClose}>x</button>
+                            </div>
+                            <div className="modal-body">
+                                {/* Gap Analysis */}
+                                <div style={{ padding: '10px 12px', background: cr.fully_covered ? 'rgba(52,211,153,0.08)' : 'rgba(212,165,116,0.08)', borderRadius: '6px', marginBottom: '16px', fontSize: '13px', borderLeft: `3px solid ${cr.fully_covered ? '#34D399' : 'var(--accent)'}` }}>
+                                    <strong style={{ color: cr.fully_covered ? '#34D399' : 'var(--accent)' }}>Gap Analysis:</strong>
+                                    <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>{cr.gap_analysis}</div>
+                                </div>
+
+                                {cr.fully_covered ? (
+                                    <p style={{ color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                                        Existing components already cover this work order's objective. You can cancel it.
+                                    </p>
+                                ) : (
+                                    <>
+                                        {/* Original vs Refined */}
+                                        <div style={{ marginBottom: '12px' }}>
+                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Original</div>
+                                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'line-through', padding: '6px 8px', background: 'var(--bg-primary)', borderRadius: '4px' }}>
+                                                {cr.original?.name}
+                                            </div>
+                                        </div>
+                                        <div className="form-group" style={{ marginBottom: '12px' }}>
+                                            <label className="form-label">Refined Name</label>
+                                            <input
+                                                className="form-input"
+                                                value={editedName}
+                                                onChange={e => setEditedName(e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="form-group" style={{ marginBottom: '12px' }}>
+                                            <label className="form-label">Refined Objective</label>
+                                            <textarea
+                                                className="form-textarea"
+                                                value={editedObjective}
+                                                onChange={e => setEditedObjective(e.target.value)}
+                                                rows={4}
+                                                style={{ fontSize: '13px' }}
+                                            />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            <div className="modal-footer" style={{ gap: '8px' }}>
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>
+                                {cr.fully_covered ? (
+                                    <button type="button" className="btn" style={{ background: 'var(--status-blocked)', color: '#fff' }} disabled={submitting} onClick={handleCancelWO}>
+                                        {submitting ? 'Cancelling...' : 'Cancel Work Order'}
+                                    </button>
+                                ) : (
+                                    <button type="button" className="btn btn-primary" disabled={submitting || !editedName.trim()} onClick={handleSaveAndApprove}>
+                                        {submitting ? 'Saving...' : 'Save & Approve'}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Initial duplicate warning view
             return (
                 <div className="modal-overlay" onClick={onClose}>
-                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '560px' }}>
                         <div className="modal-header">
                             <h2 className="modal-title">Potential Duplicates Found</h2>
                             <button className="modal-close" onClick={onClose}>x</button>
@@ -2034,18 +2511,24 @@
                             <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>
                                 <strong>{workOrderName}</strong> may overlap with existing components:
                             </p>
-                            <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '12px' }}>
+                            <div style={{ maxHeight: '220px', overflowY: 'auto', marginBottom: '16px' }}>
                                 {highMatches.map((d, i) => (
-                                    <div key={i} style={{ padding: '8px', marginBottom: '4px', background: 'var(--bg-primary)', borderRadius: '4px', fontSize: '13px' }}>
-                                        <strong>{d.name}</strong> <span style={{ color: 'var(--text-tertiary)' }}>({d.component_type || d.source})</span>
-                                        <div style={{ color: 'var(--text-secondary)', marginTop: '2px' }}>{d.recommendation}</div>
+                                    <div key={i} style={{ padding: '8px 10px', marginBottom: '4px', background: 'var(--bg-primary)', borderRadius: '4px', fontSize: '13px' }}>
+                                        <strong>{d.name}</strong> <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>({d.component_type || d.type || d.source})</span>
+                                        <div style={{ color: 'var(--text-secondary)', marginTop: '2px', fontSize: '12px' }}>{d.recommendation}</div>
                                     </div>
                                 ))}
                             </div>
-                            <p style={{ color: 'var(--status-review)', fontSize: '13px' }}>Review the matches above. If this WO is not a duplicate, approve anyway.</p>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: 1.5 }}>
+                                <strong>Consolidate</strong> uses AI to refine this WO to only address what's actually missing.
+                                <br /><strong>Approve Anyway</strong> proceeds without changes.
+                            </p>
                         </div>
-                        <div className="modal-footer">
+                        <div className="modal-footer" style={{ gap: '8px' }}>
                             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                            <button type="button" className="btn" style={{ background: 'var(--accent)', color: 'var(--text-inverse)' }} disabled={consolidating} onClick={handleConsolidate}>
+                                {consolidating ? 'Analyzing...' : 'Consolidate'}
+                            </button>
                             <button type="button" className="btn btn-primary" disabled={submitting} onClick={handleApprove}>
                                 {submitting ? 'Approving...' : 'Approve Anyway'}
                             </button>
@@ -2724,8 +3207,11 @@
                         isOpen={duplicateModal.open}
                         onClose={() => setDuplicateModal({ open: false, workOrderId: null, workOrderName: '', duplicates: [] })}
                         onApproveAnyway={() => handleApprove(duplicateModal.workOrderId, true)}
+                        workOrderId={duplicateModal.workOrderId}
                         workOrderName={duplicateModal.workOrderName}
                         duplicates={duplicateModal.duplicates}
+                        onRefresh={fetchData}
+                        addToast={addToast}
                     />
 
                     {/* Reject Modal */}
