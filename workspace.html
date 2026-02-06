@@ -1315,6 +1315,167 @@
         .toast.error { border-left: 3px solid var(--status-blocked); }
         .toast.info { border-left: 3px solid var(--status-assigned); }
         .toast.warning { border-left: 3px solid var(--status-progress); }
+
+        /* Live Log Panel */
+        .live-log-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .live-log-panel {
+            width: min(90vw, 900px);
+            height: min(80vh, 700px);
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .live-log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-elevated);
+        }
+
+        .live-log-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .live-log-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .live-log-slug {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        .live-log-pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--status-progress);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .live-log-pulse.complete {
+            background: var(--status-done);
+            animation: none;
+        }
+
+        .live-log-pulse.error {
+            background: var(--status-blocked);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .live-log-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+
+        .live-log-close:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .live-log-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+
+        .live-log-entry {
+            margin-bottom: 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .live-log-entry.phase-execution_start {
+            color: var(--status-assigned);
+            font-weight: 600;
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+
+        .live-log-entry.phase-execution_complete {
+            color: var(--status-done);
+            font-weight: 600;
+            margin-top: 8px;
+            padding: 4px 0;
+        }
+
+        .live-log-entry.phase-execution_error {
+            color: var(--status-blocked);
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        .live-log-ts {
+            color: var(--text-muted);
+            margin-right: 8px;
+            font-size: 11px;
+        }
+
+        .live-log-empty {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px 20px;
+        }
+
+        .live-log-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 20px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-elevated);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .watch-btn {
+            background: var(--status-progress);
+            color: #000;
+            border: none;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .watch-btn:hover {
+            filter: brightness(1.1);
+        }
     </style>
 </head>
 <body>
@@ -1328,7 +1489,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useMemo } = React;
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
         // ============================================
         // Configuration
@@ -1445,7 +1606,101 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded, actionLoading }) => {
+        const LiveLogPanel = ({ workOrder, onClose }) => {
+            const [logEntries, setLogEntries] = useState([]);
+            const [status, setStatus] = useState('streaming');
+            const bodyRef = useRef(null);
+            const [autoScroll, setAutoScroll] = useState(true);
+
+            useEffect(() => {
+                if (!workOrder) return;
+                let active = true;
+                let lastCount = 0;
+
+                const fetchLogs = async () => {
+                    try {
+                        const entries = await api(
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(stream,execution_start,execution_complete,execution_error)&order=created_at.asc,iteration.asc`
+                        );
+                        if (!active) return;
+                        setLogEntries(entries || []);
+
+                        // Detect completion/error
+                        const phases = (entries || []).map(e => e.phase);
+                        if (phases.includes('execution_complete')) setStatus('complete');
+                        else if (phases.includes('execution_error')) setStatus('error');
+                        else setStatus('streaming');
+
+                        // Auto-scroll if new entries arrived
+                        if (entries && entries.length > lastCount && autoScroll && bodyRef.current) {
+                            setTimeout(() => {
+                                if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+                            }, 50);
+                        }
+                        lastCount = entries ? entries.length : 0;
+                    } catch (err) {
+                        console.error('Log fetch error:', err);
+                    }
+                };
+
+                fetchLogs();
+                const interval = setInterval(fetchLogs, 2000);
+                return () => { active = false; clearInterval(interval); };
+            }, [workOrder?.id, autoScroll]);
+
+            const handleScroll = () => {
+                if (!bodyRef.current) return;
+                const { scrollTop, scrollHeight, clientHeight } = bodyRef.current;
+                setAutoScroll(scrollHeight - scrollTop - clientHeight < 50);
+            };
+
+            const formatTime = (ts) => {
+                if (!ts) return '';
+                const d = new Date(ts);
+                return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            };
+
+            return (
+                <div className="live-log-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+                    <div className="live-log-panel">
+                        <div className="live-log-header">
+                            <div className="live-log-header-left">
+                                <div className={`live-log-pulse ${status}`}></div>
+                                <div>
+                                    <div className="live-log-title">
+                                        {status === 'streaming' ? 'Live Execution' : status === 'complete' ? 'Execution Complete' : 'Execution Failed'}
+                                    </div>
+                                    <div className="live-log-slug">{workOrder.slug} - {workOrder.name?.slice(0, 50)}</div>
+                                </div>
+                            </div>
+                            <button className="live-log-close" onClick={onClose}>&times;</button>
+                        </div>
+                        <div className="live-log-body" ref={bodyRef} onScroll={handleScroll}>
+                            {logEntries.length === 0 ? (
+                                <div className="live-log-empty">
+                                    {workOrder.status === 'in_progress'
+                                        ? 'Waiting for execution output...'
+                                        : 'No execution logs for this work order.'}
+                                </div>
+                            ) : (
+                                logEntries.map((entry, i) => (
+                                    <div key={entry.id || i} className={`live-log-entry phase-${entry.phase}`}>
+                                        <span className="live-log-ts">{formatTime(entry.detail?.ts || entry.created_at)}</span>
+                                        {entry.detail?.content || JSON.stringify(entry.detail)}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        <div className="live-log-footer">
+                            <span>{logEntries.length} entries</span>
+                            <span>{autoScroll ? 'Auto-scrolling' : 'Scroll paused'}</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onWatch, expanded, actionLoading }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
             
@@ -1530,6 +1785,14 @@
                                 </button>
                             </>
                         )}
+                        {(workOrder.status === 'in_progress' || workOrder.status === 'review' || workOrder.status === 'done') && (
+                            <button
+                                className="watch-btn"
+                                onClick={(e) => { e.stopPropagation(); onWatch(workOrder); }}
+                            >
+                                {workOrder.status === 'in_progress' ? '▶ Watch Live' : '▶ View Log'}
+                            </button>
+                        )}
                     </div>
 
                     {expanded === workOrder.id && (
@@ -1561,7 +1824,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, expanded, actionLoading }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onWatch, expanded, actionLoading }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -1611,6 +1874,7 @@
                                     onApprove={onApprove}
                                     onAccept={onAccept}
                                     onReject={onReject}
+                                    onWatch={onWatch}
                                     expanded={expanded}
                                     actionLoading={actionLoading}
                                 />
@@ -1995,6 +2259,7 @@
             const [currentTime, setCurrentTime] = useState(new Date());
             const [actionLoading, setActionLoading] = useState({});
             const [activeView, setActiveView] = useState('kanban');
+            const [watchingWO, setWatchingWO] = useState(null);
 
             const addToast = (message, type = 'info') => {
                 const id = Date.now();
@@ -2320,6 +2585,7 @@
                                             onApprove={handleApprove}
                                             onAccept={handleAccept}
                                             onReject={openRejectModal}
+                                            onWatch={setWatchingWO}
                                             expanded={expanded}
                                             actionLoading={actionLoading}
                                         />
@@ -2399,6 +2665,13 @@
                             />
                         ))}
                     </div>
+
+                    {watchingWO && (
+                        <LiveLogPanel
+                            workOrder={watchingWO}
+                            onClose={() => setWatchingWO(null)}
+                        />
+                    )}
                 </div>
             );
         }
