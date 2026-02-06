@@ -755,7 +755,7 @@
                     {
                         label: 'Work Orders',
                         ts: lastWoMutation,
-                        color: syncColor(lastWoMutation ? now - lastWoMutation : null, 3600000, 21600000),
+                        color: syncColor(lastWoMutation ? now - lastWoMutation : null, 21600000, 86400000),
                     },
                     {
                         label: 'Lessons',
@@ -775,7 +775,7 @@
                     {
                         label: 'State Mutations',
                         ts: lastAnyMutation,
-                        color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 3600000, 21600000),
+                        color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 21600000, 86400000),
                     },
                     {
                         label: 'Context API',
