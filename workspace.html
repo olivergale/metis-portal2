@@ -2010,6 +2010,51 @@
             );
         };
 
+        const DuplicateWarningModal = ({ isOpen, onClose, onApproveAnyway, workOrderName, duplicates }) => {
+            const [submitting, setSubmitting] = useState(false);
+            if (!isOpen) return null;
+
+            const highMatches = (duplicates || []).filter(d => d.relevance > 0.3 || (d.recommendation && (d.recommendation.includes('EXISTS') || d.recommendation.includes('COMPLETED') || d.recommendation.includes('IN PROGRESS'))));
+
+            const handleApprove = async () => {
+                setSubmitting(true);
+                await onApproveAnyway();
+                setSubmitting(false);
+                onClose();
+            };
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+                        <div className="modal-header">
+                            <h2 className="modal-title">Potential Duplicates Found</h2>
+                            <button className="modal-close" onClick={onClose}>x</button>
+                        </div>
+                        <div className="modal-body">
+                            <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>
+                                <strong>{workOrderName}</strong> may overlap with existing components:
+                            </p>
+                            <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '12px' }}>
+                                {highMatches.map((d, i) => (
+                                    <div key={i} style={{ padding: '8px', marginBottom: '4px', background: 'var(--bg-primary)', borderRadius: '4px', fontSize: '13px' }}>
+                                        <strong>{d.name}</strong> <span style={{ color: 'var(--text-tertiary)' }}>({d.component_type || d.source})</span>
+                                        <div style={{ color: 'var(--text-secondary)', marginTop: '2px' }}>{d.recommendation}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p style={{ color: 'var(--status-review)', fontSize: '13px' }}>Review the matches above. If this WO is not a duplicate, approve anyway.</p>
+                        </div>
+                        <div className="modal-footer">
+                            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                            <button type="button" className="btn btn-primary" disabled={submitting} onClick={handleApprove}>
+                                {submitting ? 'Approving...' : 'Approve Anyway'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const RejectModal = ({ isOpen, onClose, onReject, workOrderName }) => {
             const [reason, setReason] = useState('');
             const [submitting, setSubmitting] = useState(false);
@@ -2254,6 +2299,7 @@
             const [loading, setLoading] = useState(true);
             const [showModal, setShowModal] = useState(false);
             const [rejectModal, setRejectModal] = useState({ open: false, workOrderId: null, workOrderName: '' });
+            const [duplicateModal, setDuplicateModal] = useState({ open: false, workOrderId: null, workOrderName: '', duplicates: [] });
             const [expanded, setExpanded] = useState(null);
             const [toasts, setToasts] = useState([]);
             const [currentTime, setCurrentTime] = useState(new Date());
@@ -2338,7 +2384,7 @@
                 }
             };
 
-            const handleApprove = async (workOrderId) => {
+            const handleApprove = async (workOrderId, acknowledgeDuplicates = false) => {
                 if (actionLoading[workOrderId]) return;
                 setActionLoading(prev => ({ ...prev, [workOrderId]: 'approve' }));
                 try {
@@ -2348,9 +2394,14 @@
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
                         },
-                        body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'user' }),
+                        body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'user', acknowledge_duplicates: acknowledgeDuplicates }),
                     });
                     const data = await res.json();
+                    if (res.status === 409 && data.blocked_by === 'duplicate_check') {
+                        const wo = workOrders.find(w => w.id === workOrderId);
+                        setDuplicateModal({ open: true, workOrderId, workOrderName: wo?.name || 'Unknown', duplicates: data.duplicates || [] });
+                        return;
+                    }
                     if (!res.ok) {
                         addToast(data.error || `Approval failed (${res.status})`, 'error');
                         return;
@@ -2654,6 +2705,15 @@
                         onClose={() => setShowModal(false)}
                         onCreate={handleCreate}
                         agents={agents}
+                    />
+
+                    {/* Duplicate Warning Modal */}
+                    <DuplicateWarningModal
+                        isOpen={duplicateModal.open}
+                        onClose={() => setDuplicateModal({ open: false, workOrderId: null, workOrderName: '', duplicates: [] })}
+                        onApproveAnyway={() => handleApprove(duplicateModal.workOrderId, true)}
+                        workOrderName={duplicateModal.workOrderName}
+                        duplicates={duplicateModal.duplicates}
                     />
 
                     {/* Reject Modal */}
