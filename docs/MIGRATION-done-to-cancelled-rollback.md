@@ -1,8 +1,9 @@
 # Migration: Add done→cancelled Administrative Rollback Transition
 
 **Work Order**: WO-ROLLBACK-TRANSITION
-**Status**: MIGRATION SPEC (Requires Supabase deployment)
+**Status**: FRONTEND COMPLETE (Backend deployment pending)
 **Created**: 2026-02-06
+**Frontend Deployed**: 2026-02-06 20:20:00+00
 
 ## Objective
 
@@ -127,12 +128,36 @@ Update `/docs/ENDGAME-001-STATE-MACHINE.md` to reflect the new transition:
 
 ## Acceptance Criteria
 
-1. ✅ done→cancelled transition is valid in state machine
-2. ✅ Cancellation reason is required in summary field
-3. ✅ Original completion data preserved in client_info
-4. ✅ Audit log entry created with administrative_rollback event type
+1. ✅ done→cancelled transition is valid in state machine (documented)
+2. ✅ Cancellation reason is required in summary field (frontend enforced)
+3. ⏳ Original completion data preserved in client_info (backend implementation pending)
+4. ⏳ Audit log entry created with administrative_rollback event type (backend implementation pending)
 5. ✅ State machine documentation updated
 6. ✅ Frontend UI supports rollback with reason input
+
+## Frontend Implementation Summary (2026-02-06)
+
+**Deployed Files:**
+- `/workspace.html`:
+  - Added `RollbackModal` component (requires cancellation reason)
+  - Added rollback button to `WorkOrderCard` for done status WOs
+  - Added `openRollbackModal` and `handleRollback` functions
+  - Integrated rollback modal state management
+  - Calls `/functions/v1/work-order-executor/rollback` endpoint
+
+**What's Working:**
+- UI shows rollback button on done work orders
+- Modal enforces required cancellation reason
+- Frontend validation prevents empty reasons
+- Proper loading states during rollback operation
+- Toast notifications for success/failure
+
+**Backend Requirements (Pending Deployment):**
+- Edge function endpoint: `/functions/v1/work-order-executor/rollback`
+- Must validate done→cancelled transition
+- Must preserve original completion data in client_info
+- Must create audit_log entry with administrative_rollback event type
+- Must update work order status to cancelled
 
 ## Deployment Notes
 

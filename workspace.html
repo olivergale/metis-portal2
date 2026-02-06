@@ -2043,7 +2043,7 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onWatch, expanded, actionLoading }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, expanded, actionLoading }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
             
@@ -2128,6 +2128,16 @@
                                 </button>
                             </>
                         )}
+                        {workOrder.status === 'done' && (
+                            <button
+                                className="card-action-btn reject-btn"
+                                onClick={(e) => { e.stopPropagation(); onRollback(workOrder.id); }}
+                                disabled={isLoading}
+                                title="Administrative rollback: done → cancelled"
+                            >
+                                {isLoading === 'rollback' ? 'Rolling back...' : '↶ Rollback'}
+                            </button>
+                        )}
                         {(workOrder.status === 'in_progress' || workOrder.status === 'review' || workOrder.status === 'done') && (
                             <button
                                 className="watch-btn"
@@ -2167,7 +2177,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onWatch, expanded, actionLoading }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, expanded, actionLoading }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -2217,6 +2227,7 @@
                                     onApprove={onApprove}
                                     onAccept={onAccept}
                                     onReject={onReject}
+                                    onRollback={onRollback}
                                     onWatch={onWatch}
                                     expanded={expanded}
                                     actionLoading={actionLoading}
@@ -2588,6 +2599,65 @@
             );
         };
 
+        const RollbackModal = ({ isOpen, onClose, onRollback, workOrderName }) => {
+            const [reason, setReason] = useState('');
+            const [submitting, setSubmitting] = useState(false);
+
+            if (!isOpen) return null;
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!reason.trim()) {
+                    alert('Cancellation reason is required for administrative rollback');
+                    return;
+                }
+                setSubmitting(true);
+                await onRollback(reason);
+                setReason('');
+                setSubmitting(false);
+                onClose();
+            };
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+                        <div className="modal-header">
+                            <h2 className="modal-title">⚠️ Administrative Rollback</h2>
+                            <button className="modal-close" onClick={onClose}>×</button>
+                        </div>
+                        <form onSubmit={handleSubmit}>
+                            <div className="modal-body">
+                                <p style={{ marginBottom: '16px', color: 'var(--text-secondary)' }}>
+                                    Rolling back completed work order: <strong>{workOrderName}</strong>
+                                </p>
+                                <p style={{ marginBottom: '16px', color: 'var(--status-blocked)', fontSize: '13px' }}>
+                                    This will transition the work order from <strong>done → cancelled</strong>.
+                                    The original completion data will be preserved and an audit log entry will be created.
+                                </p>
+                                <div className="form-group">
+                                    <label className="form-label">Cancellation Reason (required) *</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        value={reason}
+                                        onChange={(e) => setReason(e.target.value)}
+                                        placeholder="Why is this completion being rolled back? (e.g., built without PRD, phantom completion, validation failure)"
+                                        rows={4}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-footer">
+                                <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+                                <button type="submit" className="btn btn-primary" disabled={submitting || !reason.trim()} style={{ background: 'var(--status-blocked)' }}>
+                                    {submitting ? 'Rolling back...' : 'Confirm Rollback'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
         // Error Boundary for graceful error handling
         class ErrorBoundary extends React.Component {
             constructor(props) {
@@ -2782,6 +2852,7 @@
             const [loading, setLoading] = useState(true);
             const [showModal, setShowModal] = useState(false);
             const [rejectModal, setRejectModal] = useState({ open: false, workOrderId: null, workOrderName: '' });
+            const [rollbackModal, setRollbackModal] = useState({ open: false, workOrderId: null, workOrderName: '' });
             const [duplicateModal, setDuplicateModal] = useState({ open: false, workOrderId: null, workOrderName: '', duplicates: [] });
             const [expanded, setExpanded] = useState(null);
             const [toasts, setToasts] = useState([]);
@@ -2981,6 +3052,43 @@
                 }
             };
 
+            const openRollbackModal = (workOrderId) => {
+                const wo = workOrders.find(w => w.id === workOrderId);
+                setRollbackModal({ open: true, workOrderId, workOrderName: wo?.name || 'Unknown' });
+            };
+
+            const handleRollback = async (reason) => {
+                const workOrderId = rollbackModal.workOrderId;
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'rollback' }));
+                try {
+                    const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/rollback`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'apikey': SUPABASE_ANON_KEY,
+                        },
+                        body: JSON.stringify({ work_order_id: workOrderId, reason }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                        addToast(data.error || `Rollback failed (${res.status})`, 'error');
+                        return;
+                    }
+                    if (data.rolled_back) {
+                        setWorkOrders(prev => prev.map(w =>
+                            w.id === workOrderId ? { ...w, status: 'cancelled' } : w
+                        ));
+                        addToast('Work order rolled back - done → cancelled', 'success');
+                    } else {
+                        addToast(data.error || 'Rollback failed', 'error');
+                    }
+                } catch (err) {
+                    addToast('Failed to rollback: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
+                }
+            };
+
             const handleCreate = async (form) => {
                 if (!form.name || !form.objective) {
                     addToast('Name and objective are required', 'error');
@@ -3141,6 +3249,7 @@
                                             onApprove={handleApprove}
                                             onAccept={handleAccept}
                                             onReject={openRejectModal}
+                                            onRollback={openRollbackModal}
                                             onWatch={setWatchingWO}
                                             expanded={expanded}
                                             actionLoading={actionLoading}
@@ -3220,6 +3329,14 @@
                         onClose={() => setRejectModal({ open: false, workOrderId: null, workOrderName: '' })}
                         onReject={handleReject}
                         workOrderName={rejectModal.workOrderName}
+                    />
+
+                    {/* Rollback Modal */}
+                    <RollbackModal
+                        isOpen={rollbackModal.open}
+                        onClose={() => setRollbackModal({ open: false, workOrderId: null, workOrderName: '' })}
+                        onRollback={handleRollback}
+                        workOrderName={rollbackModal.workOrderName}
                     />
 
                     {/* Toasts */}
