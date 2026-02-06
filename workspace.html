@@ -1693,22 +1693,30 @@
                 if (!wo || wo.status === newStatus) return;
 
                 // Optimistic update
-                setWorkOrders(prev => prev.map(w => 
+                setWorkOrders(prev => prev.map(w =>
                     w.id === workOrderId ? { ...w, status: newStatus } : w
                 ));
 
                 try {
-                    await api(`/rest/v1/work_orders?id=eq.${workOrderId}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify({ status: newStatus, updated_at: new Date().toISOString() }),
+                    // Route through enforcement RPC — never bypass state machine
+                    const params = { p_work_order_id: workOrderId, p_status: newStatus };
+                    if (newStatus === 'done') params.p_completed_at = new Date().toISOString();
+                    if (newStatus === 'in_progress') params.p_started_at = new Date().toISOString();
+
+                    const result = await api('/rest/v1/rpc/update_work_order_state', {
+                        method: 'POST',
+                        body: JSON.stringify(params),
                     });
+                    if (result && result.error) {
+                        throw new Error(Array.isArray(result.errors) ? result.errors.join(', ') : 'Transition rejected by state machine');
+                    }
                     addToast(`Moved to ${COLUMNS.find(c => c.id === newStatus)?.name}`, 'success');
                 } catch (err) {
                     // Rollback
-                    setWorkOrders(prev => prev.map(w => 
+                    setWorkOrders(prev => prev.map(w =>
                         w.id === workOrderId ? wo : w
                     ));
-                    addToast('Failed to update status', 'error');
+                    addToast(`Move failed: ${err.message || 'Invalid transition'}`, 'error');
                 }
             };
 

@@ -40,32 +40,59 @@
 
 ## Data Flow
 
-### Request → Execution → Learning Loop
+### Request → Interrogation → Execution → Learning Loop
 
 ```
 1. User message (Portal or Claude.ai)
        │
 2. intake-api classifies (Haiku LLM)
        ├─ chat → portal-chat (direct response)
-       └─ task → create_draft_work_order() RPC
+       └─ task → routes to interrogation or WO creation
               │
-3. WO lifecycle: draft → ready → in_progress → review → done
+3. Interrogation (new projects)
+       │  interrogate edge function: /start → 13 questions × 7 domains
+       │  Domains: user, core, data, flow, auth, technical, constraints
+       │  /answer collects responses → /complete triggers doc generation
+       │  generate_project_documents() trigger → 8 canonical docs:
+       │    PRD.md, APP_FLOW.md, TECH_STACK.md, FRONTEND_GUIDELINES.md,
+       │    BACKEND_STRUCTURE.md, IMPLEMENTATION_PLAN.md,
+       │    SECURITY_MODEL.md, TESTING_STRATEGY.md
+       │  Stored in project_documents table → export_project_docs() RPC
+       │  check_and_set_intake_complete() → gates WO progression
+       │
+4. WO lifecycle: draft → ready → in_progress → review → done
        │  enforce_wo_state_changes trigger validates every transition
        │  auto_route_work_order trigger assigns agent on ready
+       │  Intake gate: WOs linked to projects can't start until intake complete
        │
-4. Daemon polls work-order-executor/poll
+5. Daemon polls work-order-executor/poll
        │  Claims WO → runs Claude CLI → completes WO
        │
-5. Spans emitted during execution
+6. Spans emitted during execution
        │  trg_auto_lesson_on_error_span → creates lesson from errors
        │
-6. lesson-promoter (cron 6h) promotes lessons → directives
+7. lesson-promoter (cron 6h) promotes lessons → directives
        │  detect_lesson_gaps() finds recurring patterns
        │  auto_create_gap_wo() creates self-improvement WOs
        │
-7. Directives loaded into portal-chat system prompt
+8. Directives loaded into portal-chat system prompt
        └─ Loop closes: errors → lessons → directives → better responses
 ```
+
+### Canonical Document Mapping
+
+| Document | Source | Storage | Purpose |
+|----------|--------|---------|---------|
+| PRD.md | `generate_project_documents()` | `project_documents` | Product requirements definition |
+| APP_FLOW.md | `generate_project_documents()` | `project_documents` | Application flow and user journeys |
+| TECH_STACK.md | `generate_project_documents()` | `project_documents` | Technology choices and constraints |
+| FRONTEND_GUIDELINES.md | `generate_project_documents()` | `project_documents` | UI/UX patterns and component standards |
+| BACKEND_STRUCTURE.md | `generate_project_documents()` | `project_documents` | API design, data models, services |
+| IMPLEMENTATION_PLAN.md | `generate_project_documents()` | `project_documents` | Phased build plan with milestones |
+| SECURITY_MODEL.md | `generate_project_documents()` | `project_documents` | Auth, RLS, encryption, threat model |
+| TESTING_STRATEGY.md | `generate_project_documents()` | `project_documents` | Test types, coverage targets, CI gates |
+
+Export via: `SELECT * FROM export_project_docs(p_project_id)` → returns filenames + markdown content.
 
 ## Edge Functions (29 deployed)
 
