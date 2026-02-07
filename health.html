@@ -587,6 +587,7 @@
         .mutation-type.INSERT { background: rgba(52,211,153,0.15); color: #34D399; }
         .mutation-type.UPDATE { background: rgba(96,165,250,0.15); color: #60A5FA; }
         .mutation-type.DELETE { background: rgba(248,113,113,0.15); color: #F87171; }
+        .mutation-type.ROLLBACK { background: rgba(167,139,250,0.15); color: #A78BFA; }
 
         .mutation-time { color: var(--text-muted); font-size: 11px; margin-left: auto; }
 
@@ -771,6 +772,12 @@
                 </div>
 
                 <div class="section-subtitle">Enforcement Checks</div>
+                <div class="stats-bar" style="margin-bottom:12px;" id="enforcerStats">
+                    <div class="mini-card"><div class="mini-value" id="enforcerRuns">--</div><div class="mini-label">Runs (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="enforcerFindings">--</div><div class="mini-label">Findings (24h)</div></div>
+                    <div class="mini-card"><div class="mini-value" id="enforcerCritical">--</div><div class="mini-label">Critical</div></div>
+                    <div class="mini-card"><div class="mini-value" id="enforcerVerified">--</div><div class="mini-label">WOs Verified</div></div>
+                </div>
                 <div id="integrityChecks">
                     <div class="check-row"><span class="check-label" style="color:var(--text-muted)">Running checks...</span></div>
                 </div>
@@ -831,6 +838,19 @@
                 <div class="section-subtitle">Recent Evaluations</div>
                 <div id="approvalLog" style="max-height:240px; overflow-y:auto;">
                     <div class="approval-row"><span style="color:var(--text-muted); font-size:12px;">No evaluations yet</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Verification Coverage -->
+        <div class="content" style="padding-top:0; margin-top:-8px;">
+            <div class="card">
+                <div class="section-title">E2E Verification Coverage</div>
+                <div class="stats-bar" id="verificationStats">
+                    <div class="mini-card"><div class="mini-value" id="verifiedCount">--</div><div class="mini-label">Verified</div></div>
+                    <div class="mini-card"><div class="mini-value" id="unverifiedCount">--</div><div class="mini-label">Unverified</div></div>
+                    <div class="mini-card"><div class="mini-value" id="skippedCount">--</div><div class="mini-label">Skipped</div></div>
+                    <div class="mini-card"><div class="mini-value" id="verifCoverage">--</div><div class="mini-label">Coverage %</div></div>
                 </div>
             </div>
         </div>
@@ -916,20 +936,26 @@
             try {
                 // Fetch all data in parallel
                 const [context, status, lastMutations, lastLessons, lastDirectives,
-                       auditEvents, decisionGates, mutationStream, docStatus, approvalLog] = await Promise.all([
+                       auditEvents, decisionGates, mutationStream, docStatus, approvalLog, verifData,
+                       enforcerRuns, enforcerFindings] = await Promise.all([
                     apiFetch('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
                     apiFetch('/functions/v1/work-order-executor/status'),
                     apiFetch('/rest/v1/state_mutations?select=target_table,created_at&order=created_at.desc&limit=20').catch(() => []),
                     apiFetch('/rest/v1/lessons?select=created_at,category&order=created_at.desc&limit=1').catch(() => []),
                     apiFetch('/rest/v1/directives?select=created_at&order=created_at.desc&limit=1').catch(() => []),
                     // Enforcement dashboard data
-                    apiFetch('/rest/v1/audit_log?select=action,target_type,target_id,actor_type,event_type,created_at&order=created_at.desc&limit=30').catch(() => []),
+                    apiFetch('/rest/v1/audit_log?select=action,target_type,target_id,actor_type,event_type,created_at&event_type=in.(wo_transition,wo_transition_rejected,deployment_gate_passed,deployment_gate_blocked,qa_checklist_populated)&order=created_at.desc&limit=30').catch(() => []),
                     apiFetch('/rest/v1/decision_gates?select=name,trigger_type,requires_approval,active&order=name').catch(() => []),
                     apiFetch('/rest/v1/state_mutations?select=target_table,mutation_type,created_at&order=created_at.desc&limit=15').catch(() => []),
                     // Doc status (project_documents)
                     apiFetch('/rest/v1/project_documents?select=doc_type,updated_at&order=updated_at.desc&limit=10').catch(() => []),
                     // Auto-approval log
                     apiFetch('/rest/v1/auto_approval_log?select=work_order_id,risk_score,decision,denial_reasons,created_at&order=created_at.desc&limit=20').catch(() => []),
+                    // Verification coverage
+                    apiFetch('/rest/v1/work_orders?select=verification_status&status=neq.cancelled&status=neq.draft').catch(() => []),
+                    // Audit enforcer data
+                    apiFetch('/rest/v1/enforcer_runs?select=id,run_timestamp,status,findings_count,critical_findings_count&order=run_timestamp.desc&limit=50').catch(() => []),
+                    apiFetch('/rest/v1/enforcer_findings?select=id,work_order_id,finding_type,severity,status,description,created_at&order=created_at.desc&limit=100').catch(() => []),
                 ]);
 
                 setConnection(true);
@@ -1097,6 +1123,26 @@
                         </div>
                     </div>
                 `).join('');
+
+                // ══════════════════════════════════════════
+                // AUDIT ENFORCER STATS
+                // ══════════════════════════════════════════
+                const enforcerRunsArr = Array.isArray(enforcerRuns) ? enforcerRuns : [];
+                const enforcerFindingsArr = Array.isArray(enforcerFindings) ? enforcerFindings : [];
+
+                const oneDayAgo = now - 86400000;
+                const runs24h = enforcerRunsArr.filter(r => new Date(r.run_timestamp).getTime() > oneDayAgo);
+                const findings24h = enforcerFindingsArr.filter(f => new Date(f.created_at).getTime() > oneDayAgo);
+                const criticalFindings = enforcerFindingsArr.filter(f => f.severity === 'critical' && f.status === 'open');
+
+                // Count WOs verified in last 24h
+                const verifiedWos24h = runs24h.reduce((acc, r) => acc + (r.findings_count === 0 ? 1 : 0), 0);
+
+                document.getElementById('enforcerRuns').textContent = runs24h.length;
+                document.getElementById('enforcerFindings').textContent = findings24h.length;
+                document.getElementById('enforcerCritical').textContent = criticalFindings.length;
+                document.getElementById('enforcerCritical').style.color = criticalFindings.length > 0 ? 'var(--status-error)' : 'var(--status-active)';
+                document.getElementById('enforcerVerified').textContent = verifiedWos24h;
 
                 // ══════════════════════════════════════════
                 // ENFORCEMENT CHECKS WITH DRILL-DOWN
@@ -1284,6 +1330,80 @@
                         : 'Run regenerate_architecture_docs() RPC to re-introspect live system and update project_documents. Or trigger doc sync via daemon.'
                 });
 
+                // Add enforcer findings to checks with human-readable summaries
+                if (enforcerFindingsArr.length > 0) {
+                    // Group findings by type
+                    const findingsByType = {};
+                    enforcerFindingsArr.filter(f => !f.resolved_at).forEach(f => {
+                        if (!findingsByType[f.finding_type]) {
+                            findingsByType[f.finding_type] = [];
+                        }
+                        findingsByType[f.finding_type].push(f);
+                    });
+
+                    Object.entries(findingsByType).forEach(([type, findings]) => {
+                        const critCount = findings.filter(f => f.severity === 'critical').length;
+                        const highCount = findings.filter(f => f.severity === 'high').length;
+                        const medCount = findings.filter(f => f.severity === 'medium').length;
+                        const lowCount = findings.filter(f => f.severity === 'low').length;
+
+                        let status = 'pass';
+                        if (critCount > 0) status = 'fail';
+                        else if (highCount > 0) status = 'warn';
+
+                        // Human-readable detail
+                        const severityCounts = [
+                            critCount > 0 ? `${critCount} critical` : null,
+                            highCount > 0 ? `${highCount} high` : null,
+                            medCount > 0 ? `${medCount} medium` : null,
+                            lowCount > 0 ? `${lowCount} low` : null
+                        ].filter(Boolean).join(', ');
+
+                        const detail = severityCounts || `${findings.length} info-level findings`;
+
+                        // Create human-readable summary instead of raw JSON
+                        const humanReadable = findings.map((f, idx) =>
+                            `Finding ${idx + 1} [${f.severity.toUpperCase()}]: ${f.description}\\n` +
+                            `  Created: ${relativeTime(f.created_at)}\\n` +
+                            (f.work_order_id ? `  WO: ${f.work_order_id}\\n` : '') +
+                            (f.remediation_wo_id ? `  Remediation WO: ${f.remediation_wo_id}\\n` : '')
+                        ).join('\\n');
+
+                        checks.push({
+                            id: 'enforcer-' + type.replace(/_/g, '-'),
+                            status: status,
+                            label: 'Enforcer: ' + type.replace(/_/g, ' '),
+                            detail: detail,
+                            reasoning: `Independent audit enforcer detected ${findings.length} ${type} finding(s) through verification of deployed artifacts, schema state, and audit trail cross-validation. Click to expand for details.`,
+                            rawData: `=== HUMAN READABLE SUMMARY ===\\n\\n${humanReadable}\\n\\n=== RAW JSON (for debugging) ===\\n${JSON.stringify(findings, null, 2)}`,
+                            remediation: critCount > 0 || highCount > 0
+                                ? 'Review enforcer_findings table. Remediation WOs may have been auto-generated. Critical findings block WO completion until resolved.'
+                                : 'Monitor findings. Low severity findings are informational.'
+                        });
+                    });
+                }
+
+                // Add overall enforcer health check
+                const enforcerHealthDetail = runs24h.length === 0
+                    ? 'No runs in 24h - enforcer may not be scheduled'
+                    : findings24h.length === 0
+                    ? `${runs24h.length} runs, no violations detected`
+                    : `${runs24h.length} runs, ${findings24h.length} findings (${criticalFindings.length} critical)`;
+
+                checks.push({
+                    id: 'enforcer-health',
+                    status: runs24h.length === 0 ? 'warn' : criticalFindings.length > 0 ? 'fail' : 'pass',
+                    label: 'Enforcer health',
+                    detail: enforcerHealthDetail,
+                    reasoning: `Audit enforcer runs every 6 hours and on failure events. ${runs24h.length} runs executed in the last 24h. ${findings24h.length} findings generated, ${criticalFindings.length} critical.`,
+                    rawData: `Last 5 runs:\\n${JSON.stringify(enforcerRunsArr.slice(0, 5), null, 2)}\\n\\nRecent findings:\\n${JSON.stringify(findings24h.slice(0, 10), null, 2)}`,
+                    remediation: runs24h.length === 0
+                        ? 'Check enforcer_config table has supabase_url and service_role_key set. Verify cron schedule or manually invoke via schedule_enforcer_run().'
+                        : criticalFindings.length > 0
+                        ? 'Critical findings detected. Review enforcer_findings table and resolve issues. WOs cannot transition to done until verified.'
+                        : 'No action needed.'
+                });
+
                 // Render enforcement checks with drill-down panels
                 const checksEl = document.getElementById('integrityChecks');
                 checksEl.innerHTML = checks.map(c => `
@@ -1296,13 +1416,20 @@
                     <div class="drill-down ${openPanels.has(c.id) ? 'open' : ''}" id="drill-${c.id}">
                         <h4>Reasoning</h4>
                         <p>${escapeHtml(c.reasoning)}</p>
-                        <h4>Raw Data</h4>
-                        <pre>${escapeHtml(c.rawData)}</pre>
+                        <h4>Evidence</h4>
+                        ${c.id.startsWith('enforcer-') && c.rawData.includes('HUMAN READABLE') ?
+                            `<pre style="white-space: pre-wrap;">${escapeHtml(c.rawData.split('=== RAW JSON')[0].replace('=== HUMAN READABLE SUMMARY ===\\n\\n', ''))}</pre>
+                            <details style="margin-top:8px;">
+                                <summary style="cursor:pointer; color:var(--text-muted); font-size:11px; font-weight:600;">Show raw JSON</summary>
+                                <pre style="margin-top:8px;">${escapeHtml(c.rawData.split('=== RAW JSON (for debugging) ===\\n')[1] || '')}</pre>
+                            </details>` :
+                            `<pre>${escapeHtml(c.rawData)}</pre>`
+                        }
                         <h4>Remediation</h4>
                         <p class="remediation">${escapeHtml(c.remediation)}</p>
                     </div>
                 `).join('');
-                document.getElementById('integrityTimestamp').textContent = `Last checked: ${new Date().toLocaleTimeString()}`;
+                document.getElementById('integrityTimestamp').textContent = `Last checked: ${new Date().toLocaleTimeString()} • Enforcer: ${runs24h.length} runs (24h)`;
 
                 // ══════════════════════════════════════════
                 // ENFORCEMENT ACTIVITY DASHBOARD
@@ -1314,10 +1441,11 @@
                 // Filter 24h events
                 const oneDayAgo = now - 86400000;
                 const recent24h = auditArr.filter(e => new Date(e.created_at).getTime() > oneDayAgo);
-                const transitions24h = recent24h.filter(e => e.action && e.action.includes('\u2192'));
-                const rejections24h = recent24h.filter(e => e.event_type === 'wo_transition_rejected' || (e.action && e.action.toLowerCase().includes('rejected')));
-                const gatesPassed24h = recent24h.filter(e => e.action && e.action.includes('gates_passed'));
-                const totalGateEvents = gatesPassed24h.length + rejections24h.length;
+                const transitions24h = recent24h.filter(e => e.event_type === 'wo_transition');
+                const rejections24h = recent24h.filter(e => e.event_type === 'wo_transition_rejected');
+                const gatesPassed24h = recent24h.filter(e => e.event_type === 'deployment_gate_passed');
+                const gatesBlocked24h = recent24h.filter(e => e.event_type === 'deployment_gate_blocked');
+                const totalGateEvents = gatesPassed24h.length + gatesBlocked24h.length;
                 const passRate = totalGateEvents > 0 ? Math.round((gatesPassed24h.length / totalGateEvents) * 100) : 100;
 
                 document.getElementById('statTransitions').textContent = transitions24h.length;
@@ -1412,6 +1540,24 @@
                         </div>
                     `).join('');
                 }
+
+                // ══════════════════════════════════════════
+                // VERIFICATION COVERAGE
+                // ══════════════════════════════════════════
+                const verifArr = Array.isArray(verifData) ? verifData : [];
+                const vVerified = verifArr.filter(w => w.verification_status === 'verified').length;
+                const vUnverified = verifArr.filter(w => w.verification_status === 'unverified' || !w.verification_status).length;
+                const vSkipped = verifArr.filter(w => w.verification_status === 'skipped').length;
+                const vFailed = verifArr.filter(w => w.verification_status === 'failed').length;
+                const vTotal = verifArr.length;
+                const vCoverage = vTotal > 0 ? Math.round(((vVerified + vSkipped) / vTotal) * 100) : 0;
+
+                document.getElementById('verifiedCount').textContent = vVerified;
+                document.getElementById('unverifiedCount').textContent = vUnverified + vFailed;
+                document.getElementById('unverifiedCount').style.color = (vUnverified + vFailed) > 0 ? 'var(--status-warning)' : 'var(--text-primary)';
+                document.getElementById('skippedCount').textContent = vSkipped;
+                document.getElementById('verifCoverage').textContent = vCoverage + '%';
+                document.getElementById('verifCoverage').style.color = vCoverage >= 80 ? 'var(--status-active)' : vCoverage >= 50 ? 'var(--status-warning)' : 'var(--status-error)';
 
             } catch (err) {
                 console.error('Refresh error:', err);

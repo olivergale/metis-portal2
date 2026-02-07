@@ -2043,10 +2043,18 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, expanded, actionLoading }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, expanded, actionLoading, staleThreshold }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
-            
+
+            // Check if work order is stale
+            const isStale = staleThreshold && (() => {
+                const updatedAt = new Date(workOrder.updated_at || workOrder.created_at);
+                const staleDate = new Date();
+                staleDate.setDate(staleDate.getDate() - staleThreshold);
+                return updatedAt < staleDate;
+            })();
+
             const handleDragStart = (e) => {
                 e.dataTransfer.setData('text/plain', workOrder.id);
                 e.currentTarget.classList.add('dragging');
@@ -2057,17 +2065,19 @@
             };
 
             return (
-                <div 
+                <div
                     className="card"
                     draggable
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
+                    style={{ opacity: isStale ? 0.6 : 1 }}
                 >
                     <div className="card-header">
                         <div className="card-title" onClick={() => onExpand(workOrder.id)}>
                             {workOrder.name?.slice(0, 60)}{workOrder.name?.length > 60 ? '...' : ''}
+                            {isStale && <span style={{ marginLeft: '8px', fontSize: '11px', padding: '2px 6px', background: 'var(--bg-hover)', borderRadius: '4px', color: 'var(--text-muted)' }}>stale</span>}
                         </div>
-                        <div className={`card-priority ${workOrder.priority || 'p2_medium'}`} 
+                        <div className={`card-priority ${workOrder.priority || 'p2_medium'}`}
                              title={workOrder.priority?.replace('_', ' ')} />
                     </div>
                     
@@ -2146,6 +2156,17 @@
                                 {workOrder.status === 'in_progress' ? '▶ Watch Live' : '▶ View Log'}
                             </button>
                         )}
+                        {workOrder.status !== 'cancelled' && workOrder.status !== 'done' && onCancel && (
+                            <button
+                                className="card-action-btn"
+                                onClick={(e) => { e.stopPropagation(); onCancel(workOrder.id); }}
+                                disabled={isLoading}
+                                style={{ background: 'var(--status-blocked)', color: 'white' }}
+                                title="Cancel this work order"
+                            >
+                                {isLoading === 'cancel' ? 'Cancelling...' : '✕ Cancel'}
+                            </button>
+                        )}
                     </div>
 
                     {expanded === workOrder.id && (
@@ -2154,6 +2175,28 @@
                                 <span className="card-expand-label">Slug</span>
                                 <span className="card-expand-value">{workOrder.slug}</span>
                             </div>
+                            {workOrder.design_doc_id && (
+                                <div className="card-expand-row">
+                                    <span className="card-expand-label">Design Doc</span>
+                                    <span className="card-expand-value">
+                                        <a
+                                            href={`#/design-doc/${workOrder.design_doc_id}`}
+                                            style={{ color: 'var(--accent)', textDecoration: 'none' }}
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            📄 View Design Document
+                                        </a>
+                                    </span>
+                                </div>
+                            )}
+                            {workOrder.design_doc_required && (
+                                <div className="card-expand-row" style={{ background: 'rgba(212, 165, 116, 0.1)', padding: '8px', borderRadius: '4px', border: '1px solid var(--accent)' }}>
+                                    <span className="card-expand-label" style={{ color: 'var(--accent)' }}>⚠️ Design Doc</span>
+                                    <span className="card-expand-value" style={{ color: 'var(--accent)' }}>
+                                        Required for feature/architecture WOs
+                                    </span>
+                                </div>
+                            )}
                             {workOrder.acceptance_criteria && (
                                 <div className="card-expand-row">
                                     <span className="card-expand-label">Criteria</span>
@@ -2177,7 +2220,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, expanded, actionLoading }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, expanded, actionLoading, staleThreshold }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -2229,8 +2272,10 @@
                                     onReject={onReject}
                                     onRollback={onRollback}
                                     onWatch={onWatch}
+                                    onCancel={handleCancel}
                                     expanded={expanded}
                                     actionLoading={actionLoading}
+                                    staleThreshold={staleThreshold}
                                 />
                             ))
                         )}
@@ -2268,6 +2313,16 @@
                 name: '', objective: '', priority: 'p2_medium', assigned_to: '', acceptance_criteria: ''
             });
             const [submitting, setSubmitting] = useState(false);
+
+            // AC7: ESC key handler for modal dismissal
+            useEffect(() => {
+                if (!isOpen) return;
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [isOpen, onClose]);
 
             if (!isOpen) return null;
 
@@ -2370,6 +2425,17 @@
             const [consolidationResult, setConsolidationResult] = useState(null);
             const [editedName, setEditedName] = useState('');
             const [editedObjective, setEditedObjective] = useState('');
+
+            // AC7: ESC key handler for modal dismissal
+            useEffect(() => {
+                if (!isOpen) return;
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [isOpen, onClose]);
+
             if (!isOpen) return null;
 
             const highMatches = (duplicates || []).filter(d => d.relevance > 0.3 || (d.recommendation && (d.recommendation.includes('EXISTS') || d.recommendation.includes('COMPLETED') || d.recommendation.includes('IN PROGRESS'))));
@@ -2553,6 +2619,16 @@
             const [reason, setReason] = useState('');
             const [submitting, setSubmitting] = useState(false);
 
+            // AC7: ESC key handler for modal dismissal
+            useEffect(() => {
+                if (!isOpen) return;
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [isOpen, onClose]);
+
             if (!isOpen) return null;
 
             const handleSubmit = async (e) => {
@@ -2602,6 +2678,16 @@
         const RollbackModal = ({ isOpen, onClose, onRollback, workOrderName }) => {
             const [reason, setReason] = useState('');
             const [submitting, setSubmitting] = useState(false);
+
+            // AC7: ESC key handler for modal dismissal
+            useEffect(() => {
+                if (!isOpen) return;
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [isOpen, onClose]);
 
             if (!isOpen) return null;
 
@@ -2860,6 +2946,8 @@
             const [actionLoading, setActionLoading] = useState({});
             const [activeView, setActiveView] = useState('kanban');
             const [watchingWO, setWatchingWO] = useState(null);
+            const [showArchived, setShowArchived] = useState(false);
+            const [staleThreshold, setStaleThreshold] = useState(30);
 
             const addToast = (message, type = 'info') => {
                 const id = Date.now();
@@ -2872,12 +2960,45 @@
 
             const fetchData = useCallback(async () => {
                 try {
+                    // Fetch stale threshold preference
+                    const prefRes = await api('/rest/v1/user_preferences?select=value&key=eq.stale_wo_threshold_days').catch(() => []);
+                    const threshold = prefRes?.[0]?.value || 30;
+                    setStaleThreshold(threshold);
+
                     const [woRes, agentsRes, eventsRes] = await Promise.all([
                         api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
                         api('/rest/v1/agents?select=*&order=name.asc'),
                         workspaceApi('get_events', { limit: 30 })
                     ]);
-                    setWorkOrders(woRes);
+
+                    // Filter stale WOs based on updated_at timestamp
+                    const staleDate = new Date();
+                    staleDate.setDate(staleDate.getDate() - threshold);
+
+                    let filteredWOs = woRes;
+                    if (!showArchived) {
+                        filteredWOs = woRes.filter(wo => {
+                            const updatedAt = new Date(wo.updated_at || wo.created_at);
+                            return updatedAt >= staleDate || wo.status === 'in_progress';
+                        });
+
+                        // Log audit event for stale filter
+                        if (woRes.length !== filteredWOs.length) {
+                            await api('/rest/v1/audit_log', {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    event_type: 'workspace_stale_filter',
+                                    actor: 'workspace-ui',
+                                    details: {
+                                        threshold_days: threshold,
+                                        filtered_count: woRes.length - filteredWOs.length
+                                    }
+                                })
+                            }).catch(() => {});
+                        }
+                    }
+
+                    setWorkOrders(filteredWOs);
                     setAgents(agentsRes);
                     setEvents(eventsRes.events || []);
                 } catch (err) {
@@ -2885,7 +3006,7 @@
                 } finally {
                     setLoading(false);
                 }
-            }, []);
+            }, [showArchived]);
 
             useEffect(() => {
                 fetchData();
@@ -2969,7 +3090,11 @@
                         return;
                     }
                     if (!res.ok) {
-                        addToast(data.error || `Approval failed (${res.status})`, 'error');
+                        // AC6: Display structured error codes
+                        const errorMsg = data.error_code
+                            ? `[${data.error_code}] ${data.error || data.message || 'Approval failed'}`
+                            : (data.error || `Approval failed (${res.status})`);
+                        addToast(errorMsg, 'error');
                         return;
                     }
                     if (data.approved) {
@@ -2978,7 +3103,11 @@
                         ));
                         addToast('Work order approved - ready for execution', 'success');
                     } else {
-                        addToast(data.error || data.message || 'Approval failed', 'error');
+                        // AC6: Display structured error codes
+                        const errorMsg = data.error_code
+                            ? `[${data.error_code}] ${data.error || data.message || 'Approval failed'}`
+                            : (data.error || data.message || 'Approval failed');
+                        addToast(errorMsg, 'error');
                     }
                 } catch (err) {
                     addToast('Failed to approve: ' + err.message, 'error');
@@ -3001,7 +3130,11 @@
                     });
                     const data = await res.json();
                     if (!res.ok) {
-                        addToast(data.error || `Accept failed (${res.status})`, 'error');
+                        // AC6: Display structured error codes
+                        const errorMsg = data.error_code
+                            ? `[${data.error_code}] ${data.error || data.message || 'Accept failed'}`
+                            : (data.error || `Accept failed (${res.status})`);
+                        addToast(errorMsg, 'error');
                         return;
                     }
                     if (data.accepted) {
@@ -3010,7 +3143,11 @@
                         ));
                         addToast(data.already_done ? 'Already accepted' : 'Work accepted - marked as done', 'success');
                     } else {
-                        addToast(data.error || 'Accept failed', 'error');
+                        // AC6: Display structured error codes
+                        const errorMsg = data.error_code
+                            ? `[${data.error_code}] ${data.error || data.message || 'Accept failed'}`
+                            : (data.error || 'Accept failed');
+                        addToast(errorMsg, 'error');
                     }
                 } catch (err) {
                     addToast('Failed to accept: ' + err.message, 'error');
@@ -3055,6 +3192,39 @@
             const openRollbackModal = (workOrderId) => {
                 const wo = workOrders.find(w => w.id === workOrderId);
                 setRollbackModal({ open: true, workOrderId, workOrderName: wo?.name || 'Unknown' });
+            };
+
+            const handleCancel = async (workOrderId) => {
+                const wo = workOrders.find(w => w.id === workOrderId);
+                if (!confirm(`Cancel work order "${wo?.name}"? This action cannot be undone.`)) {
+                    return;
+                }
+
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'cancel' }));
+                try {
+                    const result = await api('/rest/v1/rpc/update_work_order_state', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            p_work_order_id: workOrderId,
+                            p_status: 'cancelled'
+                        }),
+                    });
+
+                    if (result && result.error) {
+                        throw new Error(result.error);
+                    }
+
+                    // Update local state
+                    setWorkOrders(prev => prev.map(w =>
+                        w.id === workOrderId ? { ...w, status: 'cancelled' } : w
+                    ));
+                    addToast('Work order cancelled', 'success');
+                    fetchData(); // Refresh to apply filter if needed
+                } catch (err) {
+                    addToast('Failed to cancel: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
+                }
             };
 
             const handleRollback = async (reason) => {
@@ -3146,8 +3316,27 @@
             };
 
             const workOrdersByStatus = useMemo(() => {
+                const statusPriority = { 'in_progress': 1, 'ready': 2, 'draft': 3, 'review': 4, 'done': 5, 'cancelled': 6 };
                 return COLUMNS.reduce((acc, col) => {
-                    acc[col.id] = workOrders.filter(wo => wo.status === col.id);
+                    const filtered = workOrders.filter(wo => wo.status === col.id);
+                    // Sort by status priority, then by priority field, then by created/completed date
+                    acc[col.id] = filtered.sort((a, b) => {
+                        const statusDiff = (statusPriority[a.status] || 99) - (statusPriority[b.status] || 99);
+                        if (statusDiff !== 0) return statusDiff;
+
+                        const priorityOrder = { 'p0_critical': 0, 'p1_high': 1, 'p2_medium': 2, 'p3_low': 3 };
+                        const priorityDiff = (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
+                        if (priorityDiff !== 0) return priorityDiff;
+
+                        // For done/cancelled columns, sort by completed_at DESC
+                        if (col.id === 'done' || col.id === 'cancelled') {
+                            const aDate = a.completed_at ? new Date(a.completed_at) : new Date(0);
+                            const bDate = b.completed_at ? new Date(b.completed_at) : new Date(0);
+                            return bDate - aDate;
+                        }
+
+                        return new Date(b.created_at) - new Date(a.created_at);
+                    });
                     return acc;
                 }, {});
             }, [workOrders]);
@@ -3224,6 +3413,17 @@
                                     </div>
                                 </div>
                                 <div className="board-actions">
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', cursor: 'pointer', borderRadius: '6px', background: 'var(--bg-surface)', marginRight: '8px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={showArchived}
+                                            onChange={(e) => setShowArchived(e.target.checked)}
+                                            style={{ cursor: 'pointer' }}
+                                        />
+                                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                            Show archived (>{staleThreshold}d)
+                                        </span>
+                                    </label>
                                     <button className="btn btn-secondary" onClick={fetchData}>
                                         ↻ Refresh
                                     </button>
@@ -3251,8 +3451,10 @@
                                             onReject={openRejectModal}
                                             onRollback={openRollbackModal}
                                             onWatch={setWatchingWO}
+                                            onCancel={handleCancel}
                                             expanded={expanded}
                                             actionLoading={actionLoading}
+                                            staleThreshold={staleThreshold}
                                         />
                                     ))}
                                 </div>
