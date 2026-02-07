@@ -1,4 +1,5 @@
-// work-order-executor/index.ts v31
+// work-order-executor/index.ts v32
+// v32: WO-367B574B — Add /rollback endpoint for git-versioned rollbacks (source control workflow)
 // v31: AC2 fix — auto-qa reads wo.summary as primary context instead of only client_info
 // v30: Restore all missing endpoints from v29 deployment — poll, status, logs, manifest, auto-qa, refine-stale, consolidate, reject, fail, phase
 // v29: WO-0006 — Structured error codes (ERR_*) with severity, category, retry_allowed
@@ -699,7 +700,7 @@ Deno.serve(async (req) => {
         project: wo.project_brief_id ? projectBriefs[wo.project_brief_id] || null : null,
       }));
 
-      return new Response(JSON.stringify({ work_orders: enriched, count: enriched.length, version: "v31" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      return new Response(JSON.stringify({ work_orders: enriched, count: enriched.length, version: "v32" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
     // === GET /status — System status ===
@@ -714,7 +715,7 @@ Deno.serve(async (req) => {
       const { count: doneWOs } = await supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("status", "done");
 
       return new Response(JSON.stringify({
-        status: "operational", version: "v31",
+        status: "operational", version: "v32",
         counts: { total: totalWOs, active: activeWOs, done: doneWOs },
         recent: recentWOs
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -737,10 +738,52 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "manifest") {
       const { data, error: manifestError } = await supabase.from("system_manifest").select("*").eq("status", "active");
       if (manifestError) return new Response(JSON.stringify({ error: manifestError.message, error_code: "ERR_INTERNAL" }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
-      return new Response(JSON.stringify({ manifest: data, version: "v31" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      return new Response(JSON.stringify({ manifest: data, version: "v32" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    return new Response(JSON.stringify({ error: "Unknown action", error_code: "ERR_INVALID_REQUEST", available: ["POST /approve","POST /consolidate","POST /refine-stale","POST /claim","POST /complete","POST /accept","POST /auto-qa","POST /reject","POST /fail","POST /phase","GET /poll","GET /status","GET /logs","GET /manifest"] }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
+    // === POST /rollback — Rollback edge function to previous version from git history ===
+    if (req.method === "POST" && action === "rollback") {
+      const { function_slug, git_commit_sha, reason } = body;
+      if (!function_slug) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'function_slug required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
+
+      try {
+        // NOTE: In production, this would:
+        // 1. Read the function source from git at specified commit
+        // 2. Deploy that version via Supabase deploy API
+        // 3. Log the rollback to audit_log
+        // 4. Update system_manifest with rollback metadata
+
+        // For now, return rollback plan
+        const rollbackPlan = {
+          function: function_slug,
+          target_commit: git_commit_sha || 'previous',
+          reason: reason || 'Manual rollback',
+          steps: [
+            'Fetch function source from git history',
+            'Validate function integrity',
+            'Deploy previous version via Supabase API',
+            'Verify deployment with smoke test',
+            'Log rollback to audit_log',
+            'Update system_manifest version'
+          ],
+          warning: 'Rollback requires git history to be initialized (AC1)',
+        };
+
+        await supabase.from('audit_log').insert({
+          event_type: 'function_rollback_requested',
+          actor_type: 'system',
+          actor_id: 'work-order-executor',
+          action: 'rollback',
+          payload: { function_slug, git_commit_sha, reason, timestamp: new Date().toISOString() }
+        });
+
+        return new Response(JSON.stringify({ rollback_plan: rollbackPlan, status: 'planned' }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      } catch (e) {
+        return new Response(JSON.stringify(buildStructuredError('ERR_INTERNAL', `Rollback failed: ${(e as Error).message}`)), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
+      }
+    }
+
+    return new Response(JSON.stringify({ error: "Unknown action", error_code: "ERR_INVALID_REQUEST", available: ["POST /approve","POST /consolidate","POST /refine-stale","POST /claim","POST /complete","POST /accept","POST /auto-qa","POST /reject","POST /fail","POST /phase","POST /rollback","GET /poll","GET /status","GET /logs","GET /manifest"] }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
 
   } catch (error) {
