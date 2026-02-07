@@ -934,10 +934,13 @@
 
         async function refresh() {
             try {
+                const twentyFourHoursAgo = new Date(Date.now() - 86400000).toISOString();
+
                 // Fetch all data in parallel
                 const [context, status, lastMutations, lastLessons, lastDirectives,
                        auditEvents, decisionGates, mutationStream, docStatus, approvalLog, verifData,
-                       enforcerRuns, enforcerFindings] = await Promise.all([
+                       enforcerRuns, enforcerFindings,
+                       inProgressWOs, reviewWOs, manifestItems, unpromotedLessonsData, completed24hWOs] = await Promise.all([
                     apiFetch('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
                     apiFetch('/functions/v1/work-order-executor/status'),
                     apiFetch('/rest/v1/state_mutations?select=target_table,created_at&order=created_at.desc&limit=20').catch(() => []),
@@ -956,6 +959,12 @@
                     // Audit enforcer data
                     apiFetch('/rest/v1/enforcer_runs?select=id,run_timestamp,status,findings_count,critical_findings_count&order=run_timestamp.desc&limit=50').catch(() => []),
                     apiFetch('/rest/v1/enforcer_findings?select=id,work_order_id,finding_type,severity,status,description,created_at&order=created_at.desc&limit=100').catch(() => []),
+                    // System stats direct queries (status endpoint lacks these fields)
+                    apiFetch('/rest/v1/work_orders?select=slug,name&status=eq.in_progress').catch(() => []),
+                    apiFetch('/rest/v1/work_orders?select=slug,name&status=eq.review').catch(() => []),
+                    apiFetch('/rest/v1/system_manifest?select=component_type&status=eq.active').catch(() => []),
+                    apiFetch('/rest/v1/lessons?select=severity&promoted_at=is.null').catch(() => []),
+                    apiFetch(`/rest/v1/work_orders?select=id&status=eq.done&completed_at=gte.${twentyFourHoursAgo}`).catch(() => []),
                 ]);
 
                 setConnection(true);
@@ -982,8 +991,8 @@
 
                 // WO Pipeline
                 const summary = context.summary || {};
-                const inProg = (status.in_progress || []).length;
-                const pending = (status.pending || []).length;
+                const inProg = (inProgressWOs || []).length;
+                const pending = (reviewWOs || []).length;
                 const blocked = summary.blocked_work_orders || 0;
                 const drafts = summary.draft_work_orders || 0;
                 const total = inProg + pending + drafts + blocked;
@@ -1054,17 +1063,19 @@
 
                 // System stats
                 const statsEl = document.getElementById('systemStats');
-                const manifestCounts = status.manifest_counts || {};
-                const lessonsBySev = status.unpromoted_lessons || {};
+                const manifestCounts = {};
+                (manifestItems || []).forEach(m => { manifestCounts[m.component_type] = (manifestCounts[m.component_type] || 0) + 1; });
+                const lessonsBySev = {};
+                (unpromotedLessonsData || []).forEach(l => { lessonsBySev[l.severity] = (lessonsBySev[l.severity] || 0) + 1; });
                 const rows = [
-                    ['Completed (24h)', status.completed_24h || 0],
-                    ['Awaiting Review', (status.awaiting_review || []).length],
+                    ['Completed (24h)', (completed24hWOs || []).length],
+                    ['Awaiting Review', (reviewWOs || []).length],
                     ['Lessons (unpromoted)', Object.values(lessonsBySev).reduce((a, b) => a + b, 0)],
                     ['Edge Functions', manifestCounts.edge_function || 0],
                     ['RPC Functions', manifestCounts.rpc_function || 0],
                     ['Triggers', manifestCounts.trigger || 0],
                     ['Integrations', manifestCounts.api_integration || 0],
-                    ['Harness Version', status.harness_version || '--'],
+                    ['Harness Version', status.version || '--'],
                 ];
                 statsEl.innerHTML = rows.map(([l, v]) => `
                     <div class="stat-row">
