@@ -1,4 +1,5 @@
-// work-order-executor/index.ts v32
+// work-order-executor/index.ts v33
+// v33: Fix /consolidate — add AI gap analysis mode for UI (work_order_id + duplicates) alongside legacy bulk cancel
 // v32: WO-367B574B — Add /rollback endpoint for git-versioned rollbacks (source control workflow)
 // v31: AC2 fix — auto-qa reads wo.summary as primary context instead of only client_info
 // v30: Restore all missing endpoints from v29 deployment — poll, status, logs, manifest, auto-qa, refine-stale, consolidate, reject, fail, phase
@@ -601,10 +602,38 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === POST /consolidate — Consolidate duplicate WOs ===
+    // === POST /consolidate — AI gap analysis + refine OR bulk cancel ===
     if (req.method === "POST" && action === "consolidate") {
+      // UI contract: { work_order_id, duplicates } → AI gap analysis
+      if (body.work_order_id && body.duplicates) {
+        const { work_order_id, duplicates } = body;
+        const { data: wo } = await supabase.from("work_orders").select("id, slug, name, objective").eq("id", work_order_id).single();
+        if (!wo) return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Work order not found')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
+
+        const dupSummary = (duplicates || []).map((d: any) => `- ${d.name} (${d.source || 'unknown'}, status: ${d.status || 'n/a'}): ${d.recommendation || ''}`).join('\n');
+        const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+        const prompt = `You are analyzing whether a proposed work order is already covered by existing components.\n\nProposed WO: "${wo.name}"\nObjective: ${wo.objective}\n\nExisting overlapping components:\n${dupSummary}\n\nRespond with JSON only:\n{\n  "fully_covered": true/false,\n  "gap_analysis": "1-2 sentence explanation of what IS and ISN'T covered",\n  "refined": {\n    "name": "refined name focusing only on uncovered gaps (or original if fully covered)",\n    "objective": "refined objective excluding already-covered scope"\n  }\n}`;
+
+        try {
+          const resp = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": apiKey!, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 500, messages: [{ role: "user", content: prompt }] }),
+          });
+          const result = await resp.json();
+          const text = result.content?.[0]?.text || "{}";
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { fully_covered: false, gap_analysis: "Analysis failed", refined: { name: wo.name, objective: wo.objective } };
+          analysis.original = { name: wo.name, objective: wo.objective };
+          return new Response(JSON.stringify(analysis), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+        } catch (err: any) {
+          return new Response(JSON.stringify({ fully_covered: false, gap_analysis: `Analysis error: ${err.message}`, original: { name: wo.name, objective: wo.objective }, refined: { name: wo.name, objective: wo.objective } }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+        }
+      }
+
+      // Legacy contract: { work_order_ids, primary_id } → bulk cancel secondaries
       const { work_order_ids, primary_id, reason } = body;
-      if (!work_order_ids || !primary_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_ids and primary_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
+      if (!work_order_ids || !primary_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_ids and primary_id required, or work_order_id and duplicates for gap analysis')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
       const secondaryIds = work_order_ids.filter((id: string) => id !== primary_id);
       let consolidated = 0;
