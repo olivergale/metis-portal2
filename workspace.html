@@ -1311,6 +1311,18 @@
             color: var(--text-primary);
         }
 
+        .toast-close {
+            background: none;
+            border: none;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0 2px;
+            line-height: 1;
+            opacity: 0.6;
+        }
+        .toast-close:hover { opacity: 1; }
+
         .toast.success { border-left: 3px solid var(--status-done); }
         .toast.error { border-left: 3px solid var(--status-blocked); }
         .toast.info { border-left: 3px solid var(--status-assigned); }
@@ -1752,16 +1764,19 @@
         // ============================================
         
         const Toast = ({ message, type, onClose }) => {
+            const closeRef = React.useRef(onClose);
+            closeRef.current = onClose;
             useEffect(() => {
-                const timer = setTimeout(onClose, 4000);
+                const timer = setTimeout(() => closeRef.current(), 5000);
                 return () => clearTimeout(timer);
-            }, [onClose]);
+            }, []);
 
             const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
             return (
                 <div className={`toast ${type}`}>
                     <span className="toast-icon">{icons[type]}</span>
                     <span className="toast-message">{message}</span>
+                    <button className="toast-close" onClick={onClose}>✕</button>
                 </div>
             );
         };
