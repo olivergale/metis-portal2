@@ -3095,6 +3095,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         },
                         body: JSON.stringify({ work_order_id: workOrderId, approved_by: 'user', acknowledge_duplicates: acknowledgeDuplicates }),
                     });
@@ -3140,6 +3141,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         },
                         body: JSON.stringify({ work_order_id: workOrderId }),
                     });
@@ -3185,6 +3187,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         },
                         body: JSON.stringify({ work_order_id: workOrderId, reason }),
                     });
@@ -3251,6 +3254,7 @@
                         headers: {
                             'Content-Type': 'application/json',
                             'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
                         },
                         body: JSON.stringify({ work_order_id: workOrderId, reason }),
                     });
