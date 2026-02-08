@@ -2910,6 +2910,9 @@
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
 
+            // State for failure reason from execution_log
+            const [failureReason, setFailureReason] = useState(null);
+
             // Check if work order is stale
             const isStale = staleThreshold && (() => {
                 const updatedAt = new Date(workOrder.updated_at || workOrder.created_at);
@@ -2917,6 +2920,41 @@
                 staleDate.setDate(staleDate.getDate() - staleThreshold);
                 return updatedAt < staleDate;
             })();
+
+            // Fetch failure reason from execution_log for failed WOs
+            useEffect(() => {
+                if (workOrder.status !== 'failed') {
+                    setFailureReason(null);
+                    return;
+                }
+
+                const fetchFailureReason = async () => {
+                    try {
+                        // Fetch execution_error phase entries
+                        const errorEntries = await api(
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=eq.execution_error&order=created_at.desc&limit=1`
+                        );
+
+                        if (errorEntries && errorEntries.length > 0) {
+                            const errorDetail = errorEntries[0].detail;
+                            if (errorDetail) {
+                                // Extract error message from detail
+                                const errorMsg = errorDetail.error || errorDetail.message || JSON.stringify(errorDetail);
+                                setFailureReason(errorMsg);
+                                return;
+                            }
+                        }
+
+                        // Fallback to summary if no execution_log error found
+                        setFailureReason(workOrder.summary || null);
+                    } catch (err) {
+                        console.error('Failed to fetch failure reason:', err);
+                        setFailureReason(workOrder.summary || null);
+                    }
+                };
+
+                fetchFailureReason();
+            }, [workOrder.id, workOrder.status, workOrder.summary]);
 
             const handleDragStart = (e) => {
                 e.dataTransfer.setData('text/plain', workOrder.id);
@@ -2956,12 +2994,12 @@
                         </div>
                     )}
 
-                    {/* Failure Reason Display - ac-6 */}
+                    {/* Failure Reason Display - ac-6: Shows failure reason from execution_log or summary */}
                     {workOrder.status === 'failed' && (
                         <div className="card-failure-reason">
                             <div className="failure-reason-header">❌ Failure Reason</div>
                             <div className="failure-reason-content">
-                                {workOrder.summary || 'No failure details recorded'}
+                                {failureReason || 'No failure details recorded'}
                             </div>
                         </div>
                     )}
