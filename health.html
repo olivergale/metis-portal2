@@ -955,7 +955,7 @@
                     // Auto-approval log
                     apiFetch('/rest/v1/auto_approval_log?select=work_order_id,risk_score,decision,denial_reasons,created_at&order=created_at.desc&limit=20').catch(() => []),
                     // Verification coverage
-                    apiFetch('/rest/v1/work_orders?select=verification_status&status=neq.cancelled&status=neq.draft').catch(() => []),
+                    apiFetch('/rest/v1/work_orders?select=verification_status&status=not.in.(cancelled,draft)').catch(() => []),
                     // Audit enforcer data
                     apiFetch('/rest/v1/enforcer_runs?select=id,run_timestamp,status,findings_count,critical_findings_count&order=run_timestamp.desc&limit=50').catch(() => []),
                     apiFetch('/rest/v1/enforcer_findings?select=id,work_order_id,finding_type,severity,status,description,created_at&order=created_at.desc&limit=100').catch(() => []),
@@ -1492,8 +1492,7 @@
                 const mutStreamArr = Array.isArray(mutationStream) ? mutationStream : [];
                 const gatesArr = Array.isArray(decisionGates) ? decisionGates : [];
 
-                // Filter 24h events
-                const oneDayAgo = now - 86400000;
+                // Filter 24h events (oneDayAgo already declared above)
                 const recent24h = auditArr.filter(e => new Date(e.created_at).getTime() > oneDayAgo);
                 const transitions24h = recent24h.filter(e => e.event_type === 'wo_transition');
                 const rejections24h = recent24h.filter(e => e.event_type === 'wo_transition_rejected');
