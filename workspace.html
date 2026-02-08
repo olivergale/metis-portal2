@@ -2974,50 +2974,107 @@
             };
 
             const fetchData = useCallback(async () => {
+                // Retry helper with exponential backoff
+                const retryWithBackoff = async (fn, resourceName, maxRetries = 3) => {
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        try {
+                            return await fn();
+                        } catch (err) {
+                            const isLastAttempt = attempt === maxRetries;
+                            const isTransient = err.message?.includes('503') ||
+                                              err.message?.includes('timeout') ||
+                                              err.message?.includes('FetchError') ||
+                                              err.status === 503;
+
+                            if (isLastAttempt || !isTransient) {
+                                const errorCode = err.code || err.status || 'UNKNOWN';
+                                const errorMsg = err.message || 'Network error';
+                                throw new Error(`${errorCode}: ${errorMsg}`);
+                            }
+
+                            // Exponential backoff: 500ms, 1s, 2s
+                            const delay = 500 * Math.pow(2, attempt - 1);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        }
+                    }
+                };
+
                 try {
-                    // Fetch stale threshold preference
+                    // Fetch stale threshold preference (non-critical, fail silently)
                     const prefRes = await api('/rest/v1/user_preferences?select=value&key=eq.stale_wo_threshold_days').catch(() => []);
                     const threshold = prefRes?.[0]?.value || 30;
                     setStaleThreshold(threshold);
 
-                    const [woRes, agentsRes, eventsRes] = await Promise.all([
-                        api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
-                        api('/rest/v1/agents?select=*&order=name.asc'),
-                        workspaceApi('get_events', { limit: 30 })
+                    // Fetch each resource individually with retry logic
+                    const [woResult, agentsResult, eventsResult] = await Promise.allSettled([
+                        retryWithBackoff(
+                            () => api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
+                            'work orders'
+                        ),
+                        retryWithBackoff(
+                            () => api('/rest/v1/agents?select=*&order=name.asc'),
+                            'agents'
+                        ),
+                        retryWithBackoff(
+                            () => workspaceApi('get_events', { limit: 30 }),
+                            'events'
+                        )
                     ]);
 
-                    // Filter stale WOs based on updated_at timestamp
-                    const staleDate = new Date();
-                    staleDate.setDate(staleDate.getDate() - threshold);
+                    // Process work orders
+                    if (woResult.status === 'fulfilled') {
+                        const woRes = woResult.value;
+                        const staleDate = new Date();
+                        staleDate.setDate(staleDate.getDate() - threshold);
 
-                    let filteredWOs = woRes;
-                    if (!showArchived) {
-                        filteredWOs = woRes.filter(wo => {
-                            const updatedAt = new Date(wo.updated_at || wo.created_at);
-                            return updatedAt >= staleDate || wo.status === 'in_progress';
-                        });
+                        let filteredWOs = woRes;
+                        if (!showArchived) {
+                            filteredWOs = woRes.filter(wo => {
+                                const updatedAt = new Date(wo.updated_at || wo.created_at);
+                                return updatedAt >= staleDate || wo.status === 'in_progress';
+                            });
 
-                        // Log audit event for stale filter
-                        if (woRes.length !== filteredWOs.length) {
-                            await api('/rest/v1/audit_log', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                    event_type: 'workspace_stale_filter',
-                                    actor: 'workspace-ui',
-                                    details: {
-                                        threshold_days: threshold,
-                                        filtered_count: woRes.length - filteredWOs.length
-                                    }
-                                })
-                            }).catch(() => {});
+                            // Log audit event for stale filter
+                            if (woRes.length !== filteredWOs.length) {
+                                await api('/rest/v1/audit_log', {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                        action: 'workspace_stale_filter',
+                                        event_type: 'workspace_stale_filter',
+                                        actor_type: 'system',
+                                        payload: {
+                                            threshold_days: threshold,
+                                            filtered_count: woRes.length - filteredWOs.length
+                                        }
+                                    })
+                                }).catch(() => {});
+                            }
                         }
+                        setWorkOrders(filteredWOs);
+                    } else {
+                        addToast(`Failed to load work orders: ${woResult.reason.message}`, 'error');
+                        setWorkOrders([]); // Show empty instead of leaving stale data
                     }
 
-                    setWorkOrders(filteredWOs);
-                    setAgents(agentsRes);
-                    setEvents(eventsRes.events || []);
+                    // Process agents
+                    if (agentsResult.status === 'fulfilled') {
+                        setAgents(agentsResult.value);
+                    } else {
+                        addToast(`Failed to load agents: ${agentsResult.reason.message}`, 'error');
+                        setAgents([]); // Show empty instead of leaving stale data
+                    }
+
+                    // Process events
+                    if (eventsResult.status === 'fulfilled') {
+                        setEvents(eventsResult.value.events || []);
+                    } else {
+                        addToast(`Failed to load events: ${eventsResult.reason.message}`, 'error');
+                        setEvents([]); // Show empty instead of leaving stale data
+                    }
+
                 } catch (err) {
-                    addToast('Failed to load data', 'error');
+                    // This should only catch unexpected errors, not the specific fetch failures above
+                    addToast(`Unexpected error: ${err.message || 'Unknown error'}`, 'error');
                 } finally {
                     setLoading(false);
                 }
