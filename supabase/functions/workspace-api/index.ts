@@ -17,6 +17,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    // Send heartbeat ping
+    supabase.from('system_status')
+      .update({ last_heartbeat: new Date().toISOString() })
+      .eq('component', 'workspace')
+      .then(() => {}).catch(() => {}); // Fire and forget
+
     const agentName = req.headers.get('x-agent-name')
     if (!agentName) {
       return new Response(

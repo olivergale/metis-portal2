@@ -1106,14 +1106,46 @@
                 const daemonTs = daemon.last_heartbeat ? new Date(daemon.last_heartbeat).getTime() : null;
 
                 const now = Date.now();
+                // Fetch system_status for heartbeat data
+                const systemStatusData = await apiFetch('/rest/v1/system_status?select=component,status,last_heartbeat').catch(() => []);
+                const systemStatusMap = {};
+                (systemStatusData || []).forEach(s => {
+                    systemStatusMap[s.component] = s;
+                });
+
+                // Build sync items - distinguish between heartbeat-monitored and registered-only
                 const syncItems = [
-                    { label: 'Work Orders', ts: lastWoMutation, color: syncColor(lastWoMutation ? now - lastWoMutation : null, 21600000, 86400000) },
-                    { label: 'Lessons', ts: lastLessonTs, color: syncColor(lastLessonTs ? now - lastLessonTs : null, 43200000, 86400000) },
-                    { label: 'Directives', ts: lastDirectiveTs, color: syncColor(lastDirectiveTs ? now - lastDirectiveTs : null, 43200000, 86400000) },
-                    { label: 'Daemon', ts: daemonTs, color: syncColor(daemonTs ? now - daemonTs : null, 120000, 600000) },
-                    { label: 'State Mutations', ts: lastAnyMutation, color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 21600000, 86400000) },
-                    { label: 'Context API', ts: context.agents ? now : null, color: (context.agents && context.work_orders !== undefined) ? 'green' : 'red' },
+                    { label: 'Work Orders', ts: lastWoMutation, color: syncColor(lastWoMutation ? now - lastWoMutation : null, 21600000, 86400000), monitored: true },
+                    { label: 'Lessons', ts: lastLessonTs, color: syncColor(lastLessonTs ? now - lastLessonTs : null, 43200000, 86400000), monitored: true },
+                    { label: 'Directives', ts: lastDirectiveTs, color: syncColor(lastDirectiveTs ? now - lastDirectiveTs : null, 43200000, 86400000), monitored: true },
+                    { label: 'Daemon', ts: daemonTs, color: syncColor(daemonTs ? now - daemonTs : null, 120000, 600000), monitored: true },
+                    { label: 'State Mutations', ts: lastAnyMutation, color: syncColor(lastAnyMutation ? now - lastAnyMutation : null, 21600000, 86400000), monitored: true },
+                    { label: 'Context API', ts: context.agents ? now : null, color: (context.agents && context.work_orders !== undefined) ? 'green' : 'red', monitored: true },
                 ];
+
+                // Add other system_status components (registered-only, no heartbeat monitoring)
+                const registeredOnlyComponents = [
+                    'portal', 'workspace', 'supabase_edge_functions', 'supabase_db',
+                    'github', 'vercel', 'anthropic_api', 'openai_api', 'langfuse',
+                    'notion_mcp', 'figma_mcp', 'slack_mcp', 'asana_mcp',
+                    'memory_system', 'cron_scheduler', 'supabase_auth', 'supabase_storage', 'github_deploy'
+                ];
+
+                registeredOnlyComponents.forEach(compName => {
+                    const comp = systemStatusMap[compName];
+                    if (comp) {
+                        const hasHeartbeat = comp.last_heartbeat != null;
+                        syncItems.push({
+                            label: compName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                            ts: hasHeartbeat ? new Date(comp.last_heartbeat).getTime() : null,
+                            color: hasHeartbeat
+                                ? syncColor(now - new Date(comp.last_heartbeat).getTime(), 300000, 3600000)
+                                : (comp.status === 'active' ? 'green' : 'yellow'),
+                            monitored: hasHeartbeat,
+                            registeredOnly: !hasHeartbeat
+                        });
+                    }
+                });
 
                 const redCount = syncItems.filter(s => s.color === 'red').length;
                 const yellowCount = syncItems.filter(s => s.color === 'yellow').length;
@@ -1125,15 +1157,26 @@
                 pulseEl.innerHTML = `<span class="pulse-dot ${pulseColor}"></span><span style="color:var(--text-primary)">${pulseLabel}</span>`;
 
                 const syncGrid = document.getElementById('brainSyncGrid');
-                syncGrid.innerHTML = syncItems.map(s => `
-                    <div class="sync-card ${s.color}">
-                        <div class="stoplight ${s.color}"></div>
-                        <div class="sync-info">
-                            <span class="sync-label">${s.label}</span>
-                            <span class="sync-time">${s.ts ? relativeTime(new Date(s.ts).toISOString()) : 'No data'}</span>
+                syncGrid.innerHTML = syncItems.map(s => {
+                    let timeDisplay;
+                    if (s.registeredOnly) {
+                        timeDisplay = 'N/A — no heartbeat configured';
+                    } else if (s.ts) {
+                        timeDisplay = relativeTime(new Date(s.ts).toISOString());
+                    } else {
+                        timeDisplay = 'No data';
+                    }
+
+                    return `
+                        <div class="sync-card ${s.color}">
+                            <div class="stoplight ${s.color}"></div>
+                            <div class="sync-info">
+                                <span class="sync-label">${s.label}</span>
+                                <span class="sync-time">${timeDisplay}</span>
+                            </div>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
 
                 // ══════════════════════════════════════════
                 // AUDIT ENFORCER STATS

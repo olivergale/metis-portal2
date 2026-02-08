@@ -152,6 +152,12 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
   const anthropic = new Anthropic({ apiKey: anthropicKey });
 
+  // Send heartbeat ping
+  supabase.from('system_status')
+    .update({ last_heartbeat: new Date().toISOString() })
+    .eq('component', 'portal')
+    .then(() => {}).catch(() => {}); // Fire and forget
+
   let langfuse: Langfuse | null = null;
   let trace: any = null;
   if (langfusePublicKey && langfuseSecretKey) {
