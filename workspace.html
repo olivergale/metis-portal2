@@ -40,6 +40,7 @@
             --status-assigned: #60A5FA;
             --status-progress: #FBBF24;
             --status-review: #A78BFA;
+            --status-failed: #DC2626;
             --status-done: #34D399;
             --status-blocked: #F87171;
             
@@ -665,6 +666,7 @@
         .column-dot.assigned { background: var(--status-assigned); }
         .column-dot.progress { background: var(--status-progress); }
         .column-dot.review { background: var(--status-review); }
+        .column-dot.failed { background: var(--status-failed); }
         .column-dot.done { background: var(--status-done); }
         .column-dot.blocked { background: var(--status-blocked); }
 
@@ -1899,6 +1901,7 @@
             { id: 'ready', name: 'Assigned', color: 'assigned' },
             { id: 'in_progress', name: 'In Progress', color: 'progress' },
             { id: 'review', name: 'Review', color: 'review' },
+            { id: 'failed', name: 'Failed', color: 'failed' },
             { id: 'done', name: 'Done', color: 'done' },
             { id: 'blocked', name: 'Blocked', color: 'blocked' },
         ];
@@ -3795,6 +3798,7 @@
             const [watchingWO, setWatchingWO] = useState(null);
             const [showArchived, setShowArchived] = useState(false);
             const [staleThreshold, setStaleThreshold] = useState(30);
+            const [searchTerm, setSearchTerm] = useState('');
 
             const addToast = (message, type = 'info') => {
                 const id = Date.now();
@@ -4224,30 +4228,36 @@
             };
 
             const workOrdersByStatus = useMemo(() => {
-                const statusPriority = { 'in_progress': 1, 'ready': 2, 'draft': 3, 'review': 4, 'done': 5, 'cancelled': 6 };
-                return COLUMNS.reduce((acc, col) => {
-                    const filtered = workOrders.filter(wo => wo.status === col.id);
-                    // Sort by status priority, then by priority field, then by created/completed date
-                    acc[col.id] = filtered.sort((a, b) => {
-                        const statusDiff = (statusPriority[a.status] || 99) - (statusPriority[b.status] || 99);
-                        if (statusDiff !== 0) return statusDiff;
+                const statusPriority = { 'in_progress': 1, 'ready': 2, 'draft': 3, 'review': 4, 'failed': 5, 'done': 6, 'cancelled': 7 };
 
+                // Filter by search term
+                const searchFiltered = searchTerm.trim() === ''
+                    ? workOrders
+                    : workOrders.filter(wo => {
+                        const term = searchTerm.toLowerCase();
+                        return (
+                            wo.slug?.toLowerCase().includes(term) ||
+                            wo.name?.toLowerCase().includes(term) ||
+                            wo.summary?.toLowerCase().includes(term)
+                        );
+                    });
+
+                return COLUMNS.reduce((acc, col) => {
+                    const filtered = searchFiltered.filter(wo => wo.status === col.id);
+                    // Sort by priority first, then by updated_at DESC (most recent activity first)
+                    acc[col.id] = filtered.sort((a, b) => {
                         const priorityOrder = { 'p0_critical': 0, 'p1_high': 1, 'p2_medium': 2, 'p3_low': 3 };
                         const priorityDiff = (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
                         if (priorityDiff !== 0) return priorityDiff;
 
-                        // For done/cancelled columns, sort by completed_at DESC
-                        if (col.id === 'done' || col.id === 'cancelled') {
-                            const aDate = a.completed_at ? new Date(a.completed_at) : new Date(0);
-                            const bDate = b.completed_at ? new Date(b.completed_at) : new Date(0);
-                            return bDate - aDate;
-                        }
-
-                        return new Date(b.created_at) - new Date(a.created_at);
+                        // Sort by updated_at DESC (most recent activity first) for all columns
+                        const aDate = new Date(a.updated_at || a.created_at);
+                        const bDate = new Date(b.updated_at || b.created_at);
+                        return bDate - aDate;
                     });
                     return acc;
                 }, {});
-            }, [workOrders]);
+            }, [workOrders, searchTerm]);
 
             const activeAgents = agents.filter(a => a.status === 'active').length;
             const totalTasks = workOrders.length;
@@ -4319,6 +4329,22 @@
                                         <button className={`view-toggle-btn ${activeView === 'projects' ? 'active' : ''}`}
                                                 onClick={() => setActiveView('projects')}>Projects</button>
                                     </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Search WOs (slug, name, summary)..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        style={{
+                                            padding: '8px 12px',
+                                            borderRadius: '6px',
+                                            border: '1px solid var(--border-default)',
+                                            background: 'var(--bg-surface)',
+                                            color: 'var(--text-primary)',
+                                            fontSize: '13px',
+                                            width: '280px',
+                                            fontFamily: 'inherit'
+                                        }}
+                                    />
                                 </div>
                                 <div className="board-actions">
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', cursor: 'pointer', borderRadius: '6px', background: 'var(--bg-surface)', marginRight: '8px' }}>
