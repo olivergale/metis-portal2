@@ -784,6 +784,27 @@
             color: var(--text-secondary);
         }
 
+        .card-failure-reason {
+            margin-bottom: 10px;
+            padding: 8px;
+            background: rgba(220, 38, 38, 0.1);
+            border: 1px solid var(--status-failed);
+            border-radius: 4px;
+        }
+
+        .failure-reason-header {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--status-failed);
+            margin-bottom: 4px;
+        }
+
+        .failure-reason-content {
+            font-size: 11px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
         .card-footer {
             display: flex;
             align-items: center;
@@ -2932,6 +2953,16 @@
                             {workOrder.tags.slice(0, 3).map((tag, i) => (
                                 <span key={i} className="card-tag">{tag}</span>
                             ))}
+                        </div>
+                    )}
+
+                    {/* Failure Reason Display - ac-6 */}
+                    {workOrder.status === 'failed' && (
+                        <div className="card-failure-reason">
+                            <div className="failure-reason-header">❌ Failure Reason</div>
+                            <div className="failure-reason-content">
+                                {workOrder.summary || 'No failure details recorded'}
+                            </div>
                         </div>
                     )}
 
