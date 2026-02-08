@@ -2012,6 +2012,10 @@
             const bodyRef = useRef(null);
             const [autoScroll, setAutoScroll] = useState(true);
             const [collapsed, setCollapsed] = useState({});
+            const [activeTab, setActiveTab] = useState('stream');
+            const [qaData, setQaData] = useState(null);
+            const [workflowHistory, setWorkflowHistory] = useState([]);
+            const [summaryData, setSummaryData] = useState(null);
 
             useEffect(() => {
                 if (!workOrder) return;
@@ -2042,10 +2046,61 @@
                     }
                 };
 
+                const fetchQAData = async () => {
+                    try {
+                        const qaEntries = await api(
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(qa_validation,qa_review)&order=created_at.desc`
+                        );
+                        if (!active) return;
+                        setQaData(qaEntries || []);
+                    } catch (err) {
+                        console.error('QA fetch error:', err);
+                    }
+                };
+
+                const fetchWorkflowHistory = async () => {
+                    try {
+                        const history = await api(
+                            `/rest/v1/audit_log?target_id=eq.${workOrder.id}&event_type=eq.work_order_transition&order=created_at.asc`
+                        );
+                        if (!active) return;
+                        setWorkflowHistory(history || []);
+                    } catch (err) {
+                        console.error('Workflow history fetch error:', err);
+                    }
+                };
+
+                const fetchSummary = async () => {
+                    try {
+                        const summaryEntries = await api(
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(completing,completion_summary)&order=created_at.desc&limit=1`
+                        );
+                        if (!active) return;
+                        if (summaryEntries && summaryEntries.length > 0) {
+                            setSummaryData(summaryEntries[0]);
+                        }
+                    } catch (err) {
+                        console.error('Summary fetch error:', err);
+                    }
+                };
+
+                // Initial fetch
                 fetchLogs();
-                const interval = setInterval(fetchLogs, 1000);
+                fetchQAData();
+                fetchWorkflowHistory();
+                fetchSummary();
+
+                // Polling: 2s for in_progress, 30s otherwise
+                const pollInterval = workOrder.status === 'in_progress' ? 2000 : 30000;
+                const interval = setInterval(() => {
+                    fetchLogs();
+                    fetchQAData();
+                    fetchWorkflowHistory();
+                    fetchSummary();
+                }, pollInterval);
+
                 return () => { active = false; clearInterval(interval); };
-            }, [workOrder?.id, autoScroll]);
+            }, [workOrder?.id, workOrder?.status, autoScroll]);
 
             const handleScroll = () => {
                 if (!bodyRef.current) return;
@@ -2212,6 +2267,183 @@
                 }
             };
 
+            const renderTabContent = () => {
+                switch (activeTab) {
+                    case 'stream':
+                        return (
+                            <div className="live-log-body" ref={bodyRef} onScroll={handleScroll}>
+                                {logEntries.length === 0 ? (
+                                    <div className="live-log-empty">
+                                        <div className="live-log-empty-icon">&#9672;</div>
+                                        {workOrder.status === 'in_progress'
+                                            ? 'Waiting for Claude CLI to begin...'
+                                            : 'No execution logs for this work order.'}
+                                    </div>
+                                ) : (
+                                    logEntries.map((entry, i) => renderEvent(entry, i))
+                                )}
+                            </div>
+                        );
+
+                    case 'qa':
+                        return (
+                            <div className="live-log-body" style={{ padding: '16px' }}>
+                                {!qaData || qaData.length === 0 ? (
+                                    <div className="live-log-empty">
+                                        <div className="live-log-empty-icon">&#10003;</div>
+                                        No QA validation data yet
+                                    </div>
+                                ) : (
+                                    qaData.map((entry, idx) => {
+                                        const detail = entry.detail || {};
+                                        const results = detail.results || [];
+                                        const model = detail.model || 'unknown';
+                                        const passed = results.filter(r => r.status === 'pass').length;
+                                        const failed = results.filter(r => r.status === 'fail').length;
+                                        const na = results.filter(r => r.status === 'na').length;
+
+                                        return (
+                                            <div key={entry.id} style={{ marginBottom: '20px', background: 'var(--bg-surface)', borderRadius: '8px', padding: '12px', border: '1px solid var(--border-default)' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                                    <div>
+                                                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                            Round {entry.iteration || idx + 1}
+                                                        </span>
+                                                        <span style={{ marginLeft: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                            {model} · {formatTime(entry.created_at)}
+                                                        </span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                                        {passed > 0 && <span style={{ padding: '3px 8px', background: '#34D39920', color: '#34D399', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{passed} PASS</span>}
+                                                        {failed > 0 && <span style={{ padding: '3px 8px', background: '#F8717120', color: '#F87171', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{failed} FAIL</span>}
+                                                        {na > 0 && <span style={{ padding: '3px 8px', background: 'var(--bg-hover)', color: 'var(--text-muted)', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{na} N/A</span>}
+                                                    </div>
+                                                </div>
+
+                                                {results.map((result, ridx) => {
+                                                    const statusColor = result.status === 'pass' ? '#34D399' : result.status === 'fail' ? '#F87171' : '#888';
+                                                    const statusIcon = result.status === 'pass' ? '✓' : result.status === 'fail' ? '✗' : '—';
+
+                                                    return (
+                                                        <div key={ridx} style={{ padding: '10px', background: 'var(--bg-primary)', borderRadius: '6px', marginBottom: '8px', borderLeft: `3px solid ${statusColor}` }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+                                                                <span style={{ color: statusColor, fontWeight: 'bold', marginRight: '8px' }}>{statusIcon}</span>
+                                                                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                    {result.criterion || `Item ${ridx + 1}`}
+                                                                </span>
+                                                            </div>
+                                                            {result.summary && (
+                                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '24px' }}>
+                                                                    {result.summary}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        );
+
+                    case 'workflow':
+                        return (
+                            <div className="live-log-body" style={{ padding: '24px' }}>
+                                {!workflowHistory || workflowHistory.length === 0 ? (
+                                    <div className="live-log-empty">
+                                        <div className="live-log-empty-icon">&#10146;</div>
+                                        No workflow transitions yet
+                                    </div>
+                                ) : (
+                                    <div style={{ position: 'relative', paddingLeft: '24px' }}>
+                                        <div style={{ position: 'absolute', left: '8px', top: '12px', bottom: '12px', width: '2px', background: 'var(--border-default)' }}></div>
+                                        {workflowHistory.map((entry, idx) => {
+                                            const payload = entry.payload || {};
+                                            const fromStatus = payload.from_status || 'unknown';
+                                            const toStatus = payload.to_status || 'unknown';
+
+                                            const statusColors = {
+                                                draft: '#9CA3AF',
+                                                ready: '#60A5FA',
+                                                in_progress: '#FBBF24',
+                                                review: '#A78BFA',
+                                                done: '#34D399',
+                                                cancelled: '#F87171',
+                                                failed: '#EF4444'
+                                            };
+
+                                            return (
+                                                <div key={entry.id} style={{ position: 'relative', marginBottom: '24px' }}>
+                                                    <div style={{
+                                                        position: 'absolute',
+                                                        left: '-20px',
+                                                        width: '16px',
+                                                        height: '16px',
+                                                        borderRadius: '50%',
+                                                        background: statusColors[toStatus] || '#888',
+                                                        border: '3px solid var(--bg-primary)',
+                                                        zIndex: 1
+                                                    }}></div>
+                                                    <div style={{ padding: '12px', background: 'var(--bg-surface)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
+                                                        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                                                            {fromStatus.replace('_', ' ')} → {toStatus.replace('_', ' ')}
+                                                        </div>
+                                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                                                            {formatTime(entry.created_at)} · {entry.actor_id || 'system'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        );
+
+                    case 'summary':
+                        return (
+                            <div className="live-log-body" style={{ padding: '16px' }}>
+                                {!summaryData ? (
+                                    <div className="live-log-empty">
+                                        <div className="live-log-empty-icon">&#128221;</div>
+                                        No completion summary yet
+                                    </div>
+                                ) : (
+                                    <div style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.6' }}>
+                                        <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-surface)', borderRadius: '8px', borderLeft: '3px solid var(--accent)' }}>
+                                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
+                                                COMPLETION SUMMARY
+                                            </div>
+                                            <div style={{ color: 'var(--text-primary)' }}>
+                                                {summaryData.detail?.content || summaryData.detail?.summary || 'No summary available'}
+                                            </div>
+                                        </div>
+
+                                        {summaryData.detail?.verification && (
+                                            <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-surface)', borderRadius: '8px', borderLeft: '3px solid #34D399' }}>
+                                                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
+                                                    VERIFICATION
+                                                </div>
+                                                <div style={{ color: 'var(--text-primary)' }}>
+                                                    {JSON.stringify(summaryData.detail.verification, null, 2)}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '12px' }}>
+                                            Completed at {formatTime(summaryData.created_at)}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+
+                    default:
+                        return null;
+                }
+            };
+
             return (
                 <div className="live-log-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
                     <div className="live-log-panel">
@@ -2227,35 +2459,99 @@
                             </div>
                             <button className="live-log-close" onClick={onClose}>&times;</button>
                         </div>
-                        <div className="live-log-body" ref={bodyRef} onScroll={handleScroll}>
-                            {logEntries.length === 0 ? (
-                                <div className="live-log-empty">
-                                    <div className="live-log-empty-icon">&#9672;</div>
-                                    {workOrder.status === 'in_progress'
-                                        ? 'Waiting for Claude CLI to begin...'
-                                        : 'No execution logs for this work order.'}
+
+                        <div style={{ display: 'flex', gap: '0', borderBottom: '1px solid var(--border-default)', background: 'var(--bg-surface)' }}>
+                            <button
+                                onClick={() => setActiveTab('stream')}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px 16px',
+                                    background: activeTab === 'stream' ? 'var(--bg-primary)' : 'transparent',
+                                    color: activeTab === 'stream' ? 'var(--text-primary)' : 'var(--text-muted)',
+                                    border: 'none',
+                                    borderBottom: activeTab === 'stream' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                    fontWeight: activeTab === 'stream' ? 600 : 400,
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                🖥️ CLI Output
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('qa')}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px 16px',
+                                    background: activeTab === 'qa' ? 'var(--bg-primary)' : 'transparent',
+                                    color: activeTab === 'qa' ? 'var(--text-primary)' : 'var(--text-muted)',
+                                    border: 'none',
+                                    borderBottom: activeTab === 'qa' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                    fontWeight: activeTab === 'qa' ? 600 : 400,
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                ✓ QA Results
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('workflow')}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px 16px',
+                                    background: activeTab === 'workflow' ? 'var(--bg-primary)' : 'transparent',
+                                    color: activeTab === 'workflow' ? 'var(--text-primary)' : 'var(--text-muted)',
+                                    border: 'none',
+                                    borderBottom: activeTab === 'workflow' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                    fontWeight: activeTab === 'workflow' ? 600 : 400,
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                → Workflow
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('summary')}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px 16px',
+                                    background: activeTab === 'summary' ? 'var(--bg-primary)' : 'transparent',
+                                    color: activeTab === 'summary' ? 'var(--text-primary)' : 'var(--text-muted)',
+                                    border: 'none',
+                                    borderBottom: activeTab === 'summary' ? '2px solid var(--accent)' : '2px solid transparent',
+                                    cursor: 'pointer',
+                                    fontSize: '13px',
+                                    fontWeight: activeTab === 'summary' ? 600 : 400,
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                📋 Summary
+                            </button>
+                        </div>
+
+                        {renderTabContent()}
+
+                        {activeTab === 'stream' && (
+                            <div className="live-log-footer">
+                                <div className="live-log-stats">
+                                    <span className="live-log-stat">
+                                        <span className="live-log-stat-dot" style={{ background: '#999' }}></span>
+                                        {thinkingBlocks} reasoning
+                                    </span>
+                                    <span className="live-log-stat">
+                                        <span className="live-log-stat-dot" style={{ background: 'var(--accent)' }}></span>
+                                        {toolCalls} tool calls
+                                    </span>
+                                    <span className="live-log-stat">
+                                        <span className="live-log-stat-dot" style={{ background: '#60A5FA' }}></span>
+                                        {streamEvents} events
+                                    </span>
                                 </div>
-                            ) : (
-                                logEntries.map((entry, i) => renderEvent(entry, i))
-                            )}
-                        </div>
-                        <div className="live-log-footer">
-                            <div className="live-log-stats">
-                                <span className="live-log-stat">
-                                    <span className="live-log-stat-dot" style={{ background: '#999' }}></span>
-                                    {thinkingBlocks} reasoning
-                                </span>
-                                <span className="live-log-stat">
-                                    <span className="live-log-stat-dot" style={{ background: 'var(--accent)' }}></span>
-                                    {toolCalls} tool calls
-                                </span>
-                                <span className="live-log-stat">
-                                    <span className="live-log-stat-dot" style={{ background: '#60A5FA' }}></span>
-                                    {streamEvents} events
-                                </span>
+                                <span>{autoScroll ? 'Auto-scrolling' : 'Scroll paused — scroll to bottom to resume'}</span>
                             </div>
-                            <span>{autoScroll ? 'Auto-scrolling' : 'Scroll paused — scroll to bottom to resume'}</span>
-                        </div>
+                        )}
                     </div>
                 </div>
             );
