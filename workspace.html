@@ -2048,11 +2048,47 @@
 
                 const fetchQAData = async () => {
                     try {
+                        // Fetch execution log entries
                         const qaEntries = await api(
-                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(qa_validation,qa_review)&order=created_at.desc`
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(qa_validation,qa_review,completing)&order=created_at.desc`
                         );
+
+                        // Fetch qa_findings for this work order
+                        const findings = await api(
+                            `/rest/v1/qa_findings?work_order_id=eq.${workOrder.id}&order=created_at.desc`
+                        );
+
                         if (!active) return;
-                        setQaData(qaEntries || []);
+
+                        // Enrich qa entries with findings data
+                        const enrichedData = (qaEntries || []).map(entry => {
+                            // Find findings created near this QA round (within 5 min window)
+                            const entryTime = new Date(entry.created_at);
+                            const relatedFindings = (findings || []).filter(f => {
+                                const fTime = new Date(f.created_at);
+                                const diffMs = Math.abs(fTime - entryTime);
+                                return diffMs < 5 * 60 * 1000; // 5 minutes
+                            });
+
+                            const passCount = relatedFindings.filter(f => f.finding_type === 'pass').length;
+                            const failCount = relatedFindings.filter(f => f.finding_type === 'fail').length;
+                            const activeCount = relatedFindings.filter(f => !f.resolved_at).length;
+                            const resolvedCount = relatedFindings.filter(f => f.resolved_at).length;
+
+                            return {
+                                ...entry,
+                                findings: relatedFindings,
+                                findingStats: {
+                                    pass: passCount,
+                                    fail: failCount,
+                                    active: activeCount,
+                                    resolved: resolvedCount,
+                                    total: relatedFindings.length
+                                }
+                            };
+                        });
+
+                        setQaData(enrichedData);
                     } catch (err) {
                         console.error('QA fetch error:', err);
                     }
@@ -2298,48 +2334,137 @@
                                         const detail = entry.detail || {};
                                         const results = detail.results || [];
                                         const model = detail.model || 'unknown';
-                                        const passed = results.filter(r => r.status === 'pass').length;
-                                        const failed = results.filter(r => r.status === 'fail').length;
-                                        const na = results.filter(r => r.status === 'na').length;
+                                        const stats = entry.findingStats || {};
+                                        const findings = entry.findings || [];
+
+                                        // Legacy results from execution_log
+                                        const legacyPassed = results.filter(r => r.status === 'pass').length;
+                                        const legacyFailed = results.filter(r => r.status === 'fail').length;
+                                        const legacyNA = results.filter(r => r.status === 'na').length;
+
+                                        // New findings-based counts
+                                        const passCount = stats.pass || legacyPassed;
+                                        const failCount = stats.fail || legacyFailed;
+                                        const naCount = legacyNA;
+                                        const activeCount = stats.active || 0;
+                                        const resolvedCount = stats.resolved || 0;
+                                        const totalFindings = stats.total || 0;
+
+                                        const isExpanded = idx === 0; // Expand most recent by default
+                                        const roundKey = `qa-round-${entry.id}`;
 
                                         return (
                                             <div key={entry.id} style={{ marginBottom: '20px', background: 'var(--bg-surface)', borderRadius: '8px', padding: '12px', border: '1px solid var(--border-default)' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                                <div
+                                                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', cursor: 'pointer' }}
+                                                    onClick={() => toggleCollapse(roundKey)}
+                                                >
                                                     <div>
                                                         <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                            Round {entry.iteration || idx + 1}
+                                                            {entry.phase === 'completing' ? '🏁 Final Validation' : `QA Round ${entry.iteration || idx + 1}`}
                                                         </span>
                                                         <span style={{ marginLeft: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
                                                             {model} · {formatTime(entry.created_at)}
                                                         </span>
                                                     </div>
-                                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                                        {passed > 0 && <span style={{ padding: '3px 8px', background: '#34D39920', color: '#34D399', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{passed} PASS</span>}
-                                                        {failed > 0 && <span style={{ padding: '3px 8px', background: '#F8717120', color: '#F87171', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{failed} FAIL</span>}
-                                                        {na > 0 && <span style={{ padding: '3px 8px', background: 'var(--bg-hover)', color: 'var(--text-muted)', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{na} N/A</span>}
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                        {passCount > 0 && <span style={{ padding: '3px 8px', background: '#34D39920', color: '#34D399', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{passCount} PASS</span>}
+                                                        {failCount > 0 && <span style={{ padding: '3px 8px', background: '#F8717120', color: '#F87171', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{failCount} FAIL</span>}
+                                                        {naCount > 0 && <span style={{ padding: '3px 8px', background: 'var(--bg-hover)', color: 'var(--text-muted)', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{naCount} N/A</span>}
+                                                        <span style={{ fontSize: '18px', color: 'var(--text-muted)' }}>
+                                                            {collapsed[roundKey] ? '▼' : '▲'}
+                                                        </span>
                                                     </div>
                                                 </div>
 
-                                                {results.map((result, ridx) => {
-                                                    const statusColor = result.status === 'pass' ? '#34D399' : result.status === 'fail' ? '#F87171' : '#888';
-                                                    const statusIcon = result.status === 'pass' ? '✓' : result.status === 'fail' ? '✗' : '—';
+                                                {/* Findings Stats Summary */}
+                                                {totalFindings > 0 && (
+                                                    <div style={{ marginBottom: '12px', padding: '8px', background: 'var(--bg-hover)', borderRadius: '6px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                        <strong style={{ color: 'var(--text-primary)' }}>Findings:</strong> {totalFindings} total
+                                                        {activeCount > 0 && <> · <span style={{ color: '#FBBF24' }}>{activeCount} active</span></>}
+                                                        {resolvedCount > 0 && <> · <span style={{ color: '#34D399' }}>{resolvedCount} resolved</span></>}
+                                                    </div>
+                                                )}
 
-                                                    return (
-                                                        <div key={ridx} style={{ padding: '10px', background: 'var(--bg-primary)', borderRadius: '6px', marginBottom: '8px', borderLeft: `3px solid ${statusColor}` }}>
-                                                            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
-                                                                <span style={{ color: statusColor, fontWeight: 'bold', marginRight: '8px' }}>{statusIcon}</span>
-                                                                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                                                    {result.criterion || `Item ${ridx + 1}`}
-                                                                </span>
-                                                            </div>
-                                                            {result.summary && (
-                                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '24px' }}>
-                                                                    {result.summary}
-                                                                </div>
-                                                            )}
+                                                {/* Final Acceptance Indicator */}
+                                                {entry.phase === 'completing' && detail.final_status && (
+                                                    <div style={{ marginBottom: '12px', padding: '10px', background: detail.final_status === 'done' ? '#34D39920' : '#60A5FA20', borderRadius: '6px', borderLeft: `3px solid ${detail.final_status === 'done' ? '#34D399' : '#60A5FA'}` }}>
+                                                        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                                                            {detail.final_status === 'done' ? '✓ Accepted' : '→ Review Required'}
                                                         </div>
-                                                    );
-                                                })}
+                                                        {detail.result && (
+                                                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                                {detail.result}
+                                                            </div>
+                                                        )}
+                                                        {totalFindings > 0 && (
+                                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                                                Items evaluated: {totalFindings}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Expandable Details */}
+                                                {!collapsed[roundKey] && (
+                                                    <>
+                                                        {/* Legacy results (backward compatibility) */}
+                                                        {results.length > 0 && results.map((result, ridx) => {
+                                                            const statusColor = result.status === 'pass' ? '#34D399' : result.status === 'fail' ? '#F87171' : '#888';
+                                                            const statusIcon = result.status === 'pass' ? '✓' : result.status === 'fail' ? '✗' : '—';
+
+                                                            return (
+                                                                <div key={ridx} style={{ padding: '10px', background: 'var(--bg-primary)', borderRadius: '6px', marginBottom: '8px', borderLeft: `3px solid ${statusColor}` }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
+                                                                        <span style={{ color: statusColor, fontWeight: 'bold', marginRight: '8px' }}>{statusIcon}</span>
+                                                                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                            {result.criterion || `Item ${ridx + 1}`}
+                                                                        </span>
+                                                                    </div>
+                                                                    {result.summary && (
+                                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '24px' }}>
+                                                                            {result.summary}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+
+                                                        {/* New findings breakdown */}
+                                                        {findings.length > 0 && findings.map((finding, fidx) => {
+                                                            const statusColor = finding.finding_type === 'pass' ? '#34D399' : finding.finding_type === 'fail' ? '#F87171' : '#888';
+                                                            const statusIcon = finding.finding_type === 'pass' ? '✓' : finding.finding_type === 'fail' ? '✗' : 'ℹ';
+                                                            const isResolved = !!finding.resolved_at;
+
+                                                            return (
+                                                                <div key={finding.id} style={{ padding: '10px', background: 'var(--bg-primary)', borderRadius: '6px', marginBottom: '8px', borderLeft: `3px solid ${statusColor}`, opacity: isResolved ? 0.6 : 1 }}>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                                            <span style={{ color: statusColor, fontWeight: 'bold', marginRight: '8px' }}>{statusIcon}</span>
+                                                                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                                                                {finding.description}
+                                                                            </span>
+                                                                        </div>
+                                                                        {isResolved && (
+                                                                            <span style={{ fontSize: '10px', padding: '2px 6px', background: '#34D39920', color: '#34D399', borderRadius: '3px', fontWeight: 600 }}>
+                                                                                RESOLVED
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '24px', marginBottom: '4px' }}>
+                                                                        {finding.category}
+                                                                    </div>
+                                                                    {finding.evidence && typeof finding.evidence === 'object' && (
+                                                                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '24px', marginTop: '6px', padding: '6px', background: 'var(--bg-surface)', borderRadius: '4px', fontFamily: 'var(--font-mono)' }}>
+                                                                            {finding.evidence.summary || finding.evidence.criterion || JSON.stringify(finding.evidence).slice(0, 150)}
+                                                                            {JSON.stringify(finding.evidence).length > 150 && '...'}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </>
+                                                )}
                                             </div>
                                         );
                                     })
