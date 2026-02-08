@@ -902,6 +902,209 @@
         }
 
         /* ============================================
+           QA Results Panel
+           ============================================ */
+        .qa-results-panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .qa-results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .qa-results-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .qa-results-summary {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .qa-rounds {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .qa-round {
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .qa-round:last-child {
+            border-bottom: none;
+        }
+
+        .qa-round-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: var(--bg-surface);
+            transition: background 0.15s ease;
+        }
+
+        .qa-round-header:hover {
+            background: var(--bg-hover);
+        }
+
+        .qa-round-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .qa-round-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+        }
+
+        .qa-round-meta {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        .qa-round-stats {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .qa-stat {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+
+        .qa-stat-pass {
+            background: rgba(52, 211, 153, 0.15);
+            color: #34d399;
+        }
+
+        .qa-stat-fail {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        .qa-stat-na {
+            background: rgba(156, 163, 175, 0.15);
+            color: #9ca3af;
+        }
+
+        .qa-round-toggle {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-left: 8px;
+        }
+
+        .qa-round-content {
+            background: var(--bg-primary);
+            padding: 8px 12px;
+        }
+
+        .qa-finding {
+            padding: 8px;
+            margin-bottom: 6px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 4px;
+        }
+
+        .qa-finding:last-child {
+            margin-bottom: 0;
+        }
+
+        .qa-finding-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .qa-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .qa-badge-pass {
+            background: rgba(52, 211, 153, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+
+        .qa-badge-fail {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .qa-badge-na {
+            background: rgba(156, 163, 175, 0.15);
+            color: #9ca3af;
+            border: 1px solid rgba(156, 163, 175, 0.3);
+        }
+
+        .qa-badge-unknown {
+            background: rgba(212, 165, 116, 0.15);
+            color: var(--accent);
+            border: 1px solid rgba(212, 165, 116, 0.3);
+        }
+
+        .qa-finding-criterion {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .qa-finding-resolved {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: rgba(52, 211, 153, 0.15);
+            color: #34d399;
+            border-radius: 3px;
+        }
+
+        .qa-finding-summary {
+            font-size: 11px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            margin-top: 4px;
+            padding-left: 24px;
+        }
+
+        .qa-round-footer {
+            padding: 8px 0 0 0;
+            margin-top: 8px;
+            border-top: 1px solid var(--border-default);
+        }
+
+        .qa-round-footer-text {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        /* ============================================
            Live Feed Sidebar
            ============================================ */
         .feed-sidebar {
@@ -2058,6 +2261,206 @@
             );
         };
 
+        const QAResultsPanel = ({ workOrderId }) => {
+            const [qaData, setQaData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [expandedRound, setExpandedRound] = useState(null);
+
+            useEffect(() => {
+                if (!workOrderId) return;
+
+                const fetchQAData = async () => {
+                    try {
+                        setLoading(true);
+
+                        // Fetch QA findings
+                        const findingsRes = await fetch(`${SUPABASE_URL}/rest/v1/qa_findings?work_order_id=eq.${workOrderId}&select=*&order=created_at.desc`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                            }
+                        });
+                        const findings = await findingsRes.json();
+
+                        // Fetch QA execution log entries
+                        const logRes = await fetch(`${SUPABASE_URL}/rest/v1/work_order_execution_log?work_order_id=eq.${workOrderId}&phase=in.("qa_validation","qa_review","completing")&select=*&order=created_at.desc`, {
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+                            }
+                        });
+                        const logs = await logRes.json();
+
+                        // Group findings by iteration/round
+                        const findingsByIteration = findings.reduce((acc, f) => {
+                            const iter = f.evidence?.iteration || 0;
+                            if (!acc[iter]) acc[iter] = [];
+                            acc[iter].push(f);
+                            return acc;
+                        }, {});
+
+                        // Group logs by iteration
+                        const logsByIteration = logs.reduce((acc, l) => {
+                            const iter = l.iteration || 0;
+                            if (!acc[iter]) acc[iter] = [];
+                            acc[iter].push(l);
+                            return acc;
+                        }, {});
+
+                        // Combine into rounds
+                        const allIterations = new Set([...Object.keys(findingsByIteration), ...Object.keys(logsByIteration)]);
+                        const rounds = Array.from(allIterations).map(iter => {
+                            const iterNum = parseInt(iter);
+                            const iterFindings = findingsByIteration[iter] || [];
+                            const iterLogs = logsByIteration[iter] || [];
+
+                            const passCount = iterFindings.filter(f => f.evidence?.status === 'pass').length;
+                            const failCount = iterFindings.filter(f => f.evidence?.status === 'fail').length;
+                            const naCount = iterFindings.filter(f => f.evidence?.status === 'na').length;
+                            const resolvedCount = iterFindings.filter(f => f.resolved_at).length;
+
+                            const qaLog = iterLogs.find(l => l.phase === 'qa_validation' || l.phase === 'qa_review');
+                            const model = qaLog?.detail?.model || 'unknown';
+                            const timestamp = qaLog?.created_at || (iterFindings[0]?.created_at);
+                            const itemsEvaluated = qaLog?.detail?.items_evaluated || iterFindings.length;
+
+                            return {
+                                iteration: iterNum,
+                                timestamp,
+                                model,
+                                passCount,
+                                failCount,
+                                naCount,
+                                resolvedCount,
+                                totalCount: iterFindings.length,
+                                findings: iterFindings,
+                                logs: iterLogs
+                            };
+                        }).sort((a, b) => b.iteration - a.iteration);
+
+                        setQaData({ rounds, totalFindings: findings.length });
+                        // Auto-expand most recent round
+                        if (rounds.length > 0) {
+                            setExpandedRound(rounds[0].iteration);
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch QA data:', err);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                fetchQAData();
+            }, [workOrderId]);
+
+            if (loading) {
+                return (
+                    <div style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                        Loading QA results...
+                    </div>
+                );
+            }
+
+            if (!qaData || qaData.rounds.length === 0) {
+                return (
+                    <div style={{ padding: '12px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                        No QA results available
+                    </div>
+                );
+            }
+
+            return (
+                <div className="qa-results-panel">
+                    <div className="qa-results-header">
+                        <span className="qa-results-title">QA Results</span>
+                        <span className="qa-results-summary">
+                            {qaData.rounds.length} round{qaData.rounds.length !== 1 ? 's' : ''} · {qaData.totalFindings} finding{qaData.totalFindings !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+
+                    <div className="qa-rounds">
+                        {qaData.rounds.map(round => {
+                            const isExpanded = expandedRound === round.iteration;
+                            const isPassing = round.failCount === 0 && round.totalCount > 0;
+
+                            return (
+                                <div key={round.iteration} className="qa-round">
+                                    <div
+                                        className="qa-round-header"
+                                        onClick={() => setExpandedRound(isExpanded ? null : round.iteration)}
+                                        style={{ cursor: 'pointer' }}
+                                    >
+                                        <div className="qa-round-info">
+                                            <span className="qa-round-label">
+                                                Round {round.iteration}
+                                                {isPassing && <span className="qa-badge qa-badge-pass" style={{ marginLeft: '8px' }}>✓ PASS</span>}
+                                                {!isPassing && round.failCount > 0 && <span className="qa-badge qa-badge-fail" style={{ marginLeft: '8px' }}>✗ FAIL</span>}
+                                            </span>
+                                            <span className="qa-round-meta">
+                                                {round.model} · {timeAgo(round.timestamp)}
+                                            </span>
+                                        </div>
+                                        <div className="qa-round-stats">
+                                            {round.passCount > 0 && <span className="qa-stat qa-stat-pass">{round.passCount} pass</span>}
+                                            {round.failCount > 0 && <span className="qa-stat qa-stat-fail">{round.failCount} fail</span>}
+                                            {round.naCount > 0 && <span className="qa-stat qa-stat-na">{round.naCount} n/a</span>}
+                                            <span className="qa-round-toggle">{isExpanded ? '▼' : '▶'}</span>
+                                        </div>
+                                    </div>
+
+                                    {isExpanded && (
+                                        <div className="qa-round-content">
+                                            {round.findings.length === 0 ? (
+                                                <div style={{ padding: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
+                                                    No findings in this round
+                                                </div>
+                                            ) : (
+                                                round.findings.map((finding, idx) => {
+                                                    const status = finding.evidence?.status || 'unknown';
+                                                    const summary = finding.evidence?.summary || finding.description;
+                                                    const criterion = finding.evidence?.criterion || finding.checklist_item_id;
+
+                                                    return (
+                                                        <div key={finding.id} className="qa-finding">
+                                                            <div className="qa-finding-header">
+                                                                <span className={`qa-badge qa-badge-${status}`}>
+                                                                    {status === 'pass' && '✓'}
+                                                                    {status === 'fail' && '✗'}
+                                                                    {status === 'na' && '—'}
+                                                                    {status !== 'pass' && status !== 'fail' && status !== 'na' && '?'}
+                                                                </span>
+                                                                <span className="qa-finding-criterion">
+                                                                    {criterion || `Finding ${idx + 1}`}
+                                                                </span>
+                                                                {finding.resolved_at && (
+                                                                    <span className="qa-finding-resolved">✓ Resolved</span>
+                                                                )}
+                                                            </div>
+                                                            {summary && (
+                                                                <div className="qa-finding-summary">
+                                                                    {summary}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })
+                                            )}
+
+                                            <div className="qa-round-footer">
+                                                <span className="qa-round-footer-text">
+                                                    {round.resolvedCount} of {round.totalCount} resolved · {round.logs.length} log entries
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
         const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, expanded, actionLoading, staleThreshold }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
@@ -2218,6 +2621,14 @@
                                     <span className="card-expand-value">{workOrder.acceptance_criteria}</span>
                                 </div>
                             )}
+
+                            {/* QA Results Panel */}
+                            {(workOrder.status === 'review' || workOrder.status === 'done' || workOrder.status === 'in_progress') && (
+                                <div className="card-expand-row" style={{ display: 'block', marginTop: '12px' }}>
+                                    <QAResultsPanel workOrderId={workOrder.id} />
+                                </div>
+                            )}
+
                             <div className="card-actions">
                                 {COLUMNS.filter(c => c.id !== workOrder.status).slice(0, 3).map(col => (
                                     <button
