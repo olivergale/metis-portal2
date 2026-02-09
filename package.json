@@ -1,0 +1,33 @@
+{
+  "name": "metis-portal2",
+  "version": "1.0.0",
+  "description": "This guide will help you set up the METIS system from scratch.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/olivergale/metis-portal2.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/olivergale/metis-portal2/issues"
+  },
+  "homepage": "https://github.com/olivergale/metis-portal2#readme",
+  "devDependencies": {
+    "@types/node": "^25.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

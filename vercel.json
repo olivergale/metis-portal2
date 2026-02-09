@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": null,
+  "installCommand": "npm install",
+  "rewrites": [
+    { "source": "/workspace", "destination": "/workspace-new.html" }
+  ]
+}

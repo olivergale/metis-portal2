@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Frontend Validation</title>
+</head>
+<body>
+    <h1>Test Page</h1>
+    <p>This page has intentional syntax errors for testing validation</p>
+
+    <script>
+        // This should pass - valid JavaScript
+        console.log('Hello, world!');
+        const validVar = 42;
+    </script>
+
+    <script>
+        // This should FAIL - redeclared const (the health.html bug)
+        const duplicateVar = 1;
+        const duplicateVar = 2; // SYNTAX ERROR: Identifier 'duplicateVar' has already been declared
+    </script>
+
+    <script>
+        // This should FAIL - unclosed string
+        const unclosedString = "this string is not closed
+        console.log('oops');
+    </script>
+</body>
+</html>

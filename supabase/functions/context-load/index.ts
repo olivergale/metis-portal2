@@ -64,10 +64,11 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(10),
 
-      // 6. Directives (system rules)
+      // 6. Directives (system rules) — exclude portal_only directives (v13)
       supabase.from("system_directives")
         .select("name, content, enforcement, priority")
         .eq("active", true)
+        .in("context_filter", ["all", "executor_only"])
         .order("priority", { ascending: false }),
 
       // 7. System status

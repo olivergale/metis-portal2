@@ -1,11 +1,16 @@
-// work-order-executor/index.ts v33
+// work-order-executor/index.ts v48
+// v48: Fix remediation guard — check auto-qa-loop tag (not remediation), escalate failed sub-WOs to parent circuit breaker
+// v47: Fix auto-QA duplicate findings — resolve existing unresolved findings at start of /auto-qa (idempotent concurrent calls)
+// v46: Remediation loop — auto-QA failures create fix WOs, two-step parent re-evaluation on completion
+// v39: WO-0023 — Rewrite /rollback as read-only planner (no execution, no Management API, no git fetch)
+// v38: Upgrade auto-qa to Sonnet + execution log evidence; restore all endpoints; fix rollback (no Deno.Command)
+// v37: Daemon deploy — rollback via audit_log + GitHub API (but dropped all other endpoints)
+// v36: Daemon deploy — rollback rewrite attempt
+// v35: Daemon deploy — rollback rewrite attempt
+// v34: WO-0019 — Implement actual /rollback execution: git checkout, deploy, smoke test, audit log, manifest update
 // v33: Fix /consolidate — add AI gap analysis mode for UI (work_order_id + duplicates) alongside legacy bulk cancel
-// v32: WO-367B574B — Add /rollback endpoint for git-versioned rollbacks (source control workflow)
+// v32: WO-367B574B — Add /rollback endpoint stub for git-versioned rollbacks (source control workflow)
 // v31: AC2 fix — auto-qa reads wo.summary as primary context instead of only client_info
-// v30: Restore all missing endpoints from v29 deployment — poll, status, logs, manifest, auto-qa, refine-stale, consolidate, reject, fail, phase
-// v29: WO-0006 — Structured error codes (ERR_*) with severity, category, retry_allowed
-// v28: Auto-refine stale WOs — freshness check calls LLM to deprecate/refine/proceed instead of hard-blocking
-// v27: Add /auto-qa endpoint — automated QA checklist evaluation via Haiku, record verification, auto-accept on all-pass
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -224,6 +229,107 @@ async function refineStaleness(
   return JSON.parse(jsonMatch?.[0] || llmText);
 }
 
+// Helper: get git commit history for a function from audit_log
+async function getGitHistory(supabase: any, functionSlug: string): Promise<any[]> {
+  const { data } = await supabase.from('audit_log')
+    .select('id, created_at, payload, new_state')
+    .eq('event_type', 'edge_function_deployed')
+    .eq('target_type', 'edge_function')
+    .ilike('payload->>function_slug', functionSlug)
+    .order('created_at', { ascending: false })
+    .limit(10);
+  return data || [];
+}
+
+// v46: Remediation loop — create fix WO when auto-QA finds failures
+async function createRemediationWO(supabase: any, parentWo: { id: string; slug: string; name: string; objective?: string }, failures: any[]): Promise<{ remediation_wo_id?: string; error?: string }> {
+  try {
+    // Circuit breaker: check existing remediation attempts for this parent
+    const { data: existingRemediations } = await supabase.from('work_orders')
+      .select('id, slug, status')
+      .contains('tags', ['remediation', `parent:${parentWo.slug}`])
+      .limit(10);
+
+    const attempts = (existingRemediations || []).length;
+    const MAX_ATTEMPTS = 3;
+
+    if (attempts >= MAX_ATTEMPTS) {
+      console.log(`[REMEDIATION] Circuit breaker: ${attempts}/${MAX_ATTEMPTS} for ${parentWo.slug}`);
+      await supabase.rpc('update_work_order_state', {
+        p_work_order_id: parentWo.id,
+        p_status: 'failed',
+        p_summary: `Auto-QA remediation circuit breaker: ${MAX_ATTEMPTS} attempts exhausted`
+      });
+      return { error: `Circuit breaker: ${MAX_ATTEMPTS} attempts exhausted` };
+    }
+
+    const attemptNum = attempts + 1;
+    const failuresList = failures.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
+
+    const { data: newWoId, error: createError } = await supabase.rpc('create_draft_work_order', {
+      p_slug: null,
+      p_name: `Fix: ${parentWo.slug} auto-QA failures (attempt ${attemptNum}/${MAX_ATTEMPTS})`,
+      p_objective: `Fix the following auto-QA failures for ${parentWo.slug} (${parentWo.name}):\n\n${failuresList}\n\nParent WO objective: ${(parentWo.objective || '').slice(0, 2000)}`,
+      p_priority: 'p1_high',
+      p_source: 'auto-qa',
+      p_tags: ['remediation', `parent:${parentWo.slug}`, 'auto-qa-loop']
+    });
+
+    if (createError) {
+      console.error('[REMEDIATION] Failed to create WO:', createError);
+      return { error: createError.message };
+    }
+
+    // create_draft_work_order returns { id, name, slug, status } — extract UUID
+    const woId = typeof newWoId === 'string' ? newWoId : newWoId?.id;
+
+    // Auto-start the remediation WO
+    try {
+      await supabase.rpc('start_work_order', { p_work_order_id: woId });
+      console.log(`[REMEDIATION] Auto-started remediation WO ${woId} for ${parentWo.slug}`);
+    } catch (startErr) {
+      console.error('[REMEDIATION] Failed to auto-start:', startErr);
+    }
+
+    console.log(`[REMEDIATION] Created remediation WO for ${parentWo.slug} (attempt ${attemptNum})`);
+    return { remediation_wo_id: woId };
+  } catch (e) {
+    console.error('[REMEDIATION] Exception:', e);
+    return { error: (e as Error).message };
+  }
+}
+
+// v46: When a remediation WO completes, re-trigger auto-QA on the parent via two-step transition
+async function handleRemediationCompletion(supabase: any, wo: { slug?: string; tags?: string[] }): Promise<void> {
+  if (!wo?.tags?.includes('remediation')) return;
+  const parentTag = (wo.tags || []).find((t: string) => t.startsWith('parent:'));
+  if (!parentTag) return;
+  const parentSlug = parentTag.replace('parent:', '');
+
+  try {
+    const { data: parentWo } = await supabase.from("work_orders")
+      .select("id, status").eq("slug", parentSlug).single();
+
+    if (parentWo && parentWo.status === 'review') {
+      // Two-step: review → in_progress → review triggers trg_auto_run_qa_evaluation
+      await supabase.rpc('update_work_order_state', {
+        p_work_order_id: parentWo.id,
+        p_status: 'in_progress',
+        p_summary: `Remediation ${wo.slug} completed, re-evaluating`
+      });
+      await supabase.rpc('update_work_order_state', {
+        p_work_order_id: parentWo.id,
+        p_status: 'review',
+        p_summary: `Re-evaluation after remediation ${wo.slug}`
+      });
+      console.log(`[REMEDIATION] Re-triggered auto-QA on parent ${parentSlug}`);
+    }
+  } catch (e) {
+    console.error(`[REMEDIATION] Parent re-eval failed for ${parentSlug}:`, e);
+  }
+}
+
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -411,6 +517,11 @@ Deno.serve(async (req) => {
       if (traceId) { try { await supabase.rpc('complete_wo_trace', { p_trace_id: traceId, p_status: 'completed', p_output: { summary, result: result?.slice?.(0, 10000) } }); } catch { } }
       if (manifest_entry) { try { await supabase.rpc('state_write', { p_mutation_type: 'INSERT', p_target_table: 'system_manifest', p_payload: { component_type: manifest_entry.type||'edge_function', name: manifest_entry.name, description: manifest_entry.description, purpose: manifest_entry.purpose, config: manifest_entry.config||{}, created_by_wo: wo?.slug, status: 'active' }, p_work_order_id: work_order_id }); } catch { } }
 
+      // v46: If remediation WO completed directly to done, re-trigger parent auto-QA
+      if (newStatus === 'done') {
+        try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[COMPLETE] Remediation handler error:', e); }
+      }
+
       await logPhase(supabase, work_order_id, "completing", "ilmarinen", { summary: summary?.slice?.(0, 5000), final_status: newStatus, trace_id: traceId });
       return new Response(JSON.stringify({ completed: true, needs_review: newStatus === "review", work_order: data, completed_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
@@ -418,7 +529,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && action === "accept") {
       const { work_order_id, skip_qa_validation } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
-      const { data: wo } = await supabase.from("work_orders").select("status, slug").eq("id", work_order_id).single();
+      const { data: wo } = await supabase.from("work_orders").select("status, slug, tags").eq("id", work_order_id).single();
       if (wo?.status === 'done') return new Response(JSON.stringify({ accepted: true, already_done: true, work_order: wo }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
       if (wo?.status !== 'review') {
         const err = buildStructuredError('ERR_INVALID_STATUS', `Not in review (current: ${wo?.status})`, { status: wo?.status });
@@ -443,25 +554,36 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ ...data, error_code: errorCode }), { status: 422, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
+      // v46: If accepted remediation WO, re-trigger parent auto-QA
+      try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[ACCEPT] Remediation handler error:', e); }
+
       await logPhase(supabase, work_order_id, "completing", "metis", { action: "accepted", slug: wo.slug });
       return new Response(JSON.stringify({ accepted: true, work_order: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /auto-qa — Automated QA evaluation using Haiku ===
-    // v31: Now reads wo.summary as PRIMARY context for evaluation
+    // === POST /auto-qa — Automated QA evaluation using Sonnet + execution log evidence ===
+    // v38: Upgraded from Haiku to Sonnet, added execution log context for evidence-based evaluation
     if (req.method === "POST" && action === "auto-qa") {
       const { work_order_id, execution_output } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
-      // v31: Added summary to SELECT
       const { data: wo, error: woError } = await supabase.from("work_orders")
-        .select("id, slug, status, qa_checklist, objective, acceptance_criteria, summary, client_info")
+        .select("id, slug, name, status, qa_checklist, objective, acceptance_criteria, summary, client_info, tags")
         .eq("id", work_order_id).single();
       if (woError || !wo) return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Work order not found')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
       if (wo.status !== 'review') {
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_INVALID_STATUS', `Not in review (current: ${wo.status})`), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
+
+      // v47: Resolve existing unresolved findings before creating new ones.
+      // Prevents duplicate contradictory findings from concurrent trigger + daemon invocations.
+      // The DB trigger (trg_auto_run_qa_evaluation) also resolves, but if both /auto-qa calls
+      // race, the second call's resolution here ensures only the last evaluation's findings remain.
+      await supabase.from('qa_findings')
+        .update({ resolved_at: new Date().toISOString() })
+        .eq('work_order_id', work_order_id)
+        .is('resolved_at', null);
 
       let checklist = wo.qa_checklist || [];
       if (checklist.length === 0) {
@@ -474,10 +596,84 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ all_pass: true, items_evaluated: 0, accepted: false, failures: [], message: "No checklist items to evaluate" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      // v31: Prioritize wo.summary as primary context, then fall back to client_info
-      const output = execution_output || wo.summary || wo.client_info?.summary || wo.client_info?.output || '';
-      if (!output) {
-        return new Response(JSON.stringify({ ...buildStructuredError('ERR_DATA_VALIDATION', 'No execution output available for evaluation'), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
+      // v38: Build rich evaluation context from multiple sources
+      const summaryText = execution_output || wo.summary || wo.client_info?.summary || wo.client_info?.output || '';
+
+      // v38: Pull execution log evidence — tool usage, deployment records, stream events
+      let executionEvidence = '';
+      try {
+        const { data: execLogs } = await supabase.from('work_order_execution_log')
+          .select('phase, agent_name, detail, created_at')
+          .eq('work_order_id', work_order_id)
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (execLogs && execLogs.length > 0) {
+          const evidenceParts: string[] = [];
+
+          // Extract the result event (daemon's final summary — most authoritative)
+          const resultEvent = execLogs.find((l: any) => l.detail?.event_type === 'result');
+          if (resultEvent?.detail?.content) {
+            evidenceParts.push(`DAEMON FINAL OUTPUT:\n${(resultEvent.detail.content as string).slice(0, 8000)}`);
+          }
+
+          // Extract execution_complete event (tool usage proof)
+          const completeEvent = execLogs.find((l: any) => l.phase === 'execution_complete');
+          if (completeEvent?.detail) {
+            evidenceParts.push(`EXECUTION STATS: ${completeEvent.detail.content || ''}\nTools used: ${(completeEvent.detail.tools_used || []).join(', ')}\nMCP tools: ${(completeEvent.detail.mcp_tools_used || []).join(', ')}`);
+          }
+
+          // Extract schema_validation event
+          const schemaEvent = execLogs.find((l: any) => l.phase === 'schema_validation');
+          if (schemaEvent?.detail) {
+            evidenceParts.push(`SCHEMA VALIDATION: ${schemaEvent.detail.content || 'N/A'} (warnings: ${schemaEvent.detail.warning_count || 0})`);
+          }
+
+          // Extract key tool_result events (deployment evidence)
+          const toolResults = execLogs.filter((l: any) => l.detail?.event_type === 'tool_result' && l.detail?.tool_name);
+          if (toolResults.length > 0) {
+            const toolSummary = toolResults.slice(0, 5).map((t: any) =>
+              `- ${t.detail.tool_name}: ${(t.detail.content || '').slice(0, 300)}`
+            ).join('\n');
+            evidenceParts.push(`TOOL RESULTS:\n${toolSummary}`);
+          }
+
+          executionEvidence = evidenceParts.join('\n\n---\n\n');
+        }
+      } catch (logErr) {
+        console.error('[AUTO-QA] Failed to fetch execution logs:', logErr);
+      }
+
+      // v47: Check audit_log for deployment records — EXCLUDE auto-QA metadata events
+      // to prevent feedback loop where previous failure messages poison the next evaluation
+      let deploymentEvidence = '';
+      try {
+        const { data: deployLogs } = await supabase.from('audit_log')
+          .select('event_type, action, payload, new_state, created_at')
+          .eq('target_type', 'work_order')
+          .eq('target_id', work_order_id)
+          .not('event_type', 'in', '(checklist_item_updated,verification_recorded,auto_qa_triggered)')
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        if (deployLogs && deployLogs.length > 0) {
+          deploymentEvidence = deployLogs.map((d: any) =>
+            `[${d.event_type}] ${d.action || ''}: ${JSON.stringify(d.payload || {}).slice(0, 300)}`
+          ).join('\n');
+        }
+      } catch (auditErr) {
+        console.error('[AUTO-QA] Failed to fetch audit logs:', auditErr);
+      }
+
+      // Build combined context — prefer execution evidence over bare summary
+      const fullContext = [
+        summaryText ? `WORK ORDER SUMMARY:\n${summaryText.slice(0, 5000)}` : '',
+        executionEvidence ? `\n\nEXECUTION EVIDENCE:\n${executionEvidence}` : '',
+        deploymentEvidence ? `\n\nDEPLOYMENT RECORDS:\n${deploymentEvidence}` : ''
+      ].filter(Boolean).join('');
+
+      if (!fullContext) {
+        return new Response(JSON.stringify({ ...buildStructuredError('ERR_DATA_VALIDATION', 'No execution output or evidence available for evaluation'), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
       const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -489,18 +685,43 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": apiKey!, "anthropic-version": "2023-06-01" },
           body: JSON.stringify({
-            model: "claude-haiku-4-5-20251001",
-            max_tokens: 2048,
+            model: "claude-sonnet-4-5-20250929",
+            max_tokens: 4096,
             messages: [{
               role: "user",
-              content: `You are a QA evaluator for a work order execution system. Given the execution output and acceptance criteria below, evaluate whether each criterion was met.\n\nWORK ORDER: ${wo.slug}\nOBJECTIVE: ${wo.objective || 'N/A'}\n\nEXECUTION OUTPUT (last 10000 chars):\n${output.slice(-10000)}\n\nACCEPTANCE CRITERIA:\n${criteriaText}\n\nFor each criterion, respond with ONLY a JSON array (no other text):\n[\n  {"id": "ac-1", "status": "pass", "summary": "brief evidence"},\n  {"id": "ac-2", "status": "fail", "summary": "reason for failure"}\n]\n\nRules:\n- "pass" = clear evidence the criterion was met in the output\n- "fail" = no evidence found or evidence shows it was NOT met\n- "na" = criterion is clearly not applicable\n- Be strict: if there is no clear evidence, mark as "fail"\n- Keep summaries under 200 characters`
+              content: `You are a strict QA evaluator for a software build system. You must evaluate whether each acceptance criterion was ACTUALLY met based on concrete evidence — not just claims in the summary.
+
+WORK ORDER: ${wo.slug}
+OBJECTIVE: ${wo.objective || 'N/A'}
+
+${fullContext.slice(0, 15000)}
+
+ACCEPTANCE CRITERIA TO EVALUATE:
+${criteriaText}
+
+EVALUATION RULES:
+1. "pass" = You can cite SPECIFIC evidence: tool calls that executed, deployment records, code changes, test results
+2. "fail" = No concrete evidence found, OR evidence contradicts the claim, OR only vague summary claims without proof
+3. "na" = Criterion is clearly not applicable to this type of work order
+4. A summary CLAIMING something was done is NOT sufficient evidence by itself — look for tool usage, deployment records, or execution logs that PROVE it
+5. If the execution used mcp__supabase__deploy_edge_function, that's strong deployment evidence
+6. If the execution used mcp__supabase__apply_migration, that's strong schema change evidence
+7. Be especially skeptical of claims without matching tool usage
+
+Respond with ONLY a JSON array:
+[
+  {"id": "ac-1", "status": "pass", "summary": "Evidence: deployed via mcp__supabase__deploy_edge_function, smoke test returned 200"},
+  {"id": "ac-2", "status": "fail", "summary": "Summary claims implementation but no deployment tool was called"}
+]
+
+Keep evidence summaries under 250 characters. Cite specific tool names or log entries when possible.`
             }],
           }),
         });
 
         if (!evalResp.ok) {
           const errText = await evalResp.text();
-          console.error('[AUTO-QA] Haiku evaluation failed:', errText.slice(0, 300));
+          console.error('[AUTO-QA] Sonnet evaluation failed:', errText.slice(0, 300));
           return new Response(JSON.stringify({ ...buildStructuredError('ERR_QA_VALIDATION_FAILED', 'QA evaluation LLM call failed'), all_pass: false, accepted: false }), { status: 502, headers: {...corsHeaders,"Content-Type":"application/json"} });
         }
 
@@ -519,11 +740,12 @@ Deno.serve(async (req) => {
       for (const criterion of evaluations) {
         if (!criterion.id || !criterion.status) continue;
         try {
+          // update_checklist_item RPC creates a qa_finding automatically — pass rich evidence
           await supabase.rpc('update_checklist_item', {
             p_work_order_id: work_order_id,
             p_item_id: criterion.id,
             p_status: criterion.status,
-            p_evidence: { summary: criterion.summary, verified_by: 'auto-qa-haiku', auto_evaluated: true }
+            p_evidence: { summary: criterion.summary, verified_by: 'auto-qa-sonnet-v38', auto_evaluated: true, model: 'sonnet-4.5', auto_qa_version: 'v38', has_execution_evidence: !!executionEvidence }
           });
         } catch (updateErr) {
           console.error(`[AUTO-QA] Failed to update ${criterion.id}:`, updateErr);
@@ -541,7 +763,7 @@ Deno.serve(async (req) => {
           p_work_order_id: work_order_id,
           p_verified_by: 'auto-qa',
           p_verification_type: 'automated_qa',
-          p_evidence: { evaluations, items_evaluated: itemsEvaluated, failures, auto_qa_version: 'v31' },
+          p_evidence: { evaluations, items_evaluated: itemsEvaluated, failures, auto_qa_version: 'v38', model: 'sonnet-4.5', has_execution_evidence: !!executionEvidence },
           p_passed: allPass
         });
       } catch (verifyErr) {
@@ -553,20 +775,69 @@ Deno.serve(async (req) => {
         const { data: acceptData, error: acceptError } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done' });
         if (!acceptError && !(acceptData?.error)) {
           accepted = true;
-          await logPhase(supabase, work_order_id, "completing", "auto-qa", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug });
+          await logPhase(supabase, work_order_id, "completing", "auto-qa", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug, model: 'sonnet-4.5' });
+          // v46: If accepted remediation WO, re-trigger parent auto-QA
+          try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[AUTO-QA] Remediation handler error:', e); }
         } else {
           console.error('[AUTO-QA] Accept transition failed:', acceptError || acceptData);
         }
       }
 
+      // v48: Create remediation WO for failures
+      // Guard: only block auto-qa-loop WOs (actual recursion risk), not general remediation-tagged WOs
+      // For auto-qa-loop WOs that fail: escalate to parent's circuit breaker
+      let remediation_wo_id: string | undefined;
+      if (!allPass && failures.length > 0) {
+        const isAutoQaLoop = (wo.tags || []).includes('auto-qa-loop');
+        if (!isAutoQaLoop) {
+          // Regular WO (including remediation-tagged batch WOs) → create sub-WO
+          try {
+            const remResult = await createRemediationWO(supabase, wo, failures);
+            remediation_wo_id = remResult.remediation_wo_id;
+          } catch (remErr) {
+            console.error('[AUTO-QA] Remediation WO creation failed:', remErr);
+          }
+        } else {
+          // Auto-QA-generated sub-WO failed → move to failed and re-check parent circuit breaker
+          console.log(`[AUTO-QA] auto-qa-loop WO ${wo.slug} failed — escalating to failed`);
+          try {
+            await supabase.rpc('update_work_order_state', {
+              p_work_order_id: work_order_id,
+              p_status: 'failed',
+              p_summary: `Remediation sub-WO failed auto-QA: ${failures.map((f: any) => f.id + ': ' + f.reason).join('; ').slice(0, 500)}`
+            });
+            // Trigger parent circuit breaker check by calling createRemediationWO on parent
+            // This increments the attempt counter — if >= MAX, parent moves to failed
+            const parentTag = (wo.tags || []).find((t: string) => t.startsWith('parent:'));
+            if (parentTag) {
+              const parentSlug = parentTag.replace('parent:', '');
+              const { data: parentWo } = await supabase.from("work_orders")
+                .select("id, slug, name, objective, status")
+                .eq("slug", parentSlug).single();
+              if (parentWo && parentWo.status === 'review') {
+                const remResult = await createRemediationWO(supabase, parentWo, failures);
+                remediation_wo_id = remResult.remediation_wo_id;
+                console.log(`[AUTO-QA] Escalated to parent ${parentSlug}: new attempt or circuit breaker`);
+              }
+            }
+          } catch (escErr) {
+            console.error('[AUTO-QA] Failed to escalate auto-qa-loop failure:', escErr);
+          }
+        }
+      }
+
       await logPhase(supabase, work_order_id, "qa_validation", "auto-qa", {
         all_pass: allPass, items_evaluated: itemsEvaluated,
-        failures: failures.slice(0, 5), accepted, slug: wo.slug
+        failures: failures.slice(0, 5), accepted, slug: wo.slug,
+        model: 'sonnet-4.5', has_execution_evidence: !!executionEvidence,
+        remediation_wo_id
       });
 
       return new Response(JSON.stringify({
         all_pass: allPass, accepted, items_evaluated: itemsEvaluated,
-        failures, work_order_id, slug: wo.slug
+        failures, work_order_id, slug: wo.slug,
+        model: 'sonnet-4.5', version: 'v48',
+        remediation_wo_id
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
@@ -704,7 +975,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && action === "poll") {
       const { data: workOrders, error: pollError } = await supabase
         .from("work_orders")
-        .select("id, slug, name, objective, status, priority, assigned_to, approved_at, tags, client_info, created_at, acceptance_criteria, requires_approval, project_brief_id")
+        .select("id, slug, name, objective, status, priority, assigned_to, approved_at, tags, client_info, created_at, acceptance_criteria, requires_approval, project_brief_id, depends_on")
         .in("status", ["ready", "in_progress"])
         .eq("assigned_to", ILMARINEN_ID)
         .order("priority", { ascending: true })
@@ -712,8 +983,25 @@ Deno.serve(async (req) => {
 
       if (pollError) return new Response(JSON.stringify({ error: pollError.message, error_code: "ERR_INTERNAL" }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
+      // v49: Filter out ready WOs with unmet dependencies (in_progress WOs always returned)
+      let filtered = workOrders || [];
+      const readyWithDeps = filtered.filter((wo: any) => wo.status === 'ready' && wo.depends_on?.length > 0);
+      if (readyWithDeps.length > 0) {
+        const allDepIds = [...new Set(readyWithDeps.flatMap((wo: any) => wo.depends_on))];
+        const { data: depStatuses } = await supabase.from("work_orders")
+          .select("id, status")
+          .in("id", allDepIds);
+        const depStatusMap: Record<string, string> = {};
+        for (const d of (depStatuses || [])) depStatusMap[d.id] = d.status;
+
+        filtered = filtered.filter((wo: any) => {
+          if (wo.status !== 'ready' || !wo.depends_on?.length) return true;
+          return wo.depends_on.every((depId: string) => depStatusMap[depId] === 'done');
+        });
+      }
+
       // Join project briefs for project-aware daemon
-      const projectIds = [...new Set((workOrders || []).map((wo: any) => wo.project_brief_id).filter(Boolean))];
+      const projectIds = [...new Set(filtered.map((wo: any) => wo.project_brief_id).filter(Boolean))];
       let projectBriefs: Record<string, any> = {};
       if (projectIds.length > 0) {
         const { data: briefs } = await supabase.from("project_briefs")
@@ -724,12 +1012,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      const enriched = (workOrders || []).map((wo: any) => ({
+      const enriched = filtered.map((wo: any) => ({
         ...wo,
         project: wo.project_brief_id ? projectBriefs[wo.project_brief_id] || null : null,
       }));
 
-      return new Response(JSON.stringify({ work_orders: enriched, count: enriched.length, version: "v32" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      return new Response(JSON.stringify({ work_orders: enriched, count: enriched.length, version: "v49" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
     // === GET /status — System status ===
@@ -770,45 +1058,87 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ manifest: data, version: "v32" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /rollback — Rollback edge function to previous version from git history ===
+    // === POST /rollback — Generate rollback plan (read-only planner, no execution) ===
+    // v39: Rewrite as planner — returns rollback_plan JSON instead of executing
     if (req.method === "POST" && action === "rollback") {
-      const { function_slug, git_commit_sha, reason } = body;
+      const { function_slug, target_version } = body;
       if (!function_slug) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'function_slug required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
       try {
-        // NOTE: In production, this would:
-        // 1. Read the function source from git at specified commit
-        // 2. Deploy that version via Supabase deploy API
-        // 3. Log the rollback to audit_log
-        // 4. Update system_manifest with rollback metadata
+        // Step 1: Validate function exists in system_manifest
+        const { data: currentManifest, error: manifestError } = await supabase.from('system_manifest')
+          .select('id, version, config')
+          .eq('component_type', 'edge_function')
+          .eq('name', function_slug)
+          .single();
 
-        // For now, return rollback plan
-        const rollbackPlan = {
-          function: function_slug,
-          target_commit: git_commit_sha || 'previous',
-          reason: reason || 'Manual rollback',
-          steps: [
-            'Fetch function source from git history',
-            'Validate function integrity',
-            'Deploy previous version via Supabase API',
-            'Verify deployment with smoke test',
-            'Log rollback to audit_log',
-            'Update system_manifest version'
-          ],
-          warning: 'Rollback requires git history to be initialized (AC1)',
-        };
+        if (manifestError || !currentManifest) {
+          return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Function not found in system manifest')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
+        }
 
-        await supabase.from('audit_log').insert({
-          event_type: 'function_rollback_requested',
-          actor_type: 'system',
-          actor_id: 'work-order-executor',
-          action: 'rollback',
-          payload: { function_slug, git_commit_sha, reason, timestamp: new Date().toISOString() }
-        });
+        const currentVersion = currentManifest.version || 'unknown';
+        const currentCommit = currentManifest.config?.git_commit || 'unknown';
 
-        return new Response(JSON.stringify({ rollback_plan: rollbackPlan, status: 'planned' }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+        // Step 2: Query audit_log for deployment history
+        const deployHistory = await getGitHistory(supabase, function_slug);
+        if (deployHistory.length === 0) {
+          return new Response(JSON.stringify({
+            rollback_plan: {
+              function_slug, current_version: currentVersion, current_manifest_id: currentManifest.id,
+              ready: false, error: 'No deployment history found in audit_log',
+              deployment_history: []
+            }
+          }), { status: 200, headers: {...corsHeaders,"Content-Type":"application/json"} });
+        }
+
+        // Step 3: Identify target deployment (explicit version or previous)
+        let targetDeployment: any;
+        if (target_version) {
+          targetDeployment = deployHistory.find((d: any) => d.new_state?.version === target_version);
+          if (!targetDeployment) {
+            return new Response(JSON.stringify({
+              rollback_plan: {
+                function_slug, current_version: currentVersion, current_manifest_id: currentManifest.id,
+                ready: false, error: `Version ${target_version} not found in history`,
+                deployment_history: deployHistory.map((d: any) => ({
+                  version: d.new_state?.version, git_commit: d.new_state?.git_commit || d.payload?.git_commit,
+                  deployed_at: d.created_at
+                }))
+              }
+            }), { status: 200, headers: {...corsHeaders,"Content-Type":"application/json"} });
+          }
+        } else {
+          targetDeployment = deployHistory[1] || deployHistory[0];
+        }
+
+        const targetCommit = targetDeployment.new_state?.git_commit || targetDeployment.payload?.git_commit;
+        const targetVersionNum = targetDeployment.new_state?.version || 'unknown';
+
+        // Step 4: Return rollback plan (no execution)
+        return new Response(JSON.stringify({
+          rollback_plan: {
+            function_slug,
+            target_commit: targetCommit || 'unknown',
+            target_version: targetVersionNum,
+            current_version: currentVersion,
+            current_commit: currentCommit,
+            current_manifest_id: currentManifest.id,
+            deployment_history: deployHistory.map((d: any) => ({
+              version: d.new_state?.version || 'unknown',
+              git_commit: d.new_state?.git_commit || d.payload?.git_commit || 'unknown',
+              deployed_at: d.created_at
+            })),
+            ready: !!targetCommit
+          }
+        }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+
       } catch (e) {
-        return new Response(JSON.stringify(buildStructuredError('ERR_INTERNAL', `Rollback failed: ${(e as Error).message}`)), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
+        const errorMsg = (e as Error).message;
+        return new Response(JSON.stringify({
+          rollback_plan: {
+            function_slug, ready: false, error: `Planning failed: ${errorMsg}`
+          }
+        }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
     }
 

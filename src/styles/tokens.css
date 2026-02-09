@@ -1,0 +1,46 @@
+/* Design Tokens - Metis Dark Theme */
+:root {
+  /* Backgrounds - Warm Charcoal */
+  --bg-primary: #2b2a27;
+  --bg-surface: #353432;
+  --bg-elevated: #3f3e3b;
+  --bg-hover: #4a4946;
+  --bg-active: #555451;
+
+  /* Text - Soft White */
+  --text-primary: #ececec;
+  --text-secondary: #b8b8b6;
+  --text-muted: #888886;
+  --text-inverse: #2b2a27;
+
+  /* Borders */
+  --border-default: #4a4946;
+  --border-strong: #5a5956;
+
+  /* Accent - Gold */
+  --accent: #d4a574;
+  --accent-hover: #e0b588;
+  --accent-subtle: rgba(212, 165, 116, 0.15);
+
+  /* Status Colors */
+  --status-inbox: #9CA3AF;
+  --status-assigned: #60A5FA;
+  --status-progress: #FBBF24;
+  --status-review: #A78BFA;
+  --status-failed: #DC2626;
+  --status-done: #34D399;
+  --status-blocked: #F87171;
+  --status-active: #34D399;
+  --status-warning: #FBBF24;
+  --status-error: #F87171;
+
+  /* Priority */
+  --priority-critical: #EF4444;
+  --priority-high: #F97316;
+  --priority-medium: #EAB308;
+  --priority-low: #22C55E;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+}

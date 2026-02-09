@@ -6,10 +6,10 @@
 //   - Create project_brief, start interrogation, generate docs, decompose into WOs
 //   - Full plan→build flow: enter plan mode → discuss → "build it" → project created → docs → WOs
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
-import { Langfuse } from "npm:langfuse@3.32.0";
+import "@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
+import { Langfuse } from "langfuse";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -830,7 +830,7 @@ Deno.serve(async (req) => {
     const embedding = await generateEmbedding(message, openaiKey);
 
     const contextPromises: Promise<any>[] = [
-      supabase.from("system_directives").select("name, content, enforcement").eq("active", true).order("priority", { ascending: false }).limit(20),
+      supabase.from("system_directives").select("name, content, enforcement").eq("active", true).in("context_filter", ["all", "portal_only"]).order("priority", { ascending: false }).limit(20),
       supabase.from("project_briefs").select("*").eq("code", project_code).single(),
       supabase.from("decisions").select("subject, choice, rationale").eq("status", "active").limit(8),
       supabase.from("thread_messages").select("role, content").eq("thread_id", thread_id).order("created_at", { ascending: true }).limit(30),
