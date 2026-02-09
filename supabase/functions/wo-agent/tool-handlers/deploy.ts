@@ -1,0 +1,104 @@
+// wo-agent/tool-handlers/deploy.ts
+// Edge function deployment tool
+
+import type { ToolContext, ToolResult } from "../tools.ts";
+
+export async function handleDeployEdgeFunction(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { function_name, files, entrypoint } = input;
+  if (!function_name || !files || !Array.isArray(files) || files.length === 0) {
+    return {
+      success: false,
+      error: "Missing required parameters: function_name, files (array of {name, content})",
+    };
+  }
+
+  // Safety: refuse to deploy large functions via this path
+  const totalSize = files.reduce((acc: number, f: any) => acc + (f.content?.length || 0), 0);
+  if (totalSize > 50000) {
+    return {
+      success: false,
+      error: `Function too large (${totalSize} chars). Deploy via CLI instead to avoid partial deploys.`,
+    };
+  }
+
+  try {
+    const projectRef = Deno.env.get("SUPABASE_PROJECT_REF") || "phfblljwuvzqzlbzkzpr";
+    const managementKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    // Use the Supabase Management API to deploy
+    // POST /v1/projects/{ref}/functions/{slug}
+    const entrypointPath = entrypoint || "index.ts";
+
+    // Check if function exists first
+    const checkResp = await fetch(
+      `https://api.supabase.com/v1/projects/${projectRef}/functions/${function_name}`,
+      {
+        headers: {
+          Authorization: `Bearer ${managementKey}`,
+        },
+      }
+    );
+
+    const method = checkResp.ok ? "PATCH" : "POST";
+    const url = checkResp.ok
+      ? `https://api.supabase.com/v1/projects/${projectRef}/functions/${function_name}`
+      : `https://api.supabase.com/v1/projects/${projectRef}/functions`;
+
+    // Build multipart form for deploy
+    const formData = new FormData();
+    formData.append("name", function_name);
+    formData.append("verify_jwt", "false");
+    formData.append("entrypoint_path", entrypointPath);
+
+    for (const file of files) {
+      const blob = new Blob([file.content], { type: "application/typescript" });
+      formData.append("files", blob, file.name);
+    }
+
+    const deployResp = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${managementKey}`,
+      },
+      body: formData,
+    });
+
+    if (!deployResp.ok) {
+      const errText = await deployResp.text();
+      return {
+        success: false,
+        error: `Deploy failed (${deployResp.status}): ${errText}`,
+      };
+    }
+
+    const result = await deployResp.json();
+
+    // Log deployment
+    await ctx.supabase.from("work_order_execution_log").insert({
+      work_order_id: ctx.workOrderId,
+      phase: "stream",
+      agent_name: ctx.agentName,
+      detail: {
+        event_type: "tool_result",
+        tool_name: "deploy_edge_function",
+        content: `Deployed edge function: ${function_name}`,
+        function_name,
+        version: result.version || "unknown",
+      },
+    });
+
+    return {
+      success: true,
+      data: {
+        function_name,
+        version: result.version,
+        message: `Deployed ${function_name} successfully`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `deploy_edge_function exception: ${e.message}` };
+  }
+}
