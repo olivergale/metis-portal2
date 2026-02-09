@@ -763,10 +763,6 @@
             color: var(--text-muted);
             margin-bottom: 10px;
             line-height: 1.5;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
         }
 
         .card-tags {
@@ -782,6 +778,33 @@
             border-radius: 4px;
             background: var(--bg-elevated);
             color: var(--text-secondary);
+        }
+
+        .card-escalation-banner {
+            margin-bottom: 8px;
+            padding: 8px 10px;
+            background: rgba(251, 191, 36, 0.15);
+            border: 1px solid #F59E0B;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .escalation-icon {
+            font-size: 16px;
+        }
+
+        .escalation-text {
+            font-size: 11px;
+            font-weight: 600;
+            color: #F59E0B;
+        }
+
+        .escalation-action {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px;
         }
 
         .card-failure-reason {
@@ -2049,7 +2072,7 @@
                 const fetchLogs = async () => {
                     try {
                         const entries = await api(
-                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(stream,execution_start,execution_complete,execution_error)&order=created_at.asc,iteration.asc`
+                            `/rest/v1/work_order_execution_log?work_order_id=eq.${workOrder.id}&phase=in.(stream,execution_start,execution_complete,execution_error,qa_validation)&order=created_at.asc,iteration.asc`
                         );
                         if (!active) return;
                         setLogEntries(entries || []);
@@ -2224,14 +2247,7 @@
                         return (
                             <div key={key} className="log-event evt-thinking">
                                 <span className="log-ts">{ts}</span>
-                                {content.length > 500 ? (
-                                    <>
-                                        {isCollapsed ? content.slice(0, 120) + '...' : content}
-                                        <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
-                                            {isCollapsed ? 'show more' : 'collapse'}
-                                        </button>
-                                    </>
-                                ) : content}
+                                {content}
                             </div>
                         );
 
@@ -2250,13 +2266,8 @@
                         return (
                             <div key={key} className="log-event evt-tool_input">
                                 <div className="tool-input-content">
-                                    {isCollapsed ? content.slice(0, 80) + '...' : content}
+                                    {content}
                                 </div>
-                                {content.length > 120 && (
-                                    <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
-                                        {isCollapsed ? 'expand' : 'collapse'}
-                                    </button>
-                                )}
                             </div>
                         );
 
@@ -2267,14 +2278,7 @@
                                     {toolName ? `Result from ${toolName}` : 'Tool Result'}
                                 </div>
                                 <div className="tool-result-content">
-                                    {content.length > 400 ? (
-                                        <>
-                                            {isCollapsed ? content.slice(0, 150) + '...' : content}
-                                            <button className="collapsible-toggle" onClick={() => toggleCollapse(key)}>
-                                                {isCollapsed ? 'show full' : 'collapse'}
-                                            </button>
-                                        </>
-                                    ) : content}
+                                    {content}
                                 </div>
                             </div>
                         );
@@ -2603,7 +2607,7 @@
                                     <div className="live-log-title">
                                         {status === 'streaming' ? 'Live Execution' : status === 'complete' ? 'Execution Complete' : 'Execution Failed'}
                                     </div>
-                                    <div className="live-log-slug">{workOrder.slug} - {workOrder.name?.slice(0, 50)}</div>
+                                    <div className="live-log-slug">{workOrder.slug} - {workOrder.name}</div>
                                 </div>
                             </div>
                             <button className="live-log-close" onClick={onClose}>&times;</button>
@@ -2906,7 +2910,7 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, expanded, actionLoading, staleThreshold }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, expanded, actionLoading, staleThreshold }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
 
@@ -2975,7 +2979,8 @@
                 >
                     <div className="card-header">
                         <div className="card-title" onClick={() => onExpand(workOrder.id)}>
-                            {workOrder.name?.slice(0, 60)}{workOrder.name?.length > 60 ? '...' : ''}
+                            {workOrder.slug && <span style={{ color: 'var(--text-muted)', marginRight: '8px' }}>{workOrder.slug}</span>}
+                            {workOrder.name}
                             {isStale && <span style={{ marginLeft: '8px', fontSize: '11px', padding: '2px 6px', background: 'var(--bg-hover)', borderRadius: '4px', color: 'var(--text-muted)' }}>stale</span>}
                         </div>
                         <div className={`card-priority ${workOrder.priority || 'p2_medium'}`}
@@ -2994,7 +2999,18 @@
                         </div>
                     )}
 
-                    {/* Failure Reason Display - ac-6: Shows failure reason from execution_log or summary */}
+                    {/* Escalation Banner — circuit breaker tripped, needs manual intervention */}
+                    {workOrder.status === 'failed' && (workOrder.tags || []).includes('escalation:ilmarinen') && (
+                        <div className="card-escalation-banner">
+                            <span className="escalation-icon">&#9888;</span>
+                            <div>
+                                <div className="escalation-text">Escalated to ilmarinen</div>
+                                <div className="escalation-action">Auto-remediation exhausted — needs manual pickup</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Failure Reason Display */}
                     {workOrder.status === 'failed' && (
                         <div className="card-failure-reason">
                             <div className="failure-reason-header">❌ Failure Reason</div>
@@ -3059,7 +3075,7 @@
                                 {isLoading === 'rollback' ? 'Rolling back...' : '↶ Rollback'}
                             </button>
                         )}
-                        {(workOrder.status === 'in_progress' || workOrder.status === 'review' || workOrder.status === 'done') && (
+                        {(workOrder.status === 'in_progress' || workOrder.status === 'review' || workOrder.status === 'done' || workOrder.status === 'failed') && (
                             <button
                                 className="watch-btn"
                                 onClick={(e) => { e.stopPropagation(); onWatch(workOrder); }}
@@ -3076,6 +3092,17 @@
                                 title="Cancel this work order"
                             >
                                 {isLoading === 'cancel' ? 'Cancelling...' : '✕ Cancel'}
+                            </button>
+                        )}
+                        {workOrder.status === 'failed' && (workOrder.tags || []).includes('escalation:ilmarinen') && onRetry && (
+                            <button
+                                className="card-action-btn"
+                                onClick={(e) => { e.stopPropagation(); onRetry(workOrder.id); }}
+                                disabled={isLoading}
+                                style={{ background: '#F59E0B', color: '#000' }}
+                                title="Reset to draft for re-approval and re-execution"
+                            >
+                                {isLoading === 'retry' ? 'Resetting...' : '↻ Retry'}
                             </button>
                         )}
                     </div>
@@ -3139,7 +3166,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, expanded, actionLoading, staleThreshold }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, expanded, actionLoading, staleThreshold }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -3192,6 +3219,7 @@
                                     onRollback={onRollback}
                                     onWatch={onWatch}
                                     onCancel={onCancel}
+                                    onRetry={onRetry}
                                     expanded={expanded}
                                     actionLoading={actionLoading}
                                     staleThreshold={staleThreshold}
@@ -3913,7 +3941,7 @@
                     // Fetch each resource individually with retry logic
                     const [woResult, agentsResult, eventsResult] = await Promise.allSettled([
                         retryWithBackoff(
-                            () => api('/rest/v1/work_orders?select=*&order=priority.asc,created_at.desc'),
+                            () => api('/rest/v1/work_orders?select=*&order=created_at.desc'),
                             'work orders'
                         ),
                         retryWithBackoff(
@@ -4207,6 +4235,47 @@
                 }
             };
 
+            const handleRetry = async (workOrderId) => {
+                const wo = workOrders.find(w => w.id === workOrderId);
+                if (!confirm(`Retry "${wo?.name}"? This will reset it to draft for re-approval and re-execution.`)) {
+                    return;
+                }
+
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'retry' }));
+                try {
+                    // Use RPC to transition failed → draft (valid in state machine, sets bypass)
+                    await api('/rest/v1/rpc/update_work_order_state', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            p_work_order_id: workOrderId,
+                            p_status: 'draft',
+                            p_summary: 'Retry requested from portal — reset to draft for re-execution'
+                        }),
+                    });
+
+                    // Clean up escalation tags + reset metadata (non-protected columns)
+                    await api('/rest/v1/work_orders?id=eq.' + workOrderId, {
+                        method: 'PATCH',
+                        headers: { 'Prefer': 'return=minimal' },
+                        body: JSON.stringify({
+                            tags: (wo?.tags || []).filter(t => t !== 'escalation:ilmarinen' && t !== 'circuit-breaker-tripped'),
+                            verification_status: 'unverified',
+                            qa_checklist: null
+                        }),
+                    });
+
+                    setWorkOrders(prev => prev.map(w =>
+                        w.id === workOrderId ? { ...w, status: 'draft', tags: (w.tags || []).filter(t => t !== 'escalation:ilmarinen') } : w
+                    ));
+                    addToast('Work order reset to draft — approve to re-execute', 'success');
+                    fetchData();
+                } catch (err) {
+                    addToast('Failed to retry: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
+                }
+            };
+
             const handleRollback = async (reason) => {
                 const workOrderId = rollbackModal.workOrderId;
                 setActionLoading(prev => ({ ...prev, [workOrderId]: 'rollback' }));
@@ -4313,15 +4382,10 @@
 
                 return COLUMNS.reduce((acc, col) => {
                     const filtered = searchFiltered.filter(wo => wo.status === col.id);
-                    // Sort by priority first, then by updated_at DESC (most recent activity first)
+                    // Sort by created_at DESC (newest first)
                     acc[col.id] = filtered.sort((a, b) => {
-                        const priorityOrder = { 'p0_critical': 0, 'p1_high': 1, 'p2_medium': 2, 'p3_low': 3 };
-                        const priorityDiff = (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
-                        if (priorityDiff !== 0) return priorityDiff;
-
-                        // Sort by updated_at DESC (most recent activity first) for all columns
-                        const aDate = new Date(a.updated_at || a.created_at);
-                        const bDate = new Date(b.updated_at || b.created_at);
+                        const aDate = new Date(a.created_at);
+                        const bDate = new Date(b.created_at);
                         return bDate - aDate;
                     });
                     return acc;
@@ -4455,6 +4519,7 @@
                                             onRollback={openRollbackModal}
                                             onWatch={setWatchingWO}
                                             onCancel={handleCancel}
+                                            onRetry={handleRetry}
                                             expanded={expanded}
                                             actionLoading={actionLoading}
                                             staleThreshold={staleThreshold}

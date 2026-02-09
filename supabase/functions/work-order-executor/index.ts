@@ -1,4 +1,7 @@
-// work-order-executor/index.ts v48
+// work-order-executor/index.ts v52
+// v52: WO-0107 — Add handler_count to /status for post-deploy smoke test validation
+// v51: WO-0110 — Enforce summary in /complete (400 if empty), add depends_on sync for remediation sub-WOs (block parent completion while children active)
+// v50: Fix auto-QA race condition — idempotency guard in createRemediationWO (skip if active remediation exists), dedup guard in /auto-qa (10s cooldown via last_qa_run_at)
 // v48: Fix remediation guard — check auto-qa-loop tag (not remediation), escalate failed sub-WOs to parent circuit breaker
 // v47: Fix auto-QA duplicate findings — resolve existing unresolved findings at start of /auto-qa (idempotent concurrent calls)
 // v46: Remediation loop — auto-QA failures create fix WOs, two-step parent re-evaluation on completion
@@ -250,17 +253,50 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       .contains('tags', ['remediation', `parent:${parentWo.slug}`])
       .limit(10);
 
+    // v50: Idempotency guard — skip if an active remediation already exists
+    const activeRemediation = (existingRemediations || []).find(
+      (r: any) => ['draft', 'ready', 'in_progress', 'review'].includes(r.status)
+    );
+    if (activeRemediation) {
+      console.log(`[REMEDIATION] Skipping — active remediation ${activeRemediation.slug} (${activeRemediation.status}) already exists for ${parentWo.slug}`);
+      return { remediation_wo_id: activeRemediation.id };
+    }
+
     const attempts = (existingRemediations || []).length;
     const MAX_ATTEMPTS = 3;
 
     if (attempts >= MAX_ATTEMPTS) {
-      console.log(`[REMEDIATION] Circuit breaker: ${attempts}/${MAX_ATTEMPTS} for ${parentWo.slug}`);
+      console.log(`[REMEDIATION] Circuit breaker: ${attempts}/${MAX_ATTEMPTS} for ${parentWo.slug} — escalating`);
+
+      // Escalation: tag the WO for manual/ilmarinen pickup instead of just failing
+      const failuresList = failures.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
+      const escalationSummary = `Auto-QA remediation circuit breaker: ${MAX_ATTEMPTS} attempts exhausted. Escalated to ilmarinen.\n\nUnresolved failures:\n${failuresList}`;
+
+      // Add escalation tag so daemon/portal can identify these
+      const currentTags: string[] = parentWo.tags || [];
+      const escalationTags = [...new Set([...currentTags, 'escalation:ilmarinen', 'circuit-breaker-tripped'])];
+
       await supabase.rpc('update_work_order_state', {
         p_work_order_id: parentWo.id,
         p_status: 'failed',
-        p_summary: `Auto-QA remediation circuit breaker: ${MAX_ATTEMPTS} attempts exhausted`
+        p_summary: escalationSummary
       });
-      return { error: `Circuit breaker: ${MAX_ATTEMPTS} attempts exhausted` };
+
+      // Update tags (bypass needed since WO is now failed)
+      await supabase.from('work_orders').update({ tags: escalationTags }).eq('id', parentWo.id);
+
+      // Audit log the escalation
+      await supabase.from('audit_log').insert({
+        event_type: 'escalation_requested',
+        actor_type: 'system',
+        actor_id: 'auto-qa-circuit-breaker',
+        target_type: 'work_order',
+        target_id: parentWo.id,
+        action: `Circuit breaker tripped for ${parentWo.slug} — escalated to ilmarinen`,
+        payload: { attempts, max_attempts: MAX_ATTEMPTS, failures: failures.slice(0, 5), parent_slug: parentWo.slug }
+      });
+
+      return { error: `Circuit breaker: ${MAX_ATTEMPTS} attempts exhausted — escalated to ilmarinen` };
     }
 
     const attemptNum = attempts + 1;
@@ -283,6 +319,16 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
     // create_draft_work_order returns { id, name, slug, status } — extract UUID
     const woId = typeof newWoId === 'string' ? newWoId : newWoId?.id;
 
+    // Set depends_on to block parent completion while remediation is active
+    try {
+      await supabase.from('work_orders')
+        .update({ depends_on: [woId] })
+        .eq('id', parentWo.id);
+      console.log(`[REMEDIATION] Set parent ${parentWo.slug} depends_on=[${woId}]`);
+    } catch (depErr) {
+      console.error('[REMEDIATION] Failed to set depends_on:', depErr);
+    }
+
     // Auto-start the remediation WO
     try {
       await supabase.rpc('start_work_order', { p_work_order_id: woId });
@@ -300,7 +346,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
 }
 
 // v46: When a remediation WO completes, re-trigger auto-QA on the parent via two-step transition
-async function handleRemediationCompletion(supabase: any, wo: { slug?: string; tags?: string[] }): Promise<void> {
+async function handleRemediationCompletion(supabase: any, wo: { id?: string; slug?: string; tags?: string[] }): Promise<void> {
   if (!wo?.tags?.includes('remediation')) return;
   const parentTag = (wo.tags || []).find((t: string) => t.startsWith('parent:'));
   if (!parentTag) return;
@@ -308,21 +354,32 @@ async function handleRemediationCompletion(supabase: any, wo: { slug?: string; t
 
   try {
     const { data: parentWo } = await supabase.from("work_orders")
-      .select("id, status").eq("slug", parentSlug).single();
+      .select("id, status, depends_on").eq("slug", parentSlug).single();
 
-    if (parentWo && parentWo.status === 'review') {
-      // Two-step: review → in_progress → review triggers trg_auto_run_qa_evaluation
-      await supabase.rpc('update_work_order_state', {
-        p_work_order_id: parentWo.id,
-        p_status: 'in_progress',
-        p_summary: `Remediation ${wo.slug} completed, re-evaluating`
-      });
-      await supabase.rpc('update_work_order_state', {
-        p_work_order_id: parentWo.id,
-        p_status: 'review',
-        p_summary: `Re-evaluation after remediation ${wo.slug}`
-      });
-      console.log(`[REMEDIATION] Re-triggered auto-QA on parent ${parentSlug}`);
+    if (parentWo) {
+      // Clear depends_on to unblock parent completion
+      if (parentWo.depends_on && parentWo.depends_on.includes(wo.id)) {
+        const updatedDeps = (parentWo.depends_on || []).filter((id: string) => id !== wo.id);
+        await supabase.from('work_orders')
+          .update({ depends_on: updatedDeps.length > 0 ? updatedDeps : null })
+          .eq('id', parentWo.id);
+        console.log(`[REMEDIATION] Cleared ${wo.id} from parent ${parentSlug} depends_on`);
+      }
+
+      if (parentWo.status === 'review') {
+        // Two-step: review → in_progress → review triggers trg_auto_run_qa_evaluation
+        await supabase.rpc('update_work_order_state', {
+          p_work_order_id: parentWo.id,
+          p_status: 'in_progress',
+          p_summary: `Remediation ${wo.slug} completed, re-evaluating`
+        });
+        await supabase.rpc('update_work_order_state', {
+          p_work_order_id: parentWo.id,
+          p_status: 'review',
+          p_summary: `Re-evaluation after remediation ${wo.slug}`
+        });
+        console.log(`[REMEDIATION] Re-triggered auto-QA on parent ${parentSlug}`);
+      }
     }
   } catch (e) {
     console.error(`[REMEDIATION] Parent re-eval failed for ${parentSlug}:`, e);
@@ -450,9 +507,20 @@ Deno.serve(async (req) => {
 
       const gateResult = await evaluateGates(supabase, work_order_id, 'work_order_execute', { priority: wo.priority });
       if (!gateResult.approved) {
-        const err = buildStructuredError('ERR_GATE_BLOCKED', 'Gate approval required', { gates: gateResult.pending });
-        await createLesson(supabase, 'gate', err.message, { gates_pending: gateResult.pending }, work_order_id, traceId, ILMARINEN_ID, err.code);
-        return new Response(JSON.stringify({ ...err, gates_pending: gateResult.pending }), { status: 403, headers: {...corsHeaders,"Content-Type":"application/json"} });
+        // Transition WO to pending_approval status so it's visible in portal
+        await supabase.rpc('update_work_order_state', {
+          p_work_order_id: work_order_id,
+          p_status: 'pending_approval'
+        });
+
+        await logPhase(supabase, work_order_id, "gate_blocked", "ilmarinen", {
+          gates_pending: gateResult.pending,
+          reason: 'Gate approval required before execution'
+        });
+
+        const err = buildStructuredError('ERR_GATE_BLOCKED', 'Gate approval required - WO transitioned to pending_approval', { gates: gateResult.pending });
+        // Don't create lesson - this is expected behavior for P0 WOs
+        return new Response(JSON.stringify({ ...err, gates_pending: gateResult.pending, status: 'pending_approval' }), { status: 403, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
       let woTraceId: string | null = null;
@@ -475,6 +543,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && action === "complete") {
       const { work_order_id, result, summary, manifest_entry, delivery, tool_metadata, skip_deploy_validation } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
+      if (!summary || summary.trim() === '') return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'summary is required and cannot be empty')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       const { data: wo } = await supabase.from("work_orders").select("slug, requires_approval, status, client_info, tags").eq("id", work_order_id).single();
       if (wo?.status !== 'in_progress') {
         const err = buildStructuredError('ERR_INVALID_STATUS', `Not in progress (current: ${wo?.status})`, { status: wo?.status });
@@ -519,7 +588,7 @@ Deno.serve(async (req) => {
 
       // v46: If remediation WO completed directly to done, re-trigger parent auto-QA
       if (newStatus === 'done') {
-        try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[COMPLETE] Remediation handler error:', e); }
+        try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e) { console.error('[COMPLETE] Remediation handler error:', e); }
       }
 
       await logPhase(supabase, work_order_id, "completing", "ilmarinen", { summary: summary?.slice?.(0, 5000), final_status: newStatus, trace_id: traceId });
@@ -555,7 +624,7 @@ Deno.serve(async (req) => {
       }
 
       // v46: If accepted remediation WO, re-trigger parent auto-QA
-      try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[ACCEPT] Remediation handler error:', e); }
+      try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e) { console.error('[ACCEPT] Remediation handler error:', e); }
 
       await logPhase(supabase, work_order_id, "completing", "metis", { action: "accepted", slug: wo.slug });
       return new Response(JSON.stringify({ accepted: true, work_order: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -568,13 +637,26 @@ Deno.serve(async (req) => {
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
       const { data: wo, error: woError } = await supabase.from("work_orders")
-        .select("id, slug, name, status, qa_checklist, objective, acceptance_criteria, summary, client_info, tags")
+        .select("id, slug, name, status, qa_checklist, objective, acceptance_criteria, summary, client_info, tags, last_qa_run_at")
         .eq("id", work_order_id).single();
       if (woError || !wo) return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Work order not found')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
       if (wo.status !== 'review') {
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_INVALID_STATUS', `Not in review (current: ${wo.status})`), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
+
+      // v50: Dedup guard — prevent concurrent auto-QA calls (DB trigger + daemon race)
+      // If last_qa_run_at is within 10 seconds, skip this call (another caller is handling it)
+      if (wo.last_qa_run_at) {
+        const lastRun = new Date(wo.last_qa_run_at).getTime();
+        const now = Date.now();
+        if (now - lastRun < 10000) {
+          console.log(`[AUTO-QA] Dedup guard: skipping ${wo.slug} — last run ${Math.round((now - lastRun)/1000)}s ago`);
+          return new Response(JSON.stringify({ skipped: true, reason: 'dedup_guard', last_qa_run_seconds_ago: Math.round((now - lastRun)/1000) }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+        }
+      }
+      // Stamp this run
+      await supabase.from('work_orders').update({ last_qa_run_at: new Date().toISOString() }).eq('id', work_order_id);
 
       // v47: Resolve existing unresolved findings before creating new ones.
       // Prevents duplicate contradictory findings from concurrent trigger + daemon invocations.
@@ -777,7 +859,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
           accepted = true;
           await logPhase(supabase, work_order_id, "completing", "auto-qa", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug, model: 'sonnet-4.5' });
           // v46: If accepted remediation WO, re-trigger parent auto-QA
-          try { await handleRemediationCompletion(supabase, wo); } catch (e) { console.error('[AUTO-QA] Remediation handler error:', e); }
+          try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e) { console.error('[AUTO-QA] Remediation handler error:', e); }
         } else {
           console.error('[AUTO-QA] Accept transition failed:', acceptError || acceptData);
         }
@@ -1031,8 +1113,13 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       const { count: activeWOs } = await supabase.from("work_orders").select("id", { count: "exact", head: true }).in("status", ["draft", "ready", "in_progress", "review"]);
       const { count: doneWOs } = await supabase.from("work_orders").select("id", { count: "exact", head: true }).eq("status", "done");
 
+      // Count registered handlers for smoke test validation
+      const handlers = ["approve", "claim", "complete", "accept", "reject", "fail", "auto-qa", "refine-stale", "consolidate", "phase", "rollback", "poll", "status", "logs", "manifest"];
+
       return new Response(JSON.stringify({
-        status: "operational", version: "v32",
+        status: "operational", version: "v52",
+        handler_count: handlers.length,
+        handlers,
         counts: { total: totalWOs, active: activeWOs, done: doneWOs },
         recent: recentWOs
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
