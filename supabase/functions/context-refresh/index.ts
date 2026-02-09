@@ -1,3 +1,6 @@
+// context-refresh Edge Function
+// Version: 1.1.0 - E2E test update (WO-0207)
+// Last modified: 2026-02-09
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
