@@ -27,6 +27,11 @@
   },
   "tasks": {
     "dev": "deno run --allow-net --allow-read --allow-env supabase/functions/portal-chat/index.ts",
-    "lock": "deno cache --lock=deno.lock --lock-write supabase/functions/*/index.ts"
+    "lock": "deno cache --lock=deno.lock --lock-write supabase/functions/*/index.ts",
+    "test": "deno test --allow-net --allow-env --allow-read test/",
+    "test:integration": "deno test --allow-net --allow-env --allow-read test/integration/",
+    "test:wo": "deno test --allow-net --allow-env --allow-read test/integration/wo-lifecycle.test.ts",
+    "test:functions": "deno test --allow-net --allow-env --allow-read test/integration/edge-functions.test.ts",
+    "test:schema": "deno test --allow-net --allow-env --allow-read test/integration/schema-validation.test.ts"
   }
 }
