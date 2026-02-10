@@ -93,11 +93,11 @@ serve(async (req) => {
 
     // Create alert WO if threshold exceeded
     if (failuresLastHour >= 3) {
-      console.log(`⚠️ HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
+      console.log(`â ï¸ HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
       
       const { error: alertError } = await supabase.rpc('create_draft_work_order', {
         p_slug: null,
-        p_name: `🚨 High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
+        p_name: `ð¨ High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
         p_objective: `Investigate spike in work order failures. ${failuresLastHour} WOs failed in the last hour (trending ${trending}). Recent failures: ${recentFailures?.slice(0, 5).map(f => f.slug).join(', ')}`,
         p_priority: 'p0_critical',
         p_source: 'daemon',
@@ -201,7 +201,7 @@ serve(async (req) => {
             needs_decomposition: true
           });
 
-          console.log(`⚠️ DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
+          console.log(`â ï¸ DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
         }
       }
     }
@@ -238,12 +238,12 @@ serve(async (req) => {
           needs_escalation: true
         });
 
-        console.log(`🚨 SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
+        console.log(`ð¨ SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
 
         // Create escalation WO
         const { error: escalateError } = await supabase.rpc('create_draft_work_order', {
           p_slug: null,
-          p_name: `🆘 Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
+          p_name: `ð Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
           p_objective: `Manual intervention required. Work order ${parent?.slug} (${parentId}) has failed ${failCount} automated remediation attempts. Review execution logs and determine root cause.`,
           p_priority: 'p0_critical',
           p_source: 'daemon',
@@ -288,24 +288,35 @@ serve(async (req) => {
     });
 
     // 6. SAVE TO PLATFORM_HEALTH_SNAPSHOTS
+    const health_status = 
+      metrics.failure_rate.last_hour >= 3 || metrics.self_heal_failures.length > 0 
+        ? 'critical' 
+        : metrics.dependency_alerts.length > 0 || metrics.stuck_wos.length > 0
+        ? 'warning'
+        : 'healthy';
+
     const snapshot = {
-      timestamp: new Date().toISOString(),
-      metrics_summary: {
-        failure_rate_last_hour: metrics.failure_rate.last_hour,
-        failure_rate_last_24h: metrics.failure_rate.last_24h,
-        trending: metrics.failure_rate.trending,
-        total_agents_tracked: metrics.agent_success_rates.length,
-        dependency_alerts_count: metrics.dependency_alerts.length,
-        self_heal_failures_count: metrics.self_heal_failures.length,
-        stuck_wos_count: metrics.stuck_wos.length
-      },
-      detailed_metrics: metrics,
-      health_status: 
-        metrics.failure_rate.last_hour >= 3 || metrics.self_heal_failures.length > 0 
-          ? 'critical' 
-          : metrics.dependency_alerts.length > 0 || metrics.stuck_wos.length > 0
-          ? 'warning'
-          : 'healthy'
+      snapshot_at: new Date().toISOString(),
+      triggered_by: 'health-check',
+      metadata: {
+        health_status,
+        systemic_diagnosis: {
+          failure_rate: metrics.failure_rate,
+          agent_success_rates: metrics.agent_success_rates,
+          dependency_alerts: metrics.dependency_alerts,
+          self_heal_failures: metrics.self_heal_failures,
+          stuck_wos: metrics.stuck_wos
+        },
+        summary: {
+          failure_rate_last_hour: metrics.failure_rate.last_hour,
+          failure_rate_last_24h: metrics.failure_rate.last_24h,
+          trending: metrics.failure_rate.trending,
+          total_agents_tracked: metrics.agent_success_rates.length,
+          dependency_alerts_count: metrics.dependency_alerts.length,
+          self_heal_failures_count: metrics.self_heal_failures.length,
+          stuck_wos_count: metrics.stuck_wos.length
+        }
+      }
     };
 
     const { error: snapshotError } = await supabase
