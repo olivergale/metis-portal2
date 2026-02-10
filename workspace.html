@@ -3044,13 +3044,13 @@
 
                     {/* Quick action buttons - always visible */}
                     <div className="card-quick-actions">
-                        {workOrder.status === 'draft' && (
+                        {(workOrder.status === 'draft' || (workOrder.status === 'ready' && !workOrder.approved_at)) && (
                             <button
                                 className="card-action-btn approve-btn"
                                 onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id); }}
                                 disabled={isLoading}
                             >
-                                {isLoading === 'approve' ? 'Approving...' : '✓ Approve'}
+                                {isLoading === 'approve' ? 'Approving...' : '✓ Approve & Start'}
                             </button>
                         )}
                         {workOrder.status === 'review' && (
