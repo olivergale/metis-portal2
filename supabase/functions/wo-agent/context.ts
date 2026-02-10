@@ -2,8 +2,8 @@
 // Context loading for the agentic work order executor
 // Builds comprehensive system prompt with WO details, directives, lessons, schema
 // v2: Agent name from DB (builder) instead of generated
-// v3: WO-0165 â concurrent WO awareness in agent context
-// v4: WO-0164 â tag-filtered directive loading
+// v3: WO-0165 Ã¢ÂÂ concurrent WO awareness in agent context
+// v4: WO-0164 Ã¢ÂÂ tag-filtered directive loading
 
 import {
   loadWorkerPromptTemplate,
@@ -108,10 +108,14 @@ export async function buildAgentContext(
     log_progress: "Log progress messages",
     read_execution_log: "Read execution logs (useful for remediation)",
     get_schema: "Get database schema reference",
-    mark_complete: "Mark WO complete (TERMINAL â ends execution)",
-    mark_failed: "Mark WO failed (TERMINAL â ends execution)",
+    mark_complete: "Mark WO complete (TERMINAL Ã¢ÂÂ ends execution)",
+    mark_failed: "Mark WO failed (TERMINAL Ã¢ÂÂ ends execution)",
     resolve_qa_findings: "Resolve unresolved QA failure findings",
     update_qa_checklist: "Update a QA checklist item status",
+    transition_state: "Transition WO status via enforcement RPC",
+    delegate_subtask: "Create a child WO with model assignment and dispatch it",
+    web_fetch: "Fetch content from a web URL (HTTP GET)",
+    search_knowledge_base: "Search institutional knowledge base entries",
   };
   systemPrompt += `## Available Tools (${availableTools.length} for ${agentName})\n`;
   for (const tool of availableTools) {
@@ -125,7 +129,7 @@ export async function buildAgentContext(
   systemPrompt += `4. Call mark_complete with a detailed summary when done\n`;
   systemPrompt += `5. Call mark_failed if you cannot complete the objective\n`;
   systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
-  systemPrompt += `7. Never make up data â query first, then act\n`;
+  systemPrompt += `7. Never make up data Ã¢ÂÂ query first, then act\n`;
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
 
   // Build user message with WO details
@@ -296,7 +300,7 @@ async function buildDependencyContext(
   if (deps && deps.length > 0) {
     for (const dep of deps) {
       ctx += `- **${dep.slug}** (${dep.status}): ${dep.name}`;
-      if (dep.summary) ctx += ` â ${dep.summary.slice(0, 200)}`;
+      if (dep.summary) ctx += ` Ã¢ÂÂ ${dep.summary.slice(0, 200)}`;
       ctx += `\n`;
     }
     ctx += `\n`;
