@@ -2910,7 +2910,7 @@
             );
         };
 
-        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, expanded, actionLoading, staleThreshold }) => {
+        const WorkOrderCard = ({ workOrder, agents, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, onUnblock, expanded, actionLoading, staleThreshold }) => {
             const isLoading = actionLoading?.[workOrder.id];
             const assignedAgent = agents.find(a => a.id === workOrder.assigned_to);
 
@@ -3054,6 +3054,15 @@
                             </button>
                         )}
                         {/* WO-0240: Start button removed — approve is now atomic approve+start */}
+                        {workOrder.status === 'blocked' && onUnblock && (
+                            <button
+                                className="card-action-btn approve-btn"
+                                onClick={(e) => { e.stopPropagation(); onUnblock(workOrder.id); }}
+                                disabled={isLoading}
+                            >
+                                {isLoading === 'unblock' ? 'Unblocking...' : '▶ Unblock'}
+                            </button>
+                        )}
                         {workOrder.status === 'review' && (
                             <>
                                 <button
@@ -3173,7 +3182,7 @@
             );
         };
 
-        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, expanded, actionLoading, staleThreshold }) => {
+        const KanbanColumn = ({ column, workOrders, agents, onDrop, onStatusChange, onExpand, onApprove, onAccept, onReject, onRollback, onWatch, onCancel, onRetry, onUnblock, expanded, actionLoading, staleThreshold }) => {
             const [isDragOver, setIsDragOver] = useState(false);
 
             const handleDragOver = (e) => {
@@ -3227,6 +3236,7 @@
                                     onWatch={onWatch}
                                     onCancel={onCancel}
                                     onRetry={onRetry}
+                                    onUnblock={onUnblock}
                                     expanded={expanded}
                                     actionLoading={actionLoading}
                                     staleThreshold={staleThreshold}
@@ -4189,6 +4199,30 @@
                 }
             };
 
+            const handleUnblock = async (workOrderId) => {
+                if (actionLoading[workOrderId]) return;
+                setActionLoading(prev => ({ ...prev, [workOrderId]: 'unblock' }));
+                try {
+                    const wo = workOrders.find(w => w.id === workOrderId);
+                    // Use autorouter to determine agent, fallback to builder
+                    const agentName = wo?.assigned_to
+                        ? agents.find(a => a.id === wo.assigned_to)?.name || 'builder'
+                        : 'builder';
+                    await api('/rest/v1/rpc/start_work_order', {
+                        method: 'POST',
+                        body: JSON.stringify({ p_work_order_id: workOrderId, p_agent_name: agentName }),
+                    });
+                    setWorkOrders(prev => prev.map(w =>
+                        w.id === workOrderId ? { ...w, status: 'in_progress', started_at: new Date().toISOString() } : w
+                    ));
+                    addToast('Work order unblocked and started', 'success');
+                } catch (err) {
+                    addToast('Failed to unblock: ' + err.message, 'error');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [workOrderId]: null }));
+                }
+            };
+
             const openRejectModal = (workOrderId) => {
                 const wo = workOrders.find(w => w.id === workOrderId);
                 setRejectModal({ open: true, workOrderId, workOrderName: wo?.name || 'Unknown' });
@@ -4392,7 +4426,7 @@
             };
 
             const workOrdersByStatus = useMemo(() => {
-                const statusPriority = { 'in_progress': 1, 'ready': 2, 'draft': 3, 'review': 4, 'failed': 5, 'done': 6, 'cancelled': 7 };
+                const statusPriority = { 'in_progress': 1, 'ready': 2, 'blocked': 3, 'draft': 4, 'review': 5, 'failed': 6, 'done': 7, 'cancelled': 8 };
 
                 // Filter by search term
                 const searchFiltered = searchTerm.trim() === ''
@@ -4546,6 +4580,7 @@
                                             onWatch={setWatchingWO}
                                             onCancel={handleCancel}
                                             onRetry={handleRetry}
+                                            onUnblock={handleUnblock}
                                             expanded={expanded}
                                             actionLoading={actionLoading}
                                             staleThreshold={staleThreshold}
