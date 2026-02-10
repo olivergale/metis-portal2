@@ -98,9 +98,11 @@ export async function handleDeployEdgeFunction(
 
     if (!deployResp.ok) {
       const errText = await deployResp.text();
+      const errorMsg = `Deploy failed (${deployResp.status}): ${errText}`;
+      await logError(ctx, "error", "wo-agent/deploy_edge_function", "DEPLOY_FAILED", errorMsg, { function_name, status: deployResp.status });
       return {
         success: false,
-        error: `Deploy failed (${deployResp.status}): ${errText}`,
+        error: errorMsg,
       };
     }
 
