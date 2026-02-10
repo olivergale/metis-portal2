@@ -131,6 +131,8 @@ export async function handleDeployEdgeFunction(
       },
     };
   } catch (e: any) {
-    return { success: false, error: `deploy_edge_function exception: ${e.message}` };
+    const errorMsg = `deploy_edge_function exception: ${e.message}`;
+    await logError(ctx, "error", "wo-agent/deploy_edge_function", "EXCEPTION", errorMsg, { function_name });
+    return { success: false, error: errorMsg };
   }
 }
