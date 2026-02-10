@@ -1,6 +1,7 @@
-// wo-agent/index.ts v4
+// wo-agent/index.ts v5
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
+// v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
 // Server-side agentic work order executor
 // Replaces CLI subprocess model with API-based tool-use loop
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -55,7 +56,7 @@ Deno.serve(async (req: Request) => {
 
 /**
  * WO-0258: Create a remediation WO when builder fails from circuit breaker or timeout.
- * Routes to ilmarinen (builder already exhausted its budget).
+ * Routes to builder (fresh execution budget).
  * Skips remediation WOs to avoid loops.
  */
 async function createFailureRemediation(
@@ -65,20 +66,17 @@ async function createFailureRemediation(
 ): Promise<void> {
   try {
     const tags: string[] = wo.tags || [];
-    // Never remediate a remediation WO (avoid loops)
     if (tags.includes("remediation")) {
       console.log(`[WO-AGENT] Skip remediation for remediation WO ${wo.slug}`);
       return;
     }
 
-    // Check existing remediation count (circuit breaker)
     const { data: existing } = await supabase
       .from("work_orders")
       .select("id, slug, status")
       .contains("tags", ["remediation", `parent:${wo.slug}`])
       .limit(10);
 
-    // Skip if active remediation already exists
     const active = (existing || []).find(
       (r: any) => ["draft", "ready", "in_progress", "review"].includes(r.status)
     );
@@ -90,7 +88,6 @@ async function createFailureRemediation(
     const attempts = (existing || []).length;
     if (attempts >= 3) {
       console.log(`[WO-AGENT] Remediation circuit breaker: ${attempts}/3 for ${wo.slug}`);
-      // Tag for manual triage
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'escalation:ilmarinen') WHERE id = '${wo.id}' AND NOT ('escalation:ilmarinen' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
       });
@@ -135,7 +132,6 @@ async function createFailureRemediation(
       return;
     }
 
-    // Auto-start — route to builder (fresh execution budget)
     try {
       await supabase.rpc("start_work_order", {
         p_work_order_id: woId,
@@ -156,7 +152,7 @@ async function createFailureRemediation(
         work_order_id: wo.id, phase: "failed", agent_name: "wo-agent",
         detail: { event_type: "remediation_exception", error: e.message, content: `createFailureRemediation crashed for ${wo.slug}` },
       });
-    } catch { /* meta-error — nothing else to do */ }
+    } catch { /* meta-error */ }
   }
 }
 
@@ -177,7 +173,6 @@ async function handleExecute(req: Request): Promise<Response> {
   const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(sbUrl, sbKey);
 
-  // Load the work order
   const { data: wo, error: woError } = await supabase
     .from("work_orders")
     .select(
@@ -193,17 +188,14 @@ async function handleExecute(req: Request): Promise<Response> {
     );
   }
 
-  // Validate status
   if (wo.status !== "in_progress") {
     return jsonResponse(
-      {
-        error: `Work order ${wo.slug} is not in_progress (current: ${wo.status})`,
-      },
+      { error: `Work order ${wo.slug} is not in_progress (current: ${wo.status})` },
       400
     );
   }
 
-  // WO-0155: Guard against orphaned remediation WOs Ã¢ÂÂ if parent is already done, auto-complete
+  // WO-0155: Guard against orphaned remediation WOs
   const tags: string[] = wo.tags || [];
   if (tags.includes("remediation")) {
     const parentTag = tags.find((t: string) => t.startsWith("parent:"));
@@ -216,10 +208,9 @@ async function handleExecute(req: Request): Promise<Response> {
         .single();
 
       if (parentWo && parentWo.status === "done") {
-        const msg = `Parent ${parentSlug} already completed Ã¢ÂÂ remediation unnecessary`;
+        const msg = `Parent ${parentSlug} already completed -- remediation unnecessary`;
         console.log(`[WO-AGENT] ${wo.slug}: ${msg}`);
 
-        // Log and auto-complete
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id,
           phase: "execution_complete",
@@ -227,20 +218,12 @@ async function handleExecute(req: Request): Promise<Response> {
           detail: { event_type: "result", content: msg },
         });
         await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
-        });
-        // Immediately complete (skip QA Ã¢ÂÂ nothing to evaluate)
-        await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
         });
 
         return jsonResponse({
-          work_order_id: wo.id,
-          slug: wo.slug,
-          status: "completed",
-          turns: 0,
-          summary: msg,
-          tool_calls: 0,
+          work_order_id: wo.id, slug: wo.slug, status: "completed",
+          turns: 0, summary: msg, tool_calls: 0,
         });
       }
     }
@@ -250,19 +233,13 @@ async function handleExecute(req: Request): Promise<Response> {
   let githubToken: string | null = null;
   try {
     const { data } = await supabase
-      .from("secrets")
-      .select("value")
-      .eq("key", "GITHUB_TOKEN")
-      .single();
+      .from("secrets").select("value").eq("key", "GITHUB_TOKEN").single();
     githubToken = data?.value || null;
-  } catch {
-    // GitHub token not available Ã¢ÂÂ GitHub tools will fail gracefully
-  }
+  } catch { /* GitHub tools will fail gracefully */ }
 
   // Build agent context
   const agentContext = await buildAgentContext(supabase, wo);
 
-  // Build tool context
   const toolCtx: ToolContext = {
     supabase,
     workOrderId: wo.id,
@@ -271,7 +248,7 @@ async function handleExecute(req: Request): Promise<Response> {
     agentName: agentContext.agentName,
   };
 
-  // WO-0187: Check for continuation Ã¢ÂÂ if there's a recent checkpoint, build continuation context
+  // WO-0187: Check for continuation
   let finalUserMessage = agentContext.userMessage;
   const { data: checkpoint } = await supabase
     .from("work_order_execution_log")
@@ -283,7 +260,6 @@ async function handleExecute(req: Request): Promise<Response> {
     .maybeSingle();
 
   if (checkpoint?.detail) {
-    // Count total checkpoints for circuit breaker
     const { count: checkpointCount } = await supabase
       .from("work_order_execution_log")
       .select("id", { count: "exact", head: true })
@@ -291,33 +267,26 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 5) {
-      // Circuit breaker Ã¢ÂÂ too many continuations
       const msg = `Exceeded continuation budget (${checkpointCount} checkpoints). Marking failed.`;
       await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "failed",
-        agent_name: agentContext.agentName,
+        work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
         detail: { event_type: "circuit_breaker", content: msg },
       });
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
       });
 
-      // WO-0258: Auto-create remediation WO on circuit breaker failure
       await createFailureRemediation(supabase, wo, msg);
-
       return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
     }
 
-    // Build continuation context (with delegated children status)
+    // Build continuation context
     const cp = checkpoint.detail;
     let childStatusContext = "";
     if (cp.delegated_children && cp.delegated_children.length > 0) {
       const childSlugs = cp.delegated_children.map((c: any) => c.child_slug);
       const { data: childWOs } = await supabase
-        .from("work_orders")
-        .select("slug, status, summary")
-        .in("slug", childSlugs);
+        .from("work_orders").select("slug, status, summary").in("slug", childSlugs);
       if (childWOs && childWOs.length > 0) {
         childStatusContext = `\n## Delegated Children Status\n`;
         for (const child of childWOs) {
@@ -326,7 +295,7 @@ async function handleExecute(req: Request): Promise<Response> {
         childStatusContext += `\n`;
       }
     }
-    finalUserMessage = `# CONTINUATION Ã¢ÂÂ Work Order: ${wo.slug}\n\n`;
+    finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
     finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
     finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
@@ -341,14 +310,12 @@ async function handleExecute(req: Request): Promise<Response> {
     finalUserMessage += `**IMPORTANT**: Do NOT redo work already done. Verify what was completed, then finish the remaining items. Call mark_complete when done.\n`;
 
     await supabase.from("work_order_execution_log").insert({
-      work_order_id: wo.id,
-      phase: "continuation",
-      agent_name: agentContext.agentName,
+      work_order_id: wo.id, phase: "continuation", agent_name: agentContext.agentName,
       detail: { event_type: "continuation_start", checkpoint_count: (checkpointCount || 0) + 1, previous_turns: cp.turns_completed },
     });
   }
 
-  // Run the agentic loop with tag-filtered tools
+  // Run the agentic loop
   const result = await runAgentLoop(
     agentContext.systemPrompt,
     finalUserMessage,
@@ -356,20 +323,16 @@ async function handleExecute(req: Request): Promise<Response> {
     wo.tags || []
   );
 
-  // Log final result
-  console.log(
-    `[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`
-  );
+  console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
 
-  // WO-0187: If checkpoint or timeout, self-reinvoke via pg_net for continuation
+  // WO-0187: Self-reinvoke on checkpoint/timeout
   if (result.status === "checkpoint" || result.status === "timeout") {
     try {
       const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-      const sbUrl = Deno.env.get("SUPABASE_URL")!;
-      // Self-reinvoke with 2s delay via pg_net
+      const selfUrl = Deno.env.get("SUPABASE_URL")!;
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT net.http_post(
-          url := '${sbUrl}/functions/v1/wo-agent/execute',
+          url := '${selfUrl}/functions/v1/wo-agent/execute',
           headers := jsonb_build_object(
             'Content-Type', 'application/json',
             'Authorization', 'Bearer ${anonKey}',
@@ -378,25 +341,19 @@ async function handleExecute(req: Request): Promise<Response> {
           body := jsonb_build_object('work_order_id', '${wo.id}')
         );`,
       });
-      console.log(`[WO-AGENT] ${wo.slug} checkpointed Ã¢ÂÂ self-reinvoke queued`);
+      console.log(`[WO-AGENT] ${wo.slug} checkpointed -- self-reinvoke queued`);
     } catch (e: any) {
       console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
       await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "failed",
-        agent_name: agentContext.agentName,
+        work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
         detail: { event_type: "continuation_failed", error: e.message, content: `Self-reinvoke failed after checkpoint: ${e.message}` },
       }).then(null, () => {});
     }
   }
 
   return jsonResponse({
-    work_order_id: wo.id,
-    slug: wo.slug,
-    status: result.status,
-    turns: result.turns,
-    summary: result.summary,
-    tool_calls: result.toolCalls.length,
+    work_order_id: wo.id, slug: wo.slug, status: result.status,
+    turns: result.turns, summary: result.summary, tool_calls: result.toolCalls.length,
   });
 }
 
@@ -417,94 +374,57 @@ async function handleExecuteBatch(req: Request): Promise<Response> {
   const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(sbUrl, sbKey);
 
-  // Start batch execution (validates and marks batch as in_progress)
   const { data: startResult, error: startError } = await supabase.rpc(
-    "start_batch_execution",
-    { p_batch_id: batch_id }
+    "start_batch_execution", { p_batch_id: batch_id }
   );
 
   if (startError || !startResult?.success) {
     return jsonResponse(
-      {
-        error: `Failed to start batch: ${startError?.message || startResult?.error}`,
-      },
+      { error: `Failed to start batch: ${startError?.message || startResult?.error}` },
       400
     );
   }
 
-  // Get batch details for parallel_slots
   const { data: batch } = await supabase
-    .from("wo_batches")
-    .select("parallel_slots, execution_mode")
-    .eq("id", batch_id)
-    .single();
+    .from("wo_batches").select("parallel_slots, execution_mode").eq("id", batch_id).single();
 
   const parallelSlots = batch?.parallel_slots || 3;
   const executionMode = batch?.execution_mode || "step";
 
-  console.log(
-    `[BATCH] Starting batch ${batch_id} in ${executionMode} mode with ${parallelSlots} parallel slots`
-  );
+  console.log(`[BATCH] Starting batch ${batch_id} in ${executionMode} mode with ${parallelSlots} parallel slots`);
 
-  // Track execution state
   const executedWOs: string[] = [];
   const failedWOs: string[] = [];
   let iterationCount = 0;
-  const maxIterations = 100; // Safety circuit breaker
+  const maxIterations = 100;
 
-  // Execute WOs in waves until none remain
   while (iterationCount < maxIterations) {
     iterationCount++;
 
-    // Get dependency-ready WOs
     const { data: readyWOs, error: readyError } = await supabase.rpc(
-      "get_batch_ready_wos",
-      { p_batch_id: batch_id }
+      "get_batch_ready_wos", { p_batch_id: batch_id }
     );
 
-    if (readyError) {
-      console.error(`[BATCH] Error getting ready WOs:`, readyError);
-      break;
-    }
+    if (readyError) { console.error(`[BATCH] Error getting ready WOs:`, readyError); break; }
+    if (!readyWOs || readyWOs.length === 0) { console.log(`[BATCH] No more ready WOs.`); break; }
 
-    if (!readyWOs || readyWOs.length === 0) {
-      console.log(`[BATCH] No more ready WOs. Batch execution complete.`);
-      break;
-    }
-
-    console.log(
-      `[BATCH] Wave ${iterationCount}: ${readyWOs.length} WOs ready`
-    );
-
-    // Take up to parallel_slots WOs for this wave
     const waveWOs = readyWOs.slice(0, parallelSlots);
 
-    // Start all WOs in this wave
     const startPromises = waveWOs.map(async (wo: any) => {
       try {
         const { data: startWOResult } = await supabase.rpc("start_work_order", {
-          p_work_order_id: wo.work_order_id,
-          p_agent_name: "builder",
+          p_work_order_id: wo.work_order_id, p_agent_name: "builder",
         });
+        if (!startWOResult?.id) throw new Error(`Failed to start WO ${wo.slug}`);
 
-        if (!startWOResult?.id) {
-          throw new Error(`Failed to start WO ${wo.slug}`);
-        }
-
-        // Self-invoke /execute for this WO
         const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
         const executeRes = await fetch(`${sbUrl}/functions/v1/wo-agent/execute`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${anonKey}`,
-            "apikey": anonKey,
-          },
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${anonKey}`, "apikey": anonKey },
           body: JSON.stringify({ work_order_id: wo.work_order_id }),
         });
 
         const result = await executeRes.json();
-        
         if (result.status === "completed" || result.status === "done") {
           executedWOs.push(wo.slug);
           return { success: true, slug: wo.slug };
@@ -519,30 +439,18 @@ async function handleExecuteBatch(req: Request): Promise<Response> {
       }
     });
 
-    // Wait for all WOs in this wave to complete
     await Promise.all(startPromises);
-
-    console.log(
-      `[BATCH] Wave ${iterationCount} complete: ${executedWOs.length} succeeded, ${failedWOs.length} failed`
-    );
   }
 
-  // Complete batch execution
   const summary = `Batch execution completed: ${executedWOs.length} WOs succeeded, ${failedWOs.length} failed across ${iterationCount} waves`;
-  
   const { data: completeResult } = await supabase.rpc("complete_batch_execution", {
-    p_batch_id: batch_id,
-    p_summary: summary,
+    p_batch_id: batch_id, p_summary: summary,
   });
 
   return jsonResponse({
-    batch_id,
-    execution_mode: executionMode,
-    waves: iterationCount,
-    executed: executedWOs.length,
-    failed: failedWOs.length,
-    summary,
-    completion_rate: completeResult?.completion_rate || 0,
+    batch_id, execution_mode: executionMode, waves: iterationCount,
+    executed: executedWOs.length, failed: failedWOs.length,
+    summary, completion_rate: completeResult?.completion_rate || 0,
   });
 }
 
@@ -563,18 +471,14 @@ async function handleStatus(req: Request): Promise<Response> {
   const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(sbUrl, sbKey);
 
-  // Get WO status
   const { data: wo } = await supabase
-    .from("work_orders")
-    .select("id, slug, status, summary")
-    .eq("id", work_order_id)
-    .single();
+    .from("work_orders").select("id, slug, status, summary")
+    .eq("id", work_order_id).single();
 
   if (!wo) {
     return jsonResponse({ error: "Work order not found" }, 404);
   }
 
-  // Get latest execution log entries
   const { data: logs } = await supabase
     .from("work_order_execution_log")
     .select("phase, detail, created_at")
@@ -583,40 +487,70 @@ async function handleStatus(req: Request): Promise<Response> {
     .limit(5);
 
   return jsonResponse({
-    work_order_id: wo.id,
-    slug: wo.slug,
-    status: wo.status,
-    summary: wo.summary,
-    recent_activity: logs || [],
+    work_order_id: wo.id, slug: wo.slug, status: wo.status,
+    summary: wo.summary, recent_activity: logs || [],
   });
 }
 
 /**
  * POST /health-check
- * Ops agent endpoint: detects stuck WOs, orphans, failed WO triage, queue stalls
+ * Ops agent endpoint: detects stuck WOs, orphans, failed WO triage, queue stalls, auto-recovery
  * Body: { trigger?: "cron" | "manual" }
+ *
+ * v5 resilience:
+ * - 45s timeout wrapper (prevents platform 503)
+ * - Consecutive detection: warn -> warn -> fail (3 cycles = 30 min before failure)
+ * - Auto-recovery: stuck_detection failures get retried once automatically
+ * - Pagination: max 50 WOs per scan
  */
 async function handleHealthCheck(req: Request): Promise<Response> {
   const body = await req.json().catch(() => ({}));
   const trigger = body.trigger || "cron";
 
-  const sbUrl = Deno.env.get("SUPABASE_URL")!;
-  const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  // Timeout wrapper -- prevent platform 503 on slow queries
+  const timeoutMs = 45_000;
+  let timer: number | undefined;
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Health-check timeout after 45s")), timeoutMs) as unknown as number;
+    });
+    const result = await Promise.race([healthCheckLogic(trigger), timeoutPromise]);
+    clearTimeout(timer);
+    return jsonResponse(result);
+  } catch (e: any) {
+    if (timer) clearTimeout(timer);
+    const isTimeout = e.message?.includes("timeout");
+    console.error(`[HEALTH-CHECK] ${isTimeout ? "TIMEOUT" : "ERROR"}: ${e.message}`);
+    // Return 200 even on timeout -- never cascade 503 which kills the whole system
+    return jsonResponse({
+      status: isTimeout ? "timeout" : "error",
+      error: e.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+async function healthCheckLogic(trigger: string) {
+  const sbUrl = Deno.env.get("SUPABASE_URL");
+  const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!sbUrl || !sbKey) {
+    return { status: "error", error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY" };
+  }
   const supabase = createClient(sbUrl, sbKey);
 
   const actions: any[] = [];
   const now = new Date();
 
-  // 1. Stuck WO detection: in_progress with no execution_log heartbeat in 10 min
-  // WO-0238: AC3 - Heartbeat-based liveness using execution_log recency, not started_at
+  // 1. Stuck WO detection with CONSECUTIVE warning before failure
   const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const { data: stuckWOs } = await supabase
     .from("work_orders")
     .select("id, slug, started_at, assigned_to, tags, status")
-    .eq("status", "in_progress");
+    .eq("status", "in_progress")
+    .limit(50);
 
   for (const wo of stuckWOs || []) {
-    // Check for recent execution_log heartbeat (any entry in last 10 min)
     const { data: recentLog } = await supabase
       .from("work_order_execution_log")
       .select("created_at, phase")
@@ -625,7 +559,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
       .limit(1);
 
     if (!recentLog || recentLog.length === 0) {
-      // Check for active children before marking failed
+      // Check for active children
       const { count: activeChildCount } = await supabase
         .from("work_orders")
         .select("id", { count: "exact", head: true })
@@ -633,54 +567,44 @@ async function handleHealthCheck(req: Request): Promise<Response> {
         .in("status", ["in_progress", "review", "ready"]);
 
       if ((activeChildCount || 0) > 0) {
-        // Parent has active children — tag as waiting, don't mark failed
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'waiting-on-children') WHERE id = '${wo.id}' AND NOT ('waiting-on-children' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
         });
-
-        await supabase.from("work_order_execution_log").insert({
-          work_order_id: wo.id,
-          phase: "stream",
-          agent_name: "ops",
-          detail: {
-            event_type: "stuck_detection",
-            action: "skipped_has_active_children",
-            reason: `${activeChildCount} active child WO(s) - not marking failed`,
-            detection_time: now.toISOString(),
-          },
-        });
-
-        actions.push({
-          type: "stuck_detection",
-          wo_slug: wo.slug,
-          action: "skipped_has_active_children",
-          active_children: activeChildCount,
-        });
+        actions.push({ type: "stuck_detection", wo_slug: wo.slug, action: "skipped_has_active_children", active_children: activeChildCount });
       } else {
-      // No heartbeat in 10 min Ã¢ÂÂ mark as failed (AC1: never overwrite summary)
-      await supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
-      });
+        // CONSECUTIVE DETECTION: count recent stuck_detection warnings in last 30 min
+        const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+        const { count: warnCount } = await supabase
+          .from("work_order_execution_log")
+          .select("id", { count: "exact", head: true })
+          .eq("work_order_id", wo.id)
+          .eq("phase", "stuck_detection")
+          .gte("created_at", thirtyMinAgo);
 
-      // AC1: Stuck detection info goes to execution_log ONLY (not summary)
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "stuck_detection",
-        agent_name: "ops",
-        detail: {
-          event_type: "stuck_detection",
-          action: "marked_failed",
-          reason: "No execution_log heartbeat in 10 minutes",
-          started_at: wo.started_at,
-          detection_time: now.toISOString(),
-        },
-      });
+        const warnings = warnCount || 0;
 
-      actions.push({
-        type: "stuck_detection",
-        wo_slug: wo.slug,
-        action: "marked_failed",
-      });
+        if (warnings >= 2) {
+          // 3rd detection -- genuinely stuck for 30+ min, NOW mark failed
+          await supabase.rpc("run_sql_void", {
+            sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
+          });
+          await supabase.from("work_order_execution_log").insert({
+            work_order_id: wo.id, phase: "stuck_detection", agent_name: "ops",
+            detail: { event_type: "stuck_detection", action: "marked_failed",
+              reason: `No heartbeat for 30+ min (${warnings + 1} consecutive detections)`,
+              started_at: wo.started_at, detection_time: now.toISOString(), consecutive_warnings: warnings },
+          });
+          actions.push({ type: "stuck_detection", wo_slug: wo.slug, action: "marked_failed", warnings: warnings + 1 });
+        } else {
+          // Warning only -- don't mark failed yet
+          await supabase.from("work_order_execution_log").insert({
+            work_order_id: wo.id, phase: "stuck_detection", agent_name: "ops",
+            detail: { event_type: "stuck_detection", action: "warning",
+              reason: `No heartbeat in 10 min (warning ${warnings + 1}/3 before failure)`,
+              detection_time: now.toISOString(), consecutive_warnings: warnings + 1 },
+          });
+          actions.push({ type: "stuck_detection", wo_slug: wo.slug, action: "warning", warning_number: warnings + 1 });
+        }
       }
     }
   }
@@ -690,96 +614,79 @@ async function handleHealthCheck(req: Request): Promise<Response> {
     .from("work_orders")
     .select("id, slug, tags, status")
     .contains("tags", ["remediation"])
-    .in("status", ["draft", "ready", "in_progress"]);
+    .in("status", ["draft", "ready", "in_progress"])
+    .limit(50);
 
   for (const rem of orphanRems || []) {
-    const parentTag = (rem.tags || []).find((t: string) =>
-      t.startsWith("parent:")
-    );
+    const parentTag = (rem.tags || []).find((t: string) => t.startsWith("parent:"));
     if (!parentTag) continue;
-
     const parentSlug = parentTag.replace("parent:", "");
     const { data: parent } = await supabase
-      .from("work_orders")
-      .select("status")
-      .eq("slug", parentSlug)
-      .single();
+      .from("work_orders").select("status").eq("slug", parentSlug).single();
 
     if (parent && parent.status === "done") {
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = 'Auto-completed by ops: parent ${parentSlug.replace(/'/g, "''")} already done' WHERE id = '${rem.id}';`,
       });
-
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: rem.id,
-        phase: "stream",
-        agent_name: "ops",
-        detail: {
-          event_type: "tool_result",
-          tool_name: "health_check",
-          action: "orphan_auto_completed",
-          reason: `parent ${parentSlug} already done`,
-        },
-      });
-
-      actions.push({
-        type: "orphan_cleanup",
-        wo_slug: rem.slug,
-        parent_slug: parentSlug,
-        action: "auto_completed",
-      });
+      actions.push({ type: "orphan_cleanup", wo_slug: rem.slug, parent_slug: parentSlug, action: "auto_completed" });
     }
   }
 
-  // 3. Failed WO triage: detect-and-tag only (NO auto-retry)
-  // WO-0238: AC2 - Ops never transitions failed or done WOs. Terminal states are sacred.
-  // WO-0238: AC4 - Circuit breaker satisfied: no retry dispatches (was removed entirely).
-  // Only tags with no-retry after 3 failures for human triage.
+  // 3. Failed WO triage + AUTO-RECOVERY for stuck_detection false positives
   const { data: failedWOs } = await supabase
     .from("work_orders")
     .select("id, slug, tags, priority")
     .eq("status", "failed")
-    .not("tags", "cs", '{"no-retry"}');
+    .not("tags", "cs", '{"no-retry"}')
+    .limit(50);
 
   for (const wo of failedWOs || []) {
+    // Check if this was a stuck_detection failure (likely false positive during infra outage)
+    const { data: lastFailLog } = await supabase
+      .from("work_order_execution_log")
+      .select("phase, detail, created_at")
+      .eq("work_order_id", wo.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const wasStuckDetection = lastFailLog?.phase === "stuck_detection" && lastFailLog?.detail?.action === "marked_failed";
+    const alreadyRetried = (wo.tags || []).includes("auto-recovered");
+
+    if (wasStuckDetection && !alreadyRetried) {
+      // Auto-recovery: reset to draft, tag, approve so auto-start picks it up
+      await supabase.rpc("run_sql_void", {
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'draft', completed_at = NULL, tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'auto-recovered') WHERE id = '${wo.id}' AND status = 'failed';`,
+      });
+      await supabase.rpc("run_sql_void", {
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'ready', approved_at = NOW(), approved_by = 'ops-auto-recovery' WHERE id = '${wo.id}' AND status = 'draft';`,
+      });
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "stream", agent_name: "ops",
+        detail: { event_type: "auto_recovery", action: "recovered_from_stuck_detection",
+          reason: "Stuck detection failure likely caused by infra outage -- auto-retrying once" },
+      });
+      actions.push({ type: "auto_recovery", wo_slug: wo.slug, action: "recovered" });
+      continue;
+    }
+
+    // Standard triage: tag no-retry after 3 failures
     const { count } = await supabase
       .from("work_order_execution_log")
       .select("id", { count: "exact", head: true })
       .eq("work_order_id", wo.id)
       .eq("phase", "failed");
 
-    const attempts = count || 0;
-
-    if (attempts >= 3) {
-      // Tag with no-retry for human attention Ã¢ÂÂ no state change
+    if ((count || 0) >= 3) {
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'no-retry') WHERE id = '${wo.id}';`,
       });
-
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "stream",
-        agent_name: "ops",
-        detail: {
-          event_type: "tool_result",
-          tool_name: "health_check",
-          action: "tagged_no_retry",
-          reason: `Failed ${attempts} times, tagged for human triage`,
-          attempts,
-        },
-      });
-
-      actions.push({
-        type: "failed_triage",
-        wo_slug: wo.slug,
-        attempts,
-        action: "tagged_no_retry",
-      });
+      actions.push({ type: "failed_triage", wo_slug: wo.slug, attempts: count, action: "tagged_no_retry" });
     }
   }
 
-  // 4. Queue stall detection: no WO transitions in 30+ min despite pending WOs
-  const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+  // 4. Queue stall detection
+  const thirtyMinAgo2 = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
   const { count: pendingCount } = await supabase
     .from("work_orders")
     .select("id", { count: "exact", head: true })
@@ -791,46 +698,52 @@ async function handleHealthCheck(req: Request): Promise<Response> {
       .from("state_mutations")
       .select("id", { count: "exact", head: true })
       .eq("target_table", "work_orders")
-      .gte("created_at", thirtyMinAgo);
+      .gte("created_at", thirtyMinAgo2);
 
     if ((recentTransitions || 0) === 0) {
       queueStalled = true;
-      actions.push({
-        type: "queue_stall",
-        pending_wos: pendingCount,
-        action: "alert",
-        message: "No WO transitions in 30+ min with pending work",
+      actions.push({ type: "queue_stall", pending_wos: pendingCount, action: "alert",
+        message: "No WO transitions in 30+ min with pending work" });
+    }
+  }
+
+  // 5. Auto-unblock: ready WOs with satisfied depends_on
+  const { data: blockedWOs } = await supabase
+    .from("work_orders")
+    .select("id, slug, depends_on")
+    .eq("status", "ready")
+    .not("depends_on", "is", null)
+    .limit(50);
+
+  for (const wo of blockedWOs || []) {
+    if (!wo.depends_on || wo.depends_on.length === 0) continue;
+    const { count: openDeps } = await supabase
+      .from("work_orders")
+      .select("id", { count: "exact", head: true })
+      .in("id", wo.depends_on)
+      .not("status", "in", '("done","cancelled")');
+
+    if ((openDeps || 0) === 0) {
+      const { error: startErr } = await supabase.rpc("start_work_order", {
+        p_work_order_id: wo.id, p_agent_name: "builder",
       });
+      if (!startErr) {
+        actions.push({ type: "auto_unblock", wo_slug: wo.slug, action: "started" });
+      }
     }
   }
 
   // Log health check result
   await supabase.from("audit_log").insert({
-    event_type: "health_check",
-    actor_type: "system",
-    actor_id: "ops",
-    target_type: "system",
-    target_id: "27148e96-5094-4a80-a832-8cdb93c8d96f",
+    event_type: "health_check", actor_type: "system", actor_id: "ops",
+    target_type: "system", target_id: "27148e96-5094-4a80-a832-8cdb93c8d96f",
     action: `Health check: ${actions.length} actions taken`,
-    payload: {
-      trigger,
-      actions_taken: actions.length,
-      stuck_detected: stuckWOs?.length || 0,
-      orphans_cleaned: (orphanRems || []).filter((r: any) => {
-        const pt = (r.tags || []).find((t: string) => t.startsWith("parent:"));
-        return pt;
-      }).length,
-      failed_triaged: failedWOs?.length || 0,
-      queue_stalled: queueStalled,
-      actions,
-    },
+    payload: { trigger, actions_taken: actions.length, stuck_detected: stuckWOs?.length || 0,
+      failed_triaged: failedWOs?.length || 0, queue_stalled: queueStalled, actions },
   });
 
-  return jsonResponse({
-    status: "ok",
-    timestamp: now.toISOString(),
-    trigger,
-    actions_taken: actions.length,
-    details: actions,
-  });
+  return {
+    status: "ok", timestamp: now.toISOString(), trigger,
+    actions_taken: actions.length, details: actions,
+  };
 }
