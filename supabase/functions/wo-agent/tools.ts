@@ -8,8 +8,9 @@
 
 import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile } from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
+import { handleWebFetch } from "./tool-handlers/web.ts";
 import {
   handleLogProgress,
   handleReadExecutionLog,
@@ -19,6 +20,7 @@ import {
   handleResolveQaFindings,
   handleUpdateQaChecklist,
   handleTransitionState,
+  handleSearchKnowledgeBase,
 } from "./tool-handlers/system.ts";
 import { handleDelegateSubtask, handleCheckChildStatus } from "./tool-handlers/delegate.ts";
 
@@ -373,7 +375,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking — parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking â parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
