@@ -9,6 +9,7 @@ export default defineConfig({
         workspace: resolve(__dirname, 'workspace-new.html'),
         workspaceOld: resolve(__dirname, 'workspace.html'),
         health: resolve(__dirname, 'health.html'),
+        dashboard: resolve(__dirname, 'dashboard.html'),
       },
     },
   },
