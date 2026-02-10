@@ -157,13 +157,134 @@ serve(async (req: Request) => {
             minutes_idle: Math.round(minutesIdle * 10) / 10,
           });
 
-          // Mark as failed
+          // Check retry count in client_info
+          const clientInfo = wo.client_info || {};
+          const retryCount = clientInfo.ops_retry_count || 0;
+          const maxRetries = 3;
+
+          if (retryCount < maxRetries) {
+            // Attempt to re-dispatch to wo-agent
+            try {
+              const WO_AGENT_URL = Deno.env.get("WO_AGENT_URL") || 
+                "https://phfblljwuvzqzlbzkzpr.supabase.co/functions/v1/wo-agent";
+              
+              const dispatchResponse = await fetch(`${WO_AGENT_URL}/dispatch`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                },
+                body: JSON.stringify({
+                  work_order_id: wo.id,
+                  retry_attempt: retryCount + 1,
+                }),
+              });
+
+              // If 503 (service unavailable), increment retry and continue
+              if (dispatchResponse.status === 503) {
+                const newRetryCount = retryCount + 1;
+                await supabase
+                  .from("work_orders")
+                  .update({
+                    client_info: {
+                      ...clientInfo,
+                      ops_retry_count: newRetryCount,
+                      last_retry_at: new Date().toISOString(),
+                      last_retry_status: 503,
+                    },
+                  })
+                  .eq("id", wo.id);
+
+                await supabase.from("work_order_execution_log").insert({
+                  work_order_id: wo.id,
+                  phase: "stream",
+                  agent_name: "ops",
+                  detail: {
+                    event_type: "retry_scheduled",
+                    reason: "wo_agent_unavailable",
+                    retry_count: newRetryCount,
+                    max_retries: maxRetries,
+                    status_code: 503,
+                    minutes_idle: Math.round(minutesIdle * 10) / 10,
+                  },
+                });
+
+                response.errors.push(
+                  `${wo.slug}: wo-agent unavailable (503), retry ${newRetryCount}/${maxRetries} scheduled`
+                );
+                continue; // Skip marking as failed
+              }
+
+              // If dispatch succeeded (2xx), reset retry count
+              if (dispatchResponse.ok) {
+                await supabase
+                  .from("work_orders")
+                  .update({
+                    client_info: {
+                      ...clientInfo,
+                      ops_retry_count: 0,
+                      last_redispatch_at: new Date().toISOString(),
+                    },
+                  })
+                  .eq("id", wo.id);
+
+                await supabase.from("work_order_execution_log").insert({
+                  work_order_id: wo.id,
+                  phase: "stream",
+                  agent_name: "ops",
+                  detail: {
+                    event_type: "redispatched",
+                    reason: "stuck_detection",
+                    minutes_idle: Math.round(minutesIdle * 10) / 10,
+                  },
+                });
+
+                continue; // Successfully redispatched, don't mark as failed
+              }
+            } catch (dispatchError) {
+              // Network error or wo-agent completely down - treat as 503
+              const newRetryCount = retryCount + 1;
+              await supabase
+                .from("work_orders")
+                .update({
+                  client_info: {
+                    ...clientInfo,
+                    ops_retry_count: newRetryCount,
+                    last_retry_at: new Date().toISOString(),
+                    last_retry_error: dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+                  },
+                })
+                .eq("id", wo.id);
+
+              await supabase.from("work_order_execution_log").insert({
+                work_order_id: wo.id,
+                phase: "stream",
+                agent_name: "ops",
+                detail: {
+                  event_type: "retry_scheduled",
+                  reason: "dispatch_error",
+                  retry_count: newRetryCount,
+                  max_retries: maxRetries,
+                  error: dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+                },
+              });
+
+              response.errors.push(
+                `${wo.slug}: dispatch failed, retry ${newRetryCount}/${maxRetries} scheduled`
+              );
+              continue; // Skip marking as failed
+            }
+          }
+
+          // Max retries exhausted or other failure - mark as failed
           const { error: failError } = await supabase.rpc(
             "update_work_order_state",
             {
               p_work_order_id: wo.id,
               p_status: "failed",
-              p_summary: `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes`,
+              p_summary: retryCount >= maxRetries
+                ? `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes. Max retries (${maxRetries}) exhausted.`
+                : `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes`,
             }
           );
 
@@ -184,6 +305,8 @@ serve(async (req: Request) => {
                 reason: "stuck_detection",
                 minutes_idle: Math.round(minutesIdle * 10) / 10,
                 last_activity: lastActivity.toISOString(),
+                retry_count: retryCount,
+                retries_exhausted: retryCount >= maxRetries,
               },
             });
           }
