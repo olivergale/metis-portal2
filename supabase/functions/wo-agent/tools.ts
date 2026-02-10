@@ -159,7 +159,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "deploy_edge_function",
     description:
-      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly â only for small functions.",
+      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly Ã¢ÂÂ only for small functions.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -239,7 +239,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_complete",
     description:
-      "Mark the work order as complete with a summary. This is a TERMINAL action â the loop will end after this.",
+      "Mark the work order as complete with a summary. This is a TERMINAL action Ã¢ÂÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -254,7 +254,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_failed",
     description:
-      "Mark the work order as failed with a reason. This is a TERMINAL action â the loop will end after this.",
+      "Mark the work order as failed with a reason. This is a TERMINAL action Ã¢ÂÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -312,7 +312,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "transition_state",
     description:
-      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressâreview, in_progressâfailed, reviewâdone.",
+      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃ¢ÂÂreview, in_progressÃ¢ÂÂfailed, reviewÃ¢ÂÂdone.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -331,6 +331,42 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["new_status"],
+    },
+  },
+  {
+    name: "delegate_subtask",
+    description:
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Use to delegate implementation subtasks to cheaper/faster models while the parent continues planning and verification.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string",
+          description: "Name/title for the child work order",
+        },
+        objective: {
+          type: "string",
+          description: "Clear objective for the child WO to execute",
+        },
+        acceptance_criteria: {
+          type: "string",
+          description: "Numbered acceptance criteria (e.g. '1. Create table X\\n2. Add column Y')",
+        },
+        model_tier: {
+          type: "string",
+          description: "Model tier for the child executor (default: sonnet)",
+          enum: ["opus", "sonnet", "haiku"],
+        },
+        context_injection: {
+          type: "string",
+          description: "Context/plan text to inject into the child WO's team_context for shared understanding",
+        },
+        blocking: {
+          type: "boolean",
+          description: "If true, parent waits (polls) for child completion. If false (default), parent continues immediately.",
+        },
+      },
+      required: ["name", "objective", "acceptance_criteria"],
     },
   },
 ];
@@ -381,7 +417,7 @@ export async function getToolsForWO(
         tagFiltered = tagFiltered.filter((t) => agentAllowed.has(t.name));
       }
     } catch {
-      // Agent lookup failed â fall through with tag-only filtering
+      // Agent lookup failed Ã¢ÂÂ fall through with tag-only filtering
     }
   }
 
