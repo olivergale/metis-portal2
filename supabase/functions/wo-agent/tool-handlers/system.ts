@@ -132,7 +132,7 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review â non-master agents use enforcement RPC, master uses bypass
+    // Transition to review Ã¢ÂÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER = new Set(["ilmarinen"]);
     if (MASTER.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -154,7 +154,7 @@ export async function handleMarkComplete(
       }
     }
 
-    // Check if this is a remediation WO â propagate evidence to parent
+    // Check if this is a remediation WO Ã¢ÂÂ propagate evidence to parent
     const { data: wo } = await ctx.supabase
       .from("work_orders")
       .select("tags")
@@ -215,7 +215,7 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed â non-master agents use enforcement RPC, master uses bypass
+    // Transition to failed Ã¢ÂÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER_FAIL = new Set(["ilmarinen"]);
     if (MASTER_FAIL.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -317,7 +317,7 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
-    return { success: true, data: `Checklist item ${checklist_item_id} â ${status}` };
+    return { success: true, data: `Checklist item ${checklist_item_id} Ã¢ÂÂ ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
   }
@@ -325,7 +325,7 @@ export async function handleUpdateQaChecklist(
 
 /**
  * WO-0186: Transition a WO status via the enforcement layer (no bypass).
- * Safe for all agents â goes through update_work_order_state() RPC.
+ * Safe for all agents Ã¢ÂÂ goes through update_work_order_state() RPC.
  */
 export async function handleTransitionState(
   input: Record<string, any>,
@@ -381,5 +381,72 @@ export async function handleTransitionState(
     };
   } catch (e: any) {
     return { success: false, error: `transition_state exception: ${e.message}` };
+  }
+}
+
+export async function handleSearchKnowledgeBase(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { query, category, severity, limit } = input;
+  if (!query) {
+    return { success: false, error: "Missing required parameter: query" };
+  }
+
+  try {
+    let dbQuery = ctx.supabase
+      .from("agent_knowledge_base")
+      .select("id, category, title, content, severity, tags, created_at")
+      .ilike("content", `%${query}%`)
+      .order("severity", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(limit || 10);
+
+    if (category) {
+      dbQuery = dbQuery.eq("category", category);
+    }
+
+    if (severity) {
+      dbQuery = dbQuery.eq("severity", severity);
+    }
+
+    const { data, error } = await dbQuery;
+
+    if (error) {
+      return { success: false, error: `search_knowledge_base error: ${error.message}` };
+    }
+
+    if (!data || data.length === 0) {
+      return {
+        success: true,
+        data: {
+          count: 0,
+          message: `No knowledge base entries found for query: ${query}`,
+          entries: [],
+        },
+      };
+    }
+
+    // Format results with limited content length
+    const results = data.map((entry: any) => ({
+      id: entry.id,
+      category: entry.category,
+      title: entry.title,
+      content: entry.content.length > 500 ? entry.content.slice(0, 500) + "..." : entry.content,
+      severity: entry.severity,
+      tags: entry.tags,
+      created_at: entry.created_at,
+    }));
+
+    return {
+      success: true,
+      data: {
+        count: results.length,
+        query: query,
+        entries: results,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `search_knowledge_base exception: ${e.message}` };
   }
 }
