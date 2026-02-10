@@ -77,6 +77,11 @@ serve(async (req: Request) => {
 
       // Check each WO for activity
       for (const wo of activeWOs) {
+        // Skip local_cli agents (like ilmarinen) - they execute locally with no server heartbeat
+        if (wo.assigned_to?.execution_mode === "local_cli") {
+          continue;
+        }
+
         // Get last activity from execution log
         const { data: lastLog, error: logError } = await supabase
           .from("work_order_execution_log")
