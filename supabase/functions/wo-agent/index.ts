@@ -323,37 +323,40 @@ async function handleHealthCheck(req: Request): Promise<Response> {
   const actions: any[] = [];
   const now = new Date();
 
-  // 1. Stuck WO detection: in_progress > 10 min with no recent execution_log
+  // 1. Stuck WO detection: in_progress with no execution_log heartbeat in 10 min
+  // WO-0238: AC3 - Heartbeat-based liveness using execution_log recency, not started_at
   const tenMinAgo = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const { data: stuckWOs } = await supabase
     .from("work_orders")
-    .select("id, slug, started_at, assigned_to, tags")
-    .eq("status", "in_progress")
-    .lt("started_at", tenMinAgo);
+    .select("id, slug, started_at, assigned_to, tags, status")
+    .eq("status", "in_progress");
 
   for (const wo of stuckWOs || []) {
-    // Check for recent activity
+    // Check for recent execution_log heartbeat (any entry in last 10 min)
     const { data: recentLog } = await supabase
       .from("work_order_execution_log")
-      .select("created_at")
+      .select("created_at, phase")
       .eq("work_order_id", wo.id)
       .gte("created_at", tenMinAgo)
       .limit(1);
 
     if (!recentLog || recentLog.length === 0) {
-      // No activity in 10 min — mark as failed
+      // No heartbeat in 10 min — mark as failed (AC1: never overwrite summary)
       await supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = COALESCE(summary, '') || ' [ops: stuck >10min, no activity]' WHERE id = '${wo.id}' AND status = 'in_progress';`,
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
       });
 
+      // AC1: Stuck detection info goes to execution_log ONLY (not summary)
       await supabase.from("work_order_execution_log").insert({
         work_order_id: wo.id,
         phase: "stuck_detection",
         agent_name: "ops",
         detail: {
+          event_type: "stuck_detection",
           action: "marked_failed",
-          reason: "in_progress >10min with no execution_log activity",
+          reason: "No execution_log heartbeat in 10 minutes",
           started_at: wo.started_at,
+          detection_time: now.toISOString(),
         },
       });
 
@@ -392,10 +395,12 @@ async function handleHealthCheck(req: Request): Promise<Response> {
 
       await supabase.from("work_order_execution_log").insert({
         work_order_id: rem.id,
-        phase: "orphan_cleanup",
+        phase: "stream",
         agent_name: "ops",
         detail: {
-          action: "auto_completed",
+          event_type: "tool_result",
+          tool_name: "health_check",
+          action: "orphan_auto_completed",
           reason: `parent ${parentSlug} already done`,
         },
       });
@@ -409,7 +414,10 @@ async function handleHealthCheck(req: Request): Promise<Response> {
     }
   }
 
-  // 3. Failed WO triage: < 3 attempts → retry, >= 3 → escalate
+  // 3. Failed WO triage: detect-and-tag only (NO auto-retry)
+  // WO-0238: AC2 - Ops never transitions failed or done WOs. Terminal states are sacred.
+  // WO-0238: AC4 - Circuit breaker satisfied: no retry dispatches (was removed entirely).
+  // Only tags with no-retry after 3 failures for human triage.
   const { data: failedWOs } = await supabase
     .from("work_orders")
     .select("id, slug, tags, priority")
@@ -417,7 +425,6 @@ async function handleHealthCheck(req: Request): Promise<Response> {
     .not("tags", "cs", '{"no-retry"}');
 
   for (const wo of failedWOs || []) {
-    // Count previous failed attempts from execution_log
     const { count } = await supabase
       .from("work_order_execution_log")
       .select("id", { count: "exact", head: true })
@@ -426,51 +433,30 @@ async function handleHealthCheck(req: Request): Promise<Response> {
 
     const attempts = count || 0;
 
-    if (attempts < 3) {
-      // Retry: transition back to in_progress
-      await supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'in_progress', started_at = NOW() WHERE id = '${wo.id}' AND status = 'failed';`,
-      });
-
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "failed_retry",
-        agent_name: "ops",
-        detail: {
-          action: "retrying",
-          attempt: attempts + 1,
-          max_attempts: 3,
-        },
-      });
-
-      actions.push({
-        type: "failed_retry",
-        wo_slug: wo.slug,
-        attempt: attempts + 1,
-        action: "retrying",
-      });
-    } else {
-      // Escalate: tag with no-retry, log escalation
+    if (attempts >= 3) {
+      // Tag with no-retry for human attention — no state change
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'no-retry') WHERE id = '${wo.id}';`,
       });
 
       await supabase.from("work_order_execution_log").insert({
         work_order_id: wo.id,
-        phase: "escalation",
+        phase: "stream",
         agent_name: "ops",
         detail: {
-          action: "escalated",
-          reason: `Failed ${attempts} times, escalating to metis`,
+          event_type: "tool_result",
+          tool_name: "health_check",
+          action: "tagged_no_retry",
+          reason: `Failed ${attempts} times, tagged for human triage`,
           attempts,
         },
       });
 
       actions.push({
-        type: "escalation",
+        type: "failed_triage",
         wo_slug: wo.slug,
         attempts,
-        action: "escalated_to_metis",
+        action: "tagged_no_retry",
       });
     }
   }

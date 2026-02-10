@@ -3053,15 +3053,7 @@
                                 {isLoading === 'approve' ? 'Approving...' : '✓ Approve'}
                             </button>
                         )}
-                        {workOrder.status === 'ready' && (
-                            <button
-                                className="card-action-btn approve-btn"
-                                onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id, false, true); }}
-                                disabled={isLoading}
-                            >
-                                {isLoading === 'approve' ? 'Starting...' : '▶ Start'}
-                            </button>
-                        )}
+                        {/* WO-0240: Start button removed — approve is now atomic approve+start */}
                         {workOrder.status === 'review' && (
                             <>
                                 <button
@@ -4137,10 +4129,11 @@
                         return;
                     }
                     if (data.approved) {
+                        const newStatus = data.started ? 'in_progress' : 'ready';
                         setWorkOrders(prev => prev.map(w =>
-                            w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
+                            w.id === workOrderId ? { ...w, status: newStatus, approved_at: new Date().toISOString(), started_at: data.started ? new Date().toISOString() : w.started_at } : w
                         ));
-                        addToast('Work order approved', 'success');
+                        addToast(data.started ? 'Work order approved and started' : 'Work order approved', 'success');
                     } else {
                         // AC6: Display structured error codes
                         const errorMsg = data.error_code

@@ -1,4 +1,5 @@
-// work-order-executor/index.ts v55
+// work-order-executor/index.ts v60
+// v60: WO-0234 — Fix auto-QA race: check WO status before evaluation AND before writing findings, skip gracefully if done/cancelled
 // v56: Agent rename — sentinel→qa-gate in all logging
 // v54: WO-0151 — Fix /reprioritize to include 'review' status WOs in queue evaluation (AC7 compliance)
 // v53: Add /reprioritize endpoint — dynamic queue scoring on 5 dimensions (priority, deps, freshness, lessons, complexity)
@@ -282,6 +283,10 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       await supabase.rpc('update_work_order_state', {
         p_work_order_id: parentWo.id,
         p_status: 'failed',
+        p_approved_at: null,
+        p_approved_by: null,
+        p_started_at: null,
+        p_completed_at: new Date().toISOString(),
         p_summary: escalationSummary
       });
 
@@ -432,11 +437,19 @@ async function handleRemediationCompletion(supabase: any, wo: { id?: string; slu
         await supabase.rpc('update_work_order_state', {
           p_work_order_id: parentWo.id,
           p_status: 'in_progress',
+          p_approved_at: null,
+          p_approved_by: null,
+          p_started_at: null,
+          p_completed_at: null,
           p_summary: `Remediation ${wo.slug} completed, re-evaluating`
         });
         await supabase.rpc('update_work_order_state', {
           p_work_order_id: parentWo.id,
           p_status: 'review',
+          p_approved_at: null,
+          p_approved_by: null,
+          p_started_at: null,
+          p_completed_at: null,
           p_summary: `Re-evaluation after remediation ${wo.slug}`
         });
         console.log(`[REMEDIATION] Re-triggered auto-QA on parent ${parentSlug}`);
@@ -514,7 +527,7 @@ Deno.serve(async (req) => {
         if (assignError) return new Response(JSON.stringify({ error: `Failed to auto-assign: ${assignError.message}` }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'ready', p_approved_at: new Date().toISOString(), p_approved_by: approved_by });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'ready', p_approved_at: new Date().toISOString(), p_approved_by: approved_by, p_started_at: null, p_completed_at: null, p_summary: null });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -524,7 +537,29 @@ Deno.serve(async (req) => {
       }
 
       await logPhase(supabase, work_order_id, "approved", "metis", { approved_by });
-      return new Response(JSON.stringify({ approved: true, work_order: data, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+
+      // WO-0240: Atomic approve-and-start — immediately transition ready→in_progress
+      // Determine agent name for start_work_order
+      let agentNameForStart = 'ilmarinen'; // default
+      if (wo.assigned_to) {
+        const { data: agentData } = await supabase.from('agents').select('name').eq('id', wo.assigned_to).single();
+        if (agentData?.name) agentNameForStart = agentData.name;
+      }
+      try {
+        const { data: startResult, error: startError } = await supabase.rpc('start_work_order', {
+          p_work_order_id: work_order_id,
+          p_agent_name: agentNameForStart
+        });
+        if (startError) {
+          console.error('[APPROVE] Auto-start failed:', startError.message);
+          // Approval succeeded but start failed — return approval success with warning
+          return new Response(JSON.stringify({ approved: true, started: false, start_error: startError.message, work_order: data, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+        }
+        return new Response(JSON.stringify({ approved: true, started: true, work_order: startResult, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      } catch (startErr: any) {
+        console.error('[APPROVE] Auto-start exception:', startErr.message);
+        return new Response(JSON.stringify({ approved: true, started: false, start_error: startErr.message, work_order: data, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      }
     }
 
     if (req.method === "POST" && action === "claim") {
@@ -570,6 +605,9 @@ Deno.serve(async (req) => {
             await supabase.rpc('update_work_order_state', {
               p_work_order_id: work_order_id,
               p_status: 'done',
+              p_approved_at: null,
+              p_approved_by: null,
+              p_started_at: null,
               p_completed_at: new Date().toISOString(),
               p_summary: msg
             });
@@ -593,7 +631,7 @@ Deno.serve(async (req) => {
           try {
             const refinement = await refineStaleness(supabase, work_order_id, freshnessCheck.stale_details);
             if (refinement.decision === 'deprecate') {
-              await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_summary: `Auto-deprecated: ${refinement.reason}` });
+              await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Auto-deprecated: ${refinement.reason}` });
               return new Response(JSON.stringify(buildStructuredError('ERR_WO_STALE', `Deprecated: ${refinement.reason}`, { deprecated: true })), { status: 410, headers: {...corsHeaders,"Content-Type":"application/json"} });
             }
             if (refinement.decision === 'refine') {
@@ -613,7 +651,12 @@ Deno.serve(async (req) => {
         // Transition WO to pending_approval status so it's visible in portal
         await supabase.rpc('update_work_order_state', {
           p_work_order_id: work_order_id,
-          p_status: 'pending_approval'
+          p_status: 'pending_approval',
+          p_approved_at: null,
+          p_approved_by: null,
+          p_started_at: null,
+          p_completed_at: null,
+          p_summary: null
         });
 
         await logPhase(supabase, work_order_id, "gate_blocked", "ilmarinen", {
@@ -630,7 +673,7 @@ Deno.serve(async (req) => {
       try { const { data: traceData } = await supabase.rpc('start_wo_trace', { p_work_order_id: work_order_id, p_session_id: session_id || headers['x-session-id'] || null }); woTraceId = traceData; }
       catch (traceErr) { console.error('[TRACE] Failed:', traceErr); }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_started_at: new Date().toISOString() });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_approved_at: null, p_approved_by: null, p_started_at: new Date().toISOString(), p_completed_at: null, p_summary: null });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -666,7 +709,7 @@ Deno.serve(async (req) => {
       }
 
       const newStatus = wo?.requires_approval ? "review" : "done";
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: newStatus, p_completed_at: new Date().toISOString(), p_summary: summary });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: newStatus, p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: summary });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -717,7 +760,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done' });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: null });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -743,6 +786,17 @@ Deno.serve(async (req) => {
         .select("id, slug, name, status, qa_checklist, objective, acceptance_criteria, summary, client_info, tags, last_qa_run_at")
         .eq("id", work_order_id).single();
       if (woError || !wo) return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Work order not found')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
+
+      // v60: AC1 — Skip gracefully if WO already done/cancelled (race condition fix for WO-0234)
+      if (wo.status === 'done' || wo.status === 'cancelled') {
+        await logPhase(supabase, work_order_id, "auto-qa-skipped", "qa-gate", {
+          reason: 'stale_evaluation',
+          current_status: wo.status,
+          slug: wo.slug,
+          message: 'WO already completed before async auto-QA arrived'
+        });
+        return new Response(JSON.stringify({ skipped: true, reason: 'already_completed', current_status: wo.status }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      }
 
       if (wo.status !== 'review') {
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_INVALID_STATUS', `Not in review (current: ${wo.status})`), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -943,6 +997,23 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_QA_VALIDATION_FAILED', 'Failed to parse QA evaluation response'), all_pass: false, accepted: false }), { status: 502, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
+      // v60: AC2 — Re-check WO status before writing findings (race condition fix for WO-0234)
+      // If WO transitioned to done/cancelled during LLM evaluation, skip writing findings
+      const { data: freshWo } = await supabase.from("work_orders")
+        .select("status, slug")
+        .eq("id", work_order_id)
+        .single();
+
+      if (freshWo && (freshWo.status === 'done' || freshWo.status === 'cancelled')) {
+        await logPhase(supabase, work_order_id, "auto-qa-skipped", "qa-gate", {
+          reason: 'status_changed_during_evaluation',
+          current_status: freshWo.status,
+          slug: freshWo.slug,
+          message: 'WO completed during LLM evaluation, skipping findings'
+        });
+        return new Response(JSON.stringify({ skipped: true, reason: 'status_changed_during_evaluation', current_status: freshWo.status }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
+      }
+
       const failures: any[] = [];
       let itemsEvaluated = 0;
 
@@ -981,7 +1052,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
 
       let accepted = false;
       if (allPass && itemsEvaluated > 0) {
-        const { data: acceptData, error: acceptError } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done' });
+        const { data: acceptData, error: acceptError } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: null });
         if (!acceptError && !(acceptData?.error)) {
           accepted = true;
           await logPhase(supabase, work_order_id, "completing", "qa-gate", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug, model: 'sonnet-4.5' });
@@ -1013,6 +1084,10 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
             await supabase.rpc('update_work_order_state', {
               p_work_order_id: work_order_id,
               p_status: 'failed',
+              p_approved_at: null,
+              p_approved_by: null,
+              p_started_at: null,
+              p_completed_at: new Date().toISOString(),
               p_summary: `Remediation sub-WO failed auto-QA: ${failures.map((f: any) => f.id + ': ' + f.reason).join('; ').slice(0, 500)}`
             });
             // Trigger parent circuit breaker check by calling createRemediationWO on parent
@@ -1064,7 +1139,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         const refinement = await refineStaleness(supabase, work_order_id, freshnessCheck.stale_details);
 
         if (refinement.decision === 'deprecate') {
-          await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_summary: `Auto-deprecated: ${refinement.reason}` });
+          await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Auto-deprecated: ${refinement.reason}` });
           await logPhase(supabase, work_order_id, "deprecated", "ilmarinen", { reason: refinement.reason });
         } else if (refinement.decision === 'refine') {
           const { data: wo } = await supabase.from('work_orders').select('client_info').eq('id', work_order_id).single();
@@ -1119,7 +1194,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       let consolidated = 0;
       const errors: string[] = [];
       for (const secId of secondaryIds) {
-        const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: secId, p_status: 'cancelled', p_summary: `Consolidated into ${primary_id}: ${reason || 'Duplicate'}` });
+        const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: secId, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Consolidated into ${primary_id}: ${reason || 'Duplicate'}` });
         if (error) { errors.push(`${secId}: ${error.message}`); }
         else if (data?.error) { errors.push(`${secId}: ${data.error}`); }
         else { consolidated++; }
@@ -1140,7 +1215,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         return new Response(JSON.stringify(err), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_summary: `Rejected: ${reason || 'Needs changes'}` });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: null, p_summary: `Rejected: ${reason || 'Needs changes'}` });
       if (error) throw error;
       if (data && data.error) {
         const errorCode = data.errors?.[0]?.code || 'ERR_TRANSITION_REJECTED';
@@ -1160,7 +1235,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
 
       await checkAndTripCircuitBreaker(supabase, work_order_id);
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'failed', p_summary: reason });
+      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'failed', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: reason });
       if (error) throw error;
       if (data && data.error) {
         const errorCode = data.errors?.[0]?.code || 'ERR_TRANSITION_REJECTED';
@@ -1245,7 +1320,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       const handlers = ["approve", "claim", "complete", "accept", "reject", "fail", "auto-qa", "refine-stale", "consolidate", "phase", "rollback", "reprioritize", "poll", "status", "logs", "manifest"];
 
       return new Response(JSON.stringify({
-        status: "operational", version: "v53",
+        status: "operational", version: "v60",
         handler_count: handlers.length,
         handlers,
         counts: { total: totalWOs, active: activeWOs, done: doneWOs },
@@ -1449,7 +1524,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         skipped_cooldown: false,
         trigger,
         rank_changes: rankChanges,
-        version: "v53"
+        version: "v60"
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 

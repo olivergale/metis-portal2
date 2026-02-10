@@ -139,11 +139,19 @@ export async function handleMarkComplete(
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review' WHERE id = '${ctx.workOrderId}' AND status = 'in_progress';`,
       });
     } else {
-      await ctx.supabase.rpc("update_work_order_state", {
+      // WO-0236: Correct 7-param RPC signature
+      const { error: rpcErr } = await ctx.supabase.rpc("update_work_order_state", {
         p_work_order_id: ctx.workOrderId,
-        p_new_status: "review",
-        p_actor: ctx.agentName,
+        p_status: "review",
+        p_approved_at: null,
+        p_approved_by: null,
+        p_started_at: null,
+        p_completed_at: null,
+        p_summary: summary + overlapWarning,
       });
+      if (rpcErr) {
+        return { success: false, error: `mark_complete state transition failed: ${rpcErr.message}` };
+      }
     }
 
     // Check if this is a remediation WO — propagate evidence to parent
@@ -214,13 +222,19 @@ export async function handleMarkFailed(
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${reason.replace(/'/g, "''")}' WHERE id = '${ctx.workOrderId}';`,
       });
     } else {
-      // Set summary first, then transition
-      await ctx.supabase.from("work_orders").update({ summary: reason }).eq("id", ctx.workOrderId);
-      await ctx.supabase.rpc("update_work_order_state", {
+      // WO-0236: Correct 7-param RPC signature (summary set via RPC param)
+      const { error: rpcErr } = await ctx.supabase.rpc("update_work_order_state", {
         p_work_order_id: ctx.workOrderId,
-        p_new_status: "failed",
-        p_actor: ctx.agentName,
+        p_status: "failed",
+        p_approved_at: null,
+        p_approved_by: null,
+        p_started_at: null,
+        p_completed_at: new Date().toISOString(),
+        p_summary: reason,
       });
+      if (rpcErr) {
+        return { success: false, error: `mark_failed state transition failed: ${rpcErr.message}` };
+      }
     }
 
     return { success: true, data: "Work order marked as failed", terminal: true };
@@ -331,11 +345,15 @@ export async function handleTransitionState(
       await ctx.supabase.from("work_orders").update({ summary }).eq("id", woId);
     }
 
-    // Use the enforcement RPC — no bypass
+    // WO-0236: Correct 7-param RPC signature
     const { error } = await ctx.supabase.rpc("update_work_order_state", {
       p_work_order_id: woId,
-      p_new_status: new_status,
-      p_actor: ctx.agentName,
+      p_status: new_status,
+      p_approved_at: null,
+      p_approved_by: null,
+      p_started_at: null,
+      p_completed_at: new_status === "failed" ? new Date().toISOString() : null,
+      p_summary: summary || null,
     });
 
     if (error) {
