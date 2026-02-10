@@ -1,38 +1,10 @@
 // wo-agent/tool-handlers/github.ts
-// GitHub tools: read_file, write_file, list_files, create_branch, create_pr
+// GitHub tools: read_file, write_file, edit_file (WO-0257), list_files, create_branch, create_pr (WO-0302)
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "Endgame-WO-Agent";
-
-/**
- * Log error to error_events table for centralized error tracking
- * WO-0266: Silent failure detection
- */
-async function logError(
-  ctx: ToolContext,
-  severity: string,
-  sourceFunction: string,
-  errorCode: string,
-  message: string,
-  context: Record<string, any> = {}
-): Promise<void> {
-  try {
-    await ctx.supabase.rpc("log_error_event", {
-      p_severity: severity,
-      p_source_function: sourceFunction,
-      p_error_code: errorCode,
-      p_message: message,
-      p_context: context,
-      p_work_order_id: ctx.workOrderId,
-      p_agent_id: null,
-    });
-  } catch (e: any) {
-    // Silent failure in error logging - don't cascade
-    console.error(`[ERROR_LOG] Failed to log error: ${e.message}`);
-  }
-}
 
 async function getGitHubToken(supabase: any): Promise<string | null> {
   try {
@@ -79,15 +51,11 @@ export async function handleGithubReadFile(
     );
 
     if (resp.status === 404) {
-      const errorMsg = `File not found: ${repo}/${path} (branch: ${ref})`;
-      await logError(ctx, "warning", "wo-agent/github_read_file", "FILE_NOT_FOUND", errorMsg, { repo, path, branch: ref });
-      return { success: false, error: errorMsg };
+      return { success: false, error: `File not found: ${repo}/${path} (branch: ${ref})` };
     }
     if (!resp.ok) {
       const errText = await resp.text();
-      const errorMsg = `GitHub API error ${resp.status}: ${errText}`;
-      await logError(ctx, "error", "wo-agent/github_read_file", "GITHUB_API_ERROR", errorMsg, { repo, path, branch: ref, status: resp.status });
-      return { success: false, error: errorMsg };
+      return { success: false, error: `GitHub API error ${resp.status}: ${errText}` };
     }
 
     const data = await resp.json();
@@ -101,9 +69,7 @@ export async function handleGithubReadFile(
       data: { content: limited, sha: data.sha, size: data.size, path: data.path },
     };
   } catch (e: any) {
-    const errorMsg = `github_read_file exception: ${e.message}`;
-    await logError(ctx, "error", "wo-agent/github_read_file", "EXCEPTION", errorMsg, { repo, path });
-    return { success: false, error: errorMsg };
+    return { success: false, error: `github_read_file exception: ${e.message}` };
   }
 }
 
@@ -154,9 +120,7 @@ export async function handleGithubWriteFile(
 
     if (!resp.ok) {
       const errText = await resp.text();
-      const errorMsg = `GitHub write error ${resp.status}: ${errText}`;
-      await logError(ctx, "error", "wo-agent/github_write_file", "WRITE_FAILED", errorMsg, { repo, path, status: resp.status });
-      return { success: false, error: errorMsg };
+      return { success: false, error: `GitHub write error ${resp.status}: ${errText}` };
     }
 
     const result = await resp.json();
@@ -169,9 +133,83 @@ export async function handleGithubWriteFile(
       },
     };
   } catch (e: any) {
-    const errorMsg = `github_write_file exception: ${e.message}`;
-    await logError(ctx, "error", "wo-agent/github_write_file", "EXCEPTION", errorMsg, { repo, path });
-    return { success: false, error: errorMsg };
+    return { success: false, error: `github_write_file exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubEditFile(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, old_string, new_string, message, branch } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!path || old_string === undefined || new_string === undefined) {
+    return { success: false, error: "Missing required parameters: path, old_string, new_string" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = branch || "main";
+
+    // 1. Read current file
+    const readResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!readResp.ok) {
+      const errText = await readResp.text();
+      return { success: false, error: `Cannot read ${path}: ${readResp.status} ${errText}` };
+    }
+
+    const fileData = await readResp.json();
+    const currentContent = atob(fileData.content.replace(/\n/g, ""));
+    const sha = fileData.sha;
+
+    // 2. Verify old_string exists and is unique
+    const idx = currentContent.indexOf(old_string);
+    if (idx === -1) {
+      return { success: false, error: `old_string not found in ${path}. Ensure exact match including whitespace.` };
+    }
+    const lastIdx = currentContent.lastIndexOf(old_string);
+    if (idx !== lastIdx) {
+      return { success: false, error: `old_string appears multiple times in ${path}. Provide a more unique string.` };
+    }
+
+    // 3. Replace
+    const updatedContent = currentContent.replace(old_string, new_string);
+
+    // 4. Write back
+    const encodedContent = btoa(unescape(encodeURIComponent(updatedContent)));
+    const commitMsg = message || `Edit ${path} via github_edit_file`;
+
+    const writeResp = await fetch(`${GITHUB_API}/repos/${repo}/contents/${path}`, {
+      method: "PUT",
+      headers: githubHeaders(token),
+      body: JSON.stringify({ message: commitMsg, content: encodedContent, sha, branch: ref }),
+    });
+
+    if (!writeResp.ok) {
+      const errText = await writeResp.text();
+      return { success: false, error: `GitHub write error ${writeResp.status}: ${errText}` };
+    }
+
+    const result = await writeResp.json();
+    return {
+      success: true,
+      data: {
+        commit_sha: result.commit?.sha,
+        html_url: result.content?.html_url,
+        message: `Edited ${path} in ${repo} (replaced ${old_string.length} chars with ${new_string.length} chars)`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_edit_file exception: ${e.message}` };
   }
 }
 
@@ -197,31 +235,25 @@ export async function handleGithubListFiles(
       { headers: githubHeaders(token) }
     );
 
-    if (resp.status === 404) {
-      return { success: false, error: `Path not found: ${repo}/${dirPath} (branch: ${ref})` };
-    }
     if (!resp.ok) {
       const errText = await resp.text();
       return { success: false, error: `GitHub API error ${resp.status}: ${errText}` };
     }
 
     const data = await resp.json();
-    
-    // Handle both file and directory responses
-    if (Array.isArray(data)) {
-      // Directory listing
-      const items = data.map((item: any) => ({
-        name: item.name,
-        path: item.path,
-        type: item.type,
-        size: item.size,
-        sha: item.sha,
-      }));
-      return { success: true, data: { items, count: items.length, path: dirPath } };
-    } else {
-      // Single file
-      return { success: true, data: { items: [{ name: data.name, path: data.path, type: data.type, size: data.size, sha: data.sha }], count: 1, path: dirPath } };
+    if (!Array.isArray(data)) {
+      return { success: false, error: `Path is a file, not a directory: ${dirPath}` };
     }
+
+    const items = data.map((item: any) => ({
+      name: item.name,
+      path: item.path,
+      type: item.type,
+      size: item.size,
+      sha: item.sha,
+    }));
+
+    return { success: true, data: { path: dirPath, items, count: items.length } };
   } catch (e: any) {
     return { success: false, error: `github_list_files exception: ${e.message}` };
   }
@@ -242,49 +274,36 @@ export async function handleGithubCreateBranch(
   }
 
   try {
-    const baseBranch = from_branch || "main";
-
-    // Get the SHA of the base branch
+    const base = from_branch || "main";
+    // Get SHA of base branch
     const refResp = await fetch(
-      `${GITHUB_API}/repos/${repo}/git/ref/heads/${baseBranch}`,
+      `${GITHUB_API}/repos/${repo}/git/ref/heads/${base}`,
       { headers: githubHeaders(token) }
     );
 
     if (!refResp.ok) {
       const errText = await refResp.text();
-      return { success: false, error: `Failed to get base branch SHA: ${errText}` };
+      return { success: false, error: `Cannot find base branch '${base}': ${refResp.status} ${errText}` };
     }
 
     const refData = await refResp.json();
     const sha = refData.object.sha;
 
-    // Create the new branch
-    const createResp = await fetch(
-      `${GITHUB_API}/repos/${repo}/git/refs`,
-      {
-        method: "POST",
-        headers: githubHeaders(token),
-        body: JSON.stringify({
-          ref: `refs/heads/${branch}`,
-          sha: sha,
-        }),
-      }
-    );
+    // Create new branch
+    const createResp = await fetch(`${GITHUB_API}/repos/${repo}/git/refs`, {
+      method: "POST",
+      headers: githubHeaders(token),
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+    });
 
     if (!createResp.ok) {
       const errText = await createResp.text();
-      return { success: false, error: `Failed to create branch: ${errText}` };
+      return { success: false, error: `Failed to create branch: ${createResp.status} ${errText}` };
     }
 
-    const result = await createResp.json();
     return {
       success: true,
-      data: {
-        branch: branch,
-        sha: result.object.sha,
-        from_branch: baseBranch,
-        message: `Created branch ${branch} from ${baseBranch}`,
-      },
+      data: { branch, from_branch: base, sha, message: `Created branch '${branch}' from '${base}'` },
     };
   } catch (e: any) {
     return { success: false, error: `github_create_branch exception: ${e.message}` };
@@ -306,36 +325,30 @@ export async function handleGithubCreatePr(
   }
 
   try {
-    const baseBranch = base || "main";
-
-    const resp = await fetch(
-      `${GITHUB_API}/repos/${repo}/pulls`,
-      {
-        method: "POST",
-        headers: githubHeaders(token),
-        body: JSON.stringify({
-          title: title,
-          head: head,
-          base: baseBranch,
-          body: body || "",
-        }),
-      }
-    );
+    const resp = await fetch(`${GITHUB_API}/repos/${repo}/pulls`, {
+      method: "POST",
+      headers: githubHeaders(token),
+      body: JSON.stringify({
+        title,
+        body: body || "",
+        head,
+        base: base || "main",
+      }),
+    });
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return { success: false, error: `Failed to create PR: ${errText}` };
+      return { success: false, error: `Failed to create PR: ${resp.status} ${errText}` };
     }
 
-    const result = await resp.json();
+    const pr = await resp.json();
     return {
       success: true,
       data: {
-        pr_number: result.number,
-        html_url: result.html_url,
-        state: result.state,
-        title: result.title,
-        message: `Created PR #${result.number}: ${title}`,
+        pr_number: pr.number,
+        html_url: pr.html_url,
+        state: pr.state,
+        message: `Created PR #${pr.number}: ${title}`,
       },
     };
   } catch (e: any) {

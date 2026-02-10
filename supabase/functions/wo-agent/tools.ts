@@ -543,10 +543,11 @@ export const TOOL_DEFINITIONS: Tool[] = [
 
 // Tool categories for filtering
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
-const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state"];
+const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file"];
+const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file", "github_list_files", "github_create_branch", "github_create_pr"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
+const WEB_TOOLS = ["web_fetch"];
 
 /**
  * Return filtered tool list based on WO tags AND agent role (tools_allowed).
@@ -646,6 +647,16 @@ export async function dispatchTool(
       return handleDelegateSubtask(toolInput, ctx);
     case "check_child_status":
       return handleCheckChildStatus(toolInput, ctx);
+    case "web_fetch":
+      return handleWebFetch(toolInput, ctx);
+    case "github_list_files":
+      return handleGithubListFiles(toolInput, ctx);
+    case "github_create_branch":
+      return handleGithubCreateBranch(toolInput, ctx);
+    case "github_create_pr":
+      return handleGithubCreatePr(toolInput, ctx);
+    case "search_knowledge_base":
+      return handleSearchKnowledgeBase(toolInput, ctx);
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }
