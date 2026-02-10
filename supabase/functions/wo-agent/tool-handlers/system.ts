@@ -4,6 +4,34 @@
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
+/**
+ * Log error to error_events table for centralized error tracking
+ * WO-0266: Silent failure detection
+ */
+async function logError(
+  ctx: ToolContext,
+  severity: string,
+  sourceFunction: string,
+  errorCode: string,
+  message: string,
+  context: Record<string, any> = {}
+): Promise<void> {
+  try {
+    await ctx.supabase.rpc("log_error_event", {
+      p_severity: severity,
+      p_source_function: sourceFunction,
+      p_error_code: errorCode,
+      p_message: message,
+      p_context: context,
+      p_work_order_id: ctx.workOrderId,
+      p_agent_id: null,
+    });
+  } catch (e: any) {
+    // Silent failure in error logging - don't cascade
+    console.error(`[ERROR_LOG] Failed to log error: ${e.message}`);
+  }
+}
+
 export async function handleLogProgress(
   input: Record<string, any>,
   ctx: ToolContext
@@ -132,7 +160,7 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review Ã¢ÂÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to review ÃÂ¢ÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER = new Set(["ilmarinen"]);
     if (MASTER.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -154,7 +182,7 @@ export async function handleMarkComplete(
       }
     }
 
-    // Check if this is a remediation WO Ã¢ÂÂ propagate evidence to parent
+    // Check if this is a remediation WO ÃÂ¢ÃÂÃÂ propagate evidence to parent
     const { data: wo } = await ctx.supabase
       .from("work_orders")
       .select("tags")
@@ -215,7 +243,7 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed Ã¢ÂÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to failed ÃÂ¢ÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER_FAIL = new Set(["ilmarinen"]);
     if (MASTER_FAIL.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -317,7 +345,7 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
-    return { success: true, data: `Checklist item ${checklist_item_id} Ã¢ÂÂ ${status}` };
+    return { success: true, data: `Checklist item ${checklist_item_id} ÃÂ¢ÃÂÃÂ ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
   }
@@ -325,7 +353,7 @@ export async function handleUpdateQaChecklist(
 
 /**
  * WO-0186: Transition a WO status via the enforcement layer (no bypass).
- * Safe for all agents Ã¢ÂÂ goes through update_work_order_state() RPC.
+ * Safe for all agents ÃÂ¢ÃÂÃÂ goes through update_work_order_state() RPC.
  */
 export async function handleTransitionState(
   input: Record<string, any>,
