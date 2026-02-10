@@ -154,7 +154,9 @@ export async function handleGithubWriteFile(
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return { success: false, error: `GitHub write error ${resp.status}: ${errText}` };
+      const errorMsg = `GitHub write error ${resp.status}: ${errText}`;
+      await logError(ctx, "error", "wo-agent/github_write_file", "WRITE_FAILED", errorMsg, { repo, path, status: resp.status });
+      return { success: false, error: errorMsg };
     }
 
     const result = await resp.json();
