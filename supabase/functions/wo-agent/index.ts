@@ -37,6 +37,8 @@ Deno.serve(async (req: Request) => {
     switch (action) {
       case "execute":
         return await handleExecute(req);
+      case "execute-batch":
+        return await handleExecuteBatch(req);
       case "status":
         return await handleStatus(req);
       case "health-check":
@@ -93,7 +95,7 @@ async function handleExecute(req: Request): Promise<Response> {
     );
   }
 
-  // WO-0155: Guard against orphaned remediation WOs — if parent is already done, auto-complete
+  // WO-0155: Guard against orphaned remediation WOs â if parent is already done, auto-complete
   const tags: string[] = wo.tags || [];
   if (tags.includes("remediation")) {
     const parentTag = tags.find((t: string) => t.startsWith("parent:"));
@@ -106,7 +108,7 @@ async function handleExecute(req: Request): Promise<Response> {
         .single();
 
       if (parentWo && parentWo.status === "done") {
-        const msg = `Parent ${parentSlug} already completed — remediation unnecessary`;
+        const msg = `Parent ${parentSlug} already completed â remediation unnecessary`;
         console.log(`[WO-AGENT] ${wo.slug}: ${msg}`);
 
         // Log and auto-complete
@@ -119,7 +121,7 @@ async function handleExecute(req: Request): Promise<Response> {
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
         });
-        // Immediately complete (skip QA — nothing to evaluate)
+        // Immediately complete (skip QA â nothing to evaluate)
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
         });
@@ -146,7 +148,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .single();
     githubToken = data?.value || null;
   } catch {
-    // GitHub token not available — GitHub tools will fail gracefully
+    // GitHub token not available â GitHub tools will fail gracefully
   }
 
   // Build agent context
@@ -161,7 +163,7 @@ async function handleExecute(req: Request): Promise<Response> {
     agentName: agentContext.agentName,
   };
 
-  // WO-0187: Check for continuation — if there's a recent checkpoint, build continuation context
+  // WO-0187: Check for continuation â if there's a recent checkpoint, build continuation context
   let finalUserMessage = agentContext.userMessage;
   const { data: checkpoint } = await supabase
     .from("work_order_execution_log")
@@ -181,7 +183,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 5) {
-      // Circuit breaker — too many continuations
+      // Circuit breaker â too many continuations
       const msg = `Exceeded continuation budget (${checkpointCount} checkpoints). Marking failed.`;
       await supabase.from("work_order_execution_log").insert({
         work_order_id: wo.id,
@@ -197,7 +199,7 @@ async function handleExecute(req: Request): Promise<Response> {
 
     // Build continuation context
     const cp = checkpoint.detail;
-    finalUserMessage = `# CONTINUATION — Work Order: ${wo.slug}\n\n`;
+    finalUserMessage = `# CONTINUATION â Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
     finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
     finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
@@ -246,7 +248,7 @@ async function handleExecute(req: Request): Promise<Response> {
           body := jsonb_build_object('work_order_id', '${wo.id}')
         );`,
       });
-      console.log(`[WO-AGENT] ${wo.slug} checkpointed — self-reinvoke queued`);
+      console.log(`[WO-AGENT] ${wo.slug} checkpointed â self-reinvoke queued`);
     } catch (e: any) {
       console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
     }
@@ -341,7 +343,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
       .limit(1);
 
     if (!recentLog || recentLog.length === 0) {
-      // No heartbeat in 10 min — mark as failed (AC1: never overwrite summary)
+      // No heartbeat in 10 min â mark as failed (AC1: never overwrite summary)
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
       });
@@ -434,7 +436,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
     const attempts = count || 0;
 
     if (attempts >= 3) {
-      // Tag with no-retry for human attention — no state change
+      // Tag with no-retry for human attention â no state change
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'no-retry') WHERE id = '${wo.id}';`,
       });
