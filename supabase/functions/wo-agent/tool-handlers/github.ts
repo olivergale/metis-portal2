@@ -136,3 +136,171 @@ export async function handleGithubWriteFile(
     return { success: false, error: `github_write_file exception: ${e.message}` };
   }
 }
+
+export async function handleGithubListFiles(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { repo, path, branch } = input;
+  if (!repo) {
+    return { success: false, error: "Missing required parameter: repo" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = branch || "main";
+    const dirPath = path || "";
+    const resp = await fetch(
+      `${GITHUB_API}/repos/${repo}/contents/${dirPath}?ref=${ref}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (resp.status === 404) {
+      return { success: false, error: `Path not found: ${repo}/${dirPath} (branch: ${ref})` };
+    }
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub API error ${resp.status}: ${errText}` };
+    }
+
+    const data = await resp.json();
+    
+    // Handle both file and directory responses
+    if (Array.isArray(data)) {
+      // Directory listing
+      const items = data.map((item: any) => ({
+        name: item.name,
+        path: item.path,
+        type: item.type,
+        size: item.size,
+        sha: item.sha,
+      }));
+      return { success: true, data: { items, count: items.length, path: dirPath } };
+    } else {
+      // Single file
+      return { success: true, data: { items: [{ name: data.name, path: data.path, type: data.type, size: data.size, sha: data.sha }], count: 1, path: dirPath } };
+    }
+  } catch (e: any) {
+    return { success: false, error: `github_list_files exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubCreateBranch(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { repo, branch, from_branch } = input;
+  if (!repo || !branch) {
+    return { success: false, error: "Missing required parameters: repo, branch" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const baseBranch = from_branch || "main";
+
+    // Get the SHA of the base branch
+    const refResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/ref/heads/${baseBranch}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!refResp.ok) {
+      const errText = await refResp.text();
+      return { success: false, error: `Failed to get base branch SHA: ${errText}` };
+    }
+
+    const refData = await refResp.json();
+    const sha = refData.object.sha;
+
+    // Create the new branch
+    const createResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/refs`,
+      {
+        method: "POST",
+        headers: githubHeaders(token),
+        body: JSON.stringify({
+          ref: `refs/heads/${branch}`,
+          sha: sha,
+        }),
+      }
+    );
+
+    if (!createResp.ok) {
+      const errText = await createResp.text();
+      return { success: false, error: `Failed to create branch: ${errText}` };
+    }
+
+    const result = await createResp.json();
+    return {
+      success: true,
+      data: {
+        branch: branch,
+        sha: result.object.sha,
+        from_branch: baseBranch,
+        message: `Created branch ${branch} from ${baseBranch}`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_create_branch exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubCreatePr(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { repo, head, base, title, body } = input;
+  if (!repo || !head || !title) {
+    return { success: false, error: "Missing required parameters: repo, head, title" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const baseBranch = base || "main";
+
+    const resp = await fetch(
+      `${GITHUB_API}/repos/${repo}/pulls`,
+      {
+        method: "POST",
+        headers: githubHeaders(token),
+        body: JSON.stringify({
+          title: title,
+          head: head,
+          base: baseBranch,
+          body: body || "",
+        }),
+      }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `Failed to create PR: ${errText}` };
+    }
+
+    const result = await resp.json();
+    return {
+      success: true,
+      data: {
+        pr_number: result.number,
+        html_url: result.html_url,
+        state: result.state,
+        title: result.title,
+        message: `Created PR #${result.number}: ${title}`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_create_pr exception: ${e.message}` };
+  }
+}
