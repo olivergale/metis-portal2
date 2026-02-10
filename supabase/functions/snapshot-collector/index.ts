@@ -64,15 +64,36 @@ Deno.serve(async (req) => {
     ]);
 
     // Parse results
-    const woData = woStats.data?.[0] || {};
-    const qaData = qaStats.data?.[0] || {};
+    const woTotal = woStats.count || 0;
+    const woDone = woStats.data?.filter((w: any) => w.status === 'done').length || 0;
+    const woCancelled = woStats.data?.filter((w: any) => w.status === 'cancelled').length || 0;
+    const woInFlight = woStats.data?.filter((w: any) => 
+      ['in_progress', 'review', 'pending_approval', 'ready'].includes(w.status)
+    ).length || 0;
+    
+    const qaTotal = qaStats.count || 0;
+    const qaPass = qaStats.data?.filter((q: any) => q.category === 'pass').length || 0;
+    const qaFail = qaStats.data?.filter((q: any) => q.category === 'fail').length || 0;
+    
     const verificationCount = verificationStats.count || 0;
-    const enforcerData = enforcerStats.data?.[0] || {};
-    const lessonData = lessonStats.data?.[0] || {};
-    const autoApprovalData = autoApprovalStats.data?.[0] || {};
-    const edgeFunctionData = edgeFunctionStats.data?.[0] || {};
-    const tokenData = tokenStats.data?.[0] || {};
-    const deadTablesData = deadTables.data?.[0] || {};
+    
+    // Count unique enforcer run IDs
+    const uniqueRunIds = new Set(enforcerRuns.data?.map((r: any) => r.enforcer_run_id) || []);
+    const enforcerRunsTotal = uniqueRunIds.size;
+    const enforcerFindingsTotal = enforcerFindings.count || 0;
+    
+    const lessonsTotal = lessonStats.count || 0;
+    const lessonsApplied = lessonStats.data?.filter((l: any) => l.promoted_at !== null).length || 0;
+    
+    const autoApprovalAttempted = autoApprovalStats.count || 0;
+    const autoApprovalSucceeded = autoApprovalStats.data?.filter((a: any) => a.approved_at !== null).length || 0;
+    
+    const edgeFunctionsTotal = edgeFunctionStats.count || 0;
+    const edgeFunctionsJwtEnabled = edgeFunctionStats.data?.filter((e: any) => 
+      e.config?.jwt_enabled === true
+    ).length || 0;
+    
+    const deadTablesCount = typeof deadTablesResult.data === 'number' ? deadTablesResult.data : 0;
 
     // Calculate percentages
     const woCancelRate = woData.wo_total > 0 
