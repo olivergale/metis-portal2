@@ -95,7 +95,7 @@ async function handleExecute(req: Request): Promise<Response> {
     );
   }
 
-  // WO-0155: Guard against orphaned remediation WOs â if parent is already done, auto-complete
+  // WO-0155: Guard against orphaned remediation WOs Ã¢ÂÂ if parent is already done, auto-complete
   const tags: string[] = wo.tags || [];
   if (tags.includes("remediation")) {
     const parentTag = tags.find((t: string) => t.startsWith("parent:"));
@@ -108,7 +108,7 @@ async function handleExecute(req: Request): Promise<Response> {
         .single();
 
       if (parentWo && parentWo.status === "done") {
-        const msg = `Parent ${parentSlug} already completed â remediation unnecessary`;
+        const msg = `Parent ${parentSlug} already completed Ã¢ÂÂ remediation unnecessary`;
         console.log(`[WO-AGENT] ${wo.slug}: ${msg}`);
 
         // Log and auto-complete
@@ -121,7 +121,7 @@ async function handleExecute(req: Request): Promise<Response> {
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
         });
-        // Immediately complete (skip QA â nothing to evaluate)
+        // Immediately complete (skip QA Ã¢ÂÂ nothing to evaluate)
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
         });
@@ -148,7 +148,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .single();
     githubToken = data?.value || null;
   } catch {
-    // GitHub token not available â GitHub tools will fail gracefully
+    // GitHub token not available Ã¢ÂÂ GitHub tools will fail gracefully
   }
 
   // Build agent context
@@ -163,7 +163,7 @@ async function handleExecute(req: Request): Promise<Response> {
     agentName: agentContext.agentName,
   };
 
-  // WO-0187: Check for continuation â if there's a recent checkpoint, build continuation context
+  // WO-0187: Check for continuation Ã¢ÂÂ if there's a recent checkpoint, build continuation context
   let finalUserMessage = agentContext.userMessage;
   const { data: checkpoint } = await supabase
     .from("work_order_execution_log")
@@ -183,7 +183,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 5) {
-      // Circuit breaker â too many continuations
+      // Circuit breaker Ã¢ÂÂ too many continuations
       const msg = `Exceeded continuation budget (${checkpointCount} checkpoints). Marking failed.`;
       await supabase.from("work_order_execution_log").insert({
         work_order_id: wo.id,
@@ -199,7 +199,7 @@ async function handleExecute(req: Request): Promise<Response> {
 
     // Build continuation context
     const cp = checkpoint.detail;
-    finalUserMessage = `# CONTINUATION â Work Order: ${wo.slug}\n\n`;
+    finalUserMessage = `# CONTINUATION Ã¢ÂÂ Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
     finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
     finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
@@ -248,7 +248,7 @@ async function handleExecute(req: Request): Promise<Response> {
           body := jsonb_build_object('work_order_id', '${wo.id}')
         );`,
       });
-      console.log(`[WO-AGENT] ${wo.slug} checkpointed â self-reinvoke queued`);
+      console.log(`[WO-AGENT] ${wo.slug} checkpointed Ã¢ÂÂ self-reinvoke queued`);
     } catch (e: any) {
       console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
     }
@@ -261,6 +261,152 @@ async function handleExecute(req: Request): Promise<Response> {
     turns: result.turns,
     summary: result.summary,
     tool_calls: result.toolCalls.length,
+  });
+}
+
+/**
+ * POST /execute-batch
+ * Execute a batch of work orders in parallel with dependency ordering
+ * Body: { batch_id: string }
+ */
+async function handleExecuteBatch(req: Request): Promise<Response> {
+  const body = await req.json();
+  const { batch_id } = body;
+
+  if (!batch_id) {
+    return jsonResponse({ error: "Missing batch_id" }, 400);
+  }
+
+  const sbUrl = Deno.env.get("SUPABASE_URL")!;
+  const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(sbUrl, sbKey);
+
+  // Start batch execution (validates and marks batch as in_progress)
+  const { data: startResult, error: startError } = await supabase.rpc(
+    "start_batch_execution",
+    { p_batch_id: batch_id }
+  );
+
+  if (startError || !startResult?.success) {
+    return jsonResponse(
+      {
+        error: `Failed to start batch: ${startError?.message || startResult?.error}`,
+      },
+      400
+    );
+  }
+
+  // Get batch details for parallel_slots
+  const { data: batch } = await supabase
+    .from("wo_batches")
+    .select("parallel_slots, execution_mode")
+    .eq("id", batch_id)
+    .single();
+
+  const parallelSlots = batch?.parallel_slots || 3;
+  const executionMode = batch?.execution_mode || "step";
+
+  console.log(
+    `[BATCH] Starting batch ${batch_id} in ${executionMode} mode with ${parallelSlots} parallel slots`
+  );
+
+  // Track execution state
+  const executedWOs: string[] = [];
+  const failedWOs: string[] = [];
+  let iterationCount = 0;
+  const maxIterations = 100; // Safety circuit breaker
+
+  // Execute WOs in waves until none remain
+  while (iterationCount < maxIterations) {
+    iterationCount++;
+
+    // Get dependency-ready WOs
+    const { data: readyWOs, error: readyError } = await supabase.rpc(
+      "get_batch_ready_wos",
+      { p_batch_id: batch_id }
+    );
+
+    if (readyError) {
+      console.error(`[BATCH] Error getting ready WOs:`, readyError);
+      break;
+    }
+
+    if (!readyWOs || readyWOs.length === 0) {
+      console.log(`[BATCH] No more ready WOs. Batch execution complete.`);
+      break;
+    }
+
+    console.log(
+      `[BATCH] Wave ${iterationCount}: ${readyWOs.length} WOs ready`
+    );
+
+    // Take up to parallel_slots WOs for this wave
+    const waveWOs = readyWOs.slice(0, parallelSlots);
+
+    // Start all WOs in this wave
+    const startPromises = waveWOs.map(async (wo: any) => {
+      try {
+        const { data: startWOResult } = await supabase.rpc("start_work_order", {
+          p_work_order_id: wo.work_order_id,
+          p_agent_name: "builder",
+        });
+
+        if (!startWOResult?.id) {
+          throw new Error(`Failed to start WO ${wo.slug}`);
+        }
+
+        // Self-invoke /execute for this WO
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+        const executeRes = await fetch(`${sbUrl}/functions/v1/wo-agent/execute`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${anonKey}`,
+            "apikey": anonKey,
+          },
+          body: JSON.stringify({ work_order_id: wo.work_order_id }),
+        });
+
+        const result = await executeRes.json();
+        
+        if (result.status === "completed" || result.status === "done") {
+          executedWOs.push(wo.slug);
+          return { success: true, slug: wo.slug };
+        } else {
+          failedWOs.push(wo.slug);
+          return { success: false, slug: wo.slug, error: result.error };
+        }
+      } catch (e: any) {
+        console.error(`[BATCH] Error executing ${wo.slug}:`, e.message);
+        failedWOs.push(wo.slug);
+        return { success: false, slug: wo.slug, error: e.message };
+      }
+    });
+
+    // Wait for all WOs in this wave to complete
+    await Promise.all(startPromises);
+
+    console.log(
+      `[BATCH] Wave ${iterationCount} complete: ${executedWOs.length} succeeded, ${failedWOs.length} failed`
+    );
+  }
+
+  // Complete batch execution
+  const summary = `Batch execution completed: ${executedWOs.length} WOs succeeded, ${failedWOs.length} failed across ${iterationCount} waves`;
+  
+  const { data: completeResult } = await supabase.rpc("complete_batch_execution", {
+    p_batch_id: batch_id,
+    p_summary: summary,
+  });
+
+  return jsonResponse({
+    batch_id,
+    execution_mode: executionMode,
+    waves: iterationCount,
+    executed: executedWOs.length,
+    failed: failedWOs.length,
+    summary,
+    completion_rate: completeResult?.completion_rate || 0,
   });
 }
 
@@ -343,7 +489,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
       .limit(1);
 
     if (!recentLog || recentLog.length === 0) {
-      // No heartbeat in 10 min â mark as failed (AC1: never overwrite summary)
+      // No heartbeat in 10 min Ã¢ÂÂ mark as failed (AC1: never overwrite summary)
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
       });
@@ -436,7 +582,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
     const attempts = count || 0;
 
     if (attempts >= 3) {
-      // Tag with no-retry for human attention â no state change
+      // Tag with no-retry for human attention Ã¢ÂÂ no state change
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'no-retry') WHERE id = '${wo.id}';`,
       });
