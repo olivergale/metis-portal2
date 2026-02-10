@@ -17,121 +17,50 @@ Deno.serve(async (req) => {
 
     console.log('Starting platform health snapshot collection...');
 
-    // Query all metrics in parallel
+    // Query all metrics in parallel using Supabase client directly
     const [
       woStats,
       qaStats,
       verificationStats,
-      enforcerStats,
+      enforcerRuns,
+      enforcerFindings,
       lessonStats,
       autoApprovalStats,
       edgeFunctionStats,
-      tokenStats,
-      deadTables
+      deadTablesResult
     ] = await Promise.all([
       // Work order statistics
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(*)::int as wo_total,
-            COUNT(*) FILTER (WHERE status = 'done')::int as wo_done,
-            COUNT(*) FILTER (WHERE status = 'cancelled')::int as wo_cancelled,
-            COUNT(*) FILTER (WHERE status IN ('in_progress', 'review', 'pending_approval', 'ready'))::int as wo_in_flight
-          FROM work_orders
-        `
-      }),
+      supabase.from('work_orders').select('status', { count: 'exact', head: false }),
       
       // QA findings statistics
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(*)::int as qa_findings_total,
-            COUNT(*) FILTER (WHERE category = 'pass')::int as qa_pass_count,
-            COUNT(*) FILTER (WHERE category = 'fail')::int as qa_fail_count
-          FROM qa_findings
-        `
-      }),
+      supabase.from('qa_findings').select('category', { count: 'exact', head: false }),
       
       // Verification statistics
       supabase.from('work_orders')
         .select('verification_status', { count: 'exact', head: true })
         .not('verification_status', 'is', null),
       
-      // Enforcer statistics
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(DISTINCT run_id)::int as enforcer_runs_total,
-            COUNT(*)::int as enforcer_findings_total
-          FROM enforcer_findings
-        `
-      }),
+      // Enforcer runs count
+      supabase.from('enforcer_findings').select('enforcer_run_id', { count: 'exact', head: false }),
+      
+      // Enforcer findings count
+      supabase.from('enforcer_findings').select('id', { count: 'exact', head: true }),
       
       // Lessons statistics
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(*)::int as lessons_total,
-            COUNT(*) FILTER (WHERE promoted_at IS NOT NULL)::int as lessons_applied
-          FROM lessons
-        `
-      }),
+      supabase.from('lessons').select('promoted_at', { count: 'exact', head: false }),
       
       // Auto-approval statistics
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(*)::int as auto_approval_attempted,
-            COUNT(*) FILTER (WHERE approved_at IS NOT NULL)::int as auto_approval_succeeded
-          FROM work_orders
-          WHERE requires_approval = false
-        `
-      }),
+      supabase.from('work_orders')
+        .select('approved_at', { count: 'exact', head: false })
+        .eq('requires_approval', false),
       
       // Edge function statistics (from system_manifest)
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COUNT(*)::int as edge_functions_total,
-            COUNT(*) FILTER (WHERE config->>'jwt_enabled' = 'true')::int as edge_functions_jwt_enabled
-          FROM system_manifest
-          WHERE component_type = 'edge_function'
-        `
-      }),
+      supabase.from('system_manifest')
+        .select('config', { count: 'exact', head: false })
+        .eq('component_type', 'edge_function'),
       
-      // Token consumption (from work_order_execution_log)
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT 
-            COALESCE(SUM((detail->>'tokens_used')::int), 0)::bigint as total_tokens,
-            COALESCE(SUM((detail->>'cost_usd')::numeric), 0)::numeric as total_cost
-          FROM work_order_execution_log
-          WHERE detail->>'tokens_used' IS NOT NULL
-        `
-      }),
-      
-      // Dead tables count (tables with 0 rows)
-      supabase.rpc('execute_sql', {
-        query: `
-          SELECT COUNT(*)::int as dead_tables_count
-          FROM (
-            SELECT schemaname, tablename
-            FROM pg_tables
-            WHERE schemaname = 'public'
-            AND tablename NOT LIKE 'pg_%'
-          ) t
-          LEFT JOIN LATERAL (
-            SELECT count(*) as row_count
-            FROM information_schema.tables
-            WHERE table_schema = t.schemaname AND table_name = t.tablename
-          ) rc ON true
-          WHERE NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = t.schemaname AND table_name = t.tablename
-          )
-          OR (SELECT count(*) FROM pg_stat_user_tables WHERE schemaname = t.schemaname AND relname = t.tablename AND n_live_tup = 0) > 0
-        `
-      })
+      // Dead tables count from pg_stat_user_tables
+      supabase.rpc('get_dead_tables_count').catch(() => ({ data: 0, error: null }))
     ]);
 
     // Parse results
