@@ -18,6 +18,7 @@ import {
   handleUpdateQaChecklist,
   handleTransitionState,
 } from "./tool-handlers/system.ts";
+import { handleDelegateSubtask } from "./tool-handlers/delegate.ts";
 
 export interface ToolContext {
   supabase: any;
@@ -158,7 +159,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "deploy_edge_function",
     description:
-      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly — only for small functions.",
+      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly â only for small functions.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -238,7 +239,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_complete",
     description:
-      "Mark the work order as complete with a summary. This is a TERMINAL action — the loop will end after this.",
+      "Mark the work order as complete with a summary. This is a TERMINAL action â the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -253,7 +254,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_failed",
     description:
-      "Mark the work order as failed with a reason. This is a TERMINAL action — the loop will end after this.",
+      "Mark the work order as failed with a reason. This is a TERMINAL action â the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -311,7 +312,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "transition_state",
     description:
-      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progress→review, in_progress→failed, review→done.",
+      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressâreview, in_progressâfailed, reviewâdone.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -380,7 +381,7 @@ export async function getToolsForWO(
         tagFiltered = tagFiltered.filter((t) => agentAllowed.has(t.name));
       }
     } catch {
-      // Agent lookup failed — fall through with tag-only filtering
+      // Agent lookup failed â fall through with tag-only filtering
     }
   }
 
