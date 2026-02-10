@@ -277,15 +277,15 @@ Deno.serve(async function(req: Request) {
       response = "Work order created: " + wo.slug + ". Assigned to build queue.";
 
     } else if (classification.type === "research") {
-      routed_to = "metis";
+      routed_to = "builder";
       var wo = await createWorkOrder(sb, classification, body, claudeKey);
       work_order_id = wo.id;
       work_order_slug = wo.slug;
-      response = "Research work order created: " + wo.slug + ". Assigned to METIS for investigation.";
+      response = "Research work order created: " + wo.slug + ". Assigned to build queue.";
 
     } else {
-      routed_to = "metis";
-      response = "Administrative request logged. Will be reviewed by METIS orchestrator.";
+      routed_to = "user-portal";
+      response = "Administrative request logged. Will be reviewed.";
     }
 
     var latencyMs = Date.now() - startTime;

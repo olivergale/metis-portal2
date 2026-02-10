@@ -255,13 +255,17 @@ export async function loadKnowledgeBase(
     // Map agent names to roles
     const ROLE_MAP: Record<string, string> = {
       'builder': 'executor',
-      'forgehand': 'executor',
       'ilmarinen': 'executor',
+      'frontend': 'specialist',
       'qa-gate': 'evaluator',
-      'sentinel': 'evaluator',
       'ops': 'observer',
-      'watchman': 'observer',
+      'security': 'reviewer',
       'reviewer': 'reviewer',
+      'user-portal': 'orchestrator',
+      // Legacy compat (old names in historical data)
+      'forgehand': 'executor',
+      'sentinel': 'evaluator',
+      'watchman': 'observer',
       'audit': 'reviewer',
       'metis': 'orchestrator',
     };

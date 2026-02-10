@@ -1,7 +1,7 @@
 // wo-agent/context.ts v4
 // Context loading for the agentic work order executor
 // Builds comprehensive system prompt with WO details, directives, lessons, schema
-// v2: Agent name from DB (forgehand) instead of generated
+// v2: Agent name from DB (builder) instead of generated
 // v3: WO-0165 — concurrent WO awareness in agent context
 // v4: WO-0164 — tag-filtered directive loading
 

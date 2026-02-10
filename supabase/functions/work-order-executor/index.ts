@@ -536,11 +536,11 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ ...data, error_code: errorCode }), { status: 422, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      await logPhase(supabase, work_order_id, "approved", "metis", { approved_by });
+      await logPhase(supabase, work_order_id, "approved", "user-portal", { approved_by });
 
       // WO-0240: Atomic approve-and-start — immediately transition ready→in_progress
       // Determine agent name for start_work_order
-      let agentNameForStart = 'ilmarinen'; // default
+      let agentNameForStart = 'builder'; // default — server-side execution
       if (wo.assigned_to) {
         const { data: agentData } = await supabase.from('agents').select('name').eq('id', wo.assigned_to).single();
         if (agentData?.name) agentNameForStart = agentData.name;
@@ -772,7 +772,7 @@ Deno.serve(async (req) => {
       // v46: If accepted remediation WO, re-trigger parent auto-QA
       try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e) { console.error('[ACCEPT] Remediation handler error:', e); }
 
-      await logPhase(supabase, work_order_id, "completing", "metis", { action: "accepted", slug: wo.slug });
+      await logPhase(supabase, work_order_id, "completing", "user-portal", { action: "accepted", slug: wo.slug });
       return new Response(JSON.stringify({ accepted: true, work_order: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
@@ -1200,7 +1200,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         else { consolidated++; }
       }
 
-      await logPhase(supabase, primary_id, "consolidation", "metis", { consolidated, cancelled: secondaryIds, errors: errors.length > 0 ? errors : undefined });
+      await logPhase(supabase, primary_id, "consolidation", "user-portal", { consolidated, cancelled: secondaryIds, errors: errors.length > 0 ? errors : undefined });
       return new Response(JSON.stringify({ consolidated, primary_id, cancelled_ids: secondaryIds, errors: errors.length > 0 ? errors : undefined }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
@@ -1222,7 +1222,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         return new Response(JSON.stringify({ ...data, error_code: errorCode }), { status: 422, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      await logPhase(supabase, work_order_id, "rejected", "metis", { reason, slug: wo?.slug });
+      await logPhase(supabase, work_order_id, "rejected", "user-portal", { reason, slug: wo?.slug });
       return new Response(JSON.stringify({ rejected: true, work_order: data, reason }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
