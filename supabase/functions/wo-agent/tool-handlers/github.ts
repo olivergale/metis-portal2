@@ -79,11 +79,15 @@ export async function handleGithubReadFile(
     );
 
     if (resp.status === 404) {
-      return { success: false, error: `File not found: ${repo}/${path} (branch: ${ref})` };
+      const errorMsg = `File not found: ${repo}/${path} (branch: ${ref})`;
+      await logError(ctx, "warning", "wo-agent/github_read_file", "FILE_NOT_FOUND", errorMsg, { repo, path, branch: ref });
+      return { success: false, error: errorMsg };
     }
     if (!resp.ok) {
       const errText = await resp.text();
-      return { success: false, error: `GitHub API error ${resp.status}: ${errText}` };
+      const errorMsg = `GitHub API error ${resp.status}: ${errText}`;
+      await logError(ctx, "error", "wo-agent/github_read_file", "GITHUB_API_ERROR", errorMsg, { repo, path, branch: ref, status: resp.status });
+      return { success: false, error: errorMsg };
     }
 
     const data = await resp.json();
