@@ -3000,15 +3000,21 @@
                     )}
 
                     {/* Escalation Banner — circuit breaker tripped, needs manual intervention */}
-                    {workOrder.status === 'failed' && (workOrder.tags || []).includes('escalation:ilmarinen') && (
-                        <div className="card-escalation-banner">
-                            <span className="escalation-icon">&#9888;</span>
-                            <div>
-                                <div className="escalation-text">Escalated to ilmarinen</div>
-                                <div className="escalation-action">Auto-remediation exhausted — needs manual pickup</div>
+                    {(() => {
+                        if (workOrder.status !== 'failed') return null;
+                        const escalationTag = (workOrder.tags || []).find(tag => tag.startsWith('escalation:'));
+                        if (!escalationTag) return null;
+                        const escalatedTo = escalationTag.split(':')[1] || 'unknown';
+                        return (
+                            <div className="card-escalation-banner">
+                                <span className="escalation-icon">&#9888;</span>
+                                <div>
+                                    <div className="escalation-text">Escalated to {escalatedTo}</div>
+                                    <div className="escalation-action">Auto-remediation exhausted — needs manual pickup</div>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {/* Failure Reason Display */}
                     {workOrder.status === 'failed' && (
@@ -4380,8 +4386,25 @@
                         );
                     });
 
+                // Filter archived WOs unless showArchived is enabled
+                const archivedFiltered = showArchived
+                    ? searchFiltered
+                    : searchFiltered.filter(wo => {
+                        // Keep if not a terminal status
+                        if (!['done', 'cancelled', 'failed'].includes(wo.status)) return true;
+
+                        // For failed WOs, keep only if escalated
+                        if (wo.status === 'failed') {
+                            const hasEscalationTag = wo.tags?.some(tag => tag.startsWith('escalation:'));
+                            return hasEscalationTag;
+                        }
+
+                        // Hide done and cancelled
+                        return false;
+                    });
+
                 return COLUMNS.reduce((acc, col) => {
-                    const filtered = searchFiltered.filter(wo => wo.status === col.id);
+                    const filtered = archivedFiltered.filter(wo => wo.status === col.id);
                     // Sort by created_at DESC (newest first)
                     acc[col.id] = filtered.sort((a, b) => {
                         const aDate = new Date(a.created_at);
@@ -4390,7 +4413,7 @@
                     });
                     return acc;
                 }, {});
-            }, [workOrders, searchTerm]);
+            }, [workOrders, searchTerm, showArchived]);
 
             const activeAgents = agents.filter(a => a.status === 'active').length;
             const totalTasks = workOrders.length;
@@ -4488,7 +4511,7 @@
                                             style={{ cursor: 'pointer' }}
                                         />
                                         <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                            Show archived (>{staleThreshold}d)
+                                            Show archived (done/cancelled)
                                         </span>
                                     </label>
                                     <button className="btn btn-secondary" onClick={fetchData}>
