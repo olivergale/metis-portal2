@@ -1,5 +1,5 @@
 // wo-agent/tool-handlers/github.ts
-// GitHub tools: read_file, write_file
+// GitHub tools: read_file, write_file, list_files, create_branch, create_pr
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
