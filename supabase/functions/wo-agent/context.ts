@@ -2,8 +2,8 @@
 // Context loading for the agentic work order executor
 // Builds comprehensive system prompt with WO details, directives, lessons, schema
 // v2: Agent name from DB (builder) instead of generated
-// v3: WO-0165 — concurrent WO awareness in agent context
-// v4: WO-0164 — tag-filtered directive loading
+// v3: WO-0165 â concurrent WO awareness in agent context
+// v4: WO-0164 â tag-filtered directive loading
 
 import {
   loadWorkerPromptTemplate,
@@ -99,13 +99,17 @@ export async function buildAgentContext(
     apply_migration: "Apply DDL changes (CREATE TABLE, ALTER, etc)",
     read_table: "Read rows from any Supabase table",
     github_read_file: "Read files from GitHub repos",
-    github_write_file: "Write/update files in GitHub repos",
+    github_write_file: "Write/update files in GitHub repos (whole file)",
+    github_edit_file: "Patch-edit files in GitHub (send only the diff, not whole file)",
+    github_list_files: "List files in a GitHub repository directory",
+    github_create_branch: "Create a new branch in a GitHub repository",
+    github_create_pr: "Create a pull request in a GitHub repository",
     deploy_edge_function: "Deploy Supabase Edge Functions (small ones only)",
     log_progress: "Log progress messages",
     read_execution_log: "Read execution logs (useful for remediation)",
     get_schema: "Get database schema reference",
-    mark_complete: "Mark WO complete (TERMINAL — ends execution)",
-    mark_failed: "Mark WO failed (TERMINAL — ends execution)",
+    mark_complete: "Mark WO complete (TERMINAL â ends execution)",
+    mark_failed: "Mark WO failed (TERMINAL â ends execution)",
     resolve_qa_findings: "Resolve unresolved QA failure findings",
     update_qa_checklist: "Update a QA checklist item status",
   };
@@ -121,7 +125,7 @@ export async function buildAgentContext(
   systemPrompt += `4. Call mark_complete with a detailed summary when done\n`;
   systemPrompt += `5. Call mark_failed if you cannot complete the objective\n`;
   systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
-  systemPrompt += `7. Never make up data — query first, then act\n`;
+  systemPrompt += `7. Never make up data â query first, then act\n`;
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
 
   // Build user message with WO details
@@ -292,7 +296,7 @@ async function buildDependencyContext(
   if (deps && deps.length > 0) {
     for (const dep of deps) {
       ctx += `- **${dep.slug}** (${dep.status}): ${dep.name}`;
-      if (dep.summary) ctx += ` — ${dep.summary.slice(0, 200)}`;
+      if (dep.summary) ctx += ` â ${dep.summary.slice(0, 200)}`;
       ctx += `\n`;
     }
     ctx += `\n`;
