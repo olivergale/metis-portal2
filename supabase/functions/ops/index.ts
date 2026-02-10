@@ -41,9 +41,20 @@ serve(async (req: Request) => {
       };
 
       // Find WOs in in_progress status that might be stuck
+      // Join with agents to check execution_mode (skip local_cli agents like ilmarinen)
       const { data: activeWOs, error: woError } = await supabase
         .from("work_orders")
-        .select("id, slug, status, updated_at")
+        .select(`
+          id, 
+          slug, 
+          status, 
+          updated_at,
+          client_info,
+          assigned_to(
+            name,
+            execution_mode
+          )
+        `)
         .eq("status", "in_progress")
         .order("updated_at", { ascending: true });
 
