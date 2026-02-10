@@ -4110,10 +4110,32 @@
                         return;
                     }
                     if (data.approved) {
-                        setWorkOrders(prev => prev.map(w =>
-                            w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
-                        ));
-                        addToast('Work order approved - ready for execution', 'success');
+                        // After approval, auto-start if agent is assigned
+                        const wo = workOrders.find(w => w.id === workOrderId);
+                        const agentName = wo?.assigned_to ? agents.find(a => a.id === wo.assigned_to)?.name : null;
+                        if (agentName) {
+                            try {
+                                await api('/rest/v1/rpc/start_work_order', {
+                                    method: 'POST',
+                                    body: JSON.stringify({ p_work_order_id: workOrderId, p_agent_name: agentName }),
+                                });
+                                setWorkOrders(prev => prev.map(w =>
+                                    w.id === workOrderId ? { ...w, status: 'in_progress', approved_at: new Date().toISOString(), started_at: new Date().toISOString() } : w
+                                ));
+                                addToast('Work order approved and started', 'success');
+                            } catch (startErr) {
+                                // Approval succeeded but start failed — still show as ready
+                                setWorkOrders(prev => prev.map(w =>
+                                    w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
+                                ));
+                                addToast('Approved but auto-start failed: ' + startErr.message, 'warning');
+                            }
+                        } else {
+                            setWorkOrders(prev => prev.map(w =>
+                                w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
+                            ));
+                            addToast('Work order approved - ready for execution', 'success');
+                        }
                     } else {
                         // AC6: Display structured error codes
                         const errorMsg = data.error_code
@@ -4387,20 +4409,16 @@
                     });
 
                 // Filter archived WOs unless showArchived is enabled
+                // Only hide: cancelled WOs and non-escalated failed WOs
+                // Done WOs always show (stale filter already handles old ones)
                 const archivedFiltered = showArchived
                     ? searchFiltered
                     : searchFiltered.filter(wo => {
-                        // Keep if not a terminal status
-                        if (!['done', 'cancelled', 'failed'].includes(wo.status)) return true;
-
-                        // For failed WOs, keep only if escalated
+                        if (wo.status === 'cancelled') return false;
                         if (wo.status === 'failed') {
-                            const hasEscalationTag = wo.tags?.some(tag => tag.startsWith('escalation:'));
-                            return hasEscalationTag;
+                            return wo.tags?.some(tag => tag.startsWith('escalation:'));
                         }
-
-                        // Hide done and cancelled
-                        return false;
+                        return true;
                     });
 
                 return COLUMNS.reduce((acc, col) => {
