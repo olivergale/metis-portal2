@@ -3,6 +3,34 @@
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
+/**
+ * Log error to error_events table for centralized error tracking
+ * WO-0266: Silent failure detection
+ */
+async function logError(
+  ctx: ToolContext,
+  severity: string,
+  sourceFunction: string,
+  errorCode: string,
+  message: string,
+  context: Record<string, any> = {}
+): Promise<void> {
+  try {
+    await ctx.supabase.rpc("log_error_event", {
+      p_severity: severity,
+      p_source_function: sourceFunction,
+      p_error_code: errorCode,
+      p_message: message,
+      p_context: context,
+      p_work_order_id: ctx.workOrderId,
+      p_agent_id: null,
+    });
+  } catch (e: any) {
+    // Silent failure in error logging - don't cascade
+    console.error(`[ERROR_LOG] Failed to log error: ${e.message}`);
+  }
+}
+
 export async function handleDeployEdgeFunction(
   input: Record<string, any>,
   ctx: ToolContext
