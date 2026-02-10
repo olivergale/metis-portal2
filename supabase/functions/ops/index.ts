@@ -276,15 +276,90 @@ serve(async (req: Request) => {
             }
           }
 
-          // Max retries exhausted or other failure - mark as failed
+          // Max retries exhausted or other failure - analyze and diagnose
+          
+          // Feature 3: Agent-task mismatch detection
+          let agentMismatch = null;
+          if (wo.assigned_to?.name && wo.assigned_to?.tools_allowed) {
+            const tags = wo.tags || [];
+            const toolsAllowed = wo.assigned_to.tools_allowed || [];
+            
+            // Check for common mismatches
+            if (tags.includes('local-filesystem') && !toolsAllowed.includes('read_file')) {
+              agentMismatch = {
+                reason: 'Local filesystem WO assigned to server-side agent',
+                assigned_agent: wo.assigned_to.name,
+                required_tools: ['read_file', 'write_file'],
+                available_tools: toolsAllowed,
+                recommendation: 'Re-route to ilmarinen (local_cli agent)'
+              };
+            } else if (tags.includes('portal-frontend') && !toolsAllowed.includes('github_read_file')) {
+              agentMismatch = {
+                reason: 'Frontend WO assigned to agent without GitHub access',
+                assigned_agent: wo.assigned_to.name,
+                required_tools: ['github_read_file', 'github_write_file'],
+                available_tools: toolsAllowed,
+                recommendation: 'Re-route to agent with github tools'
+              };
+            }
+          }
+          
+          // Feature 2: Mutation vs read ratio analysis
+          const { data: execLogFull, error: fullLogError } = await supabase
+            .from('work_order_execution_log')
+            .select('detail')
+            .eq('work_order_id', wo.id)
+            .eq('phase', 'stream');
+          
+          let ratioAnalysis = null;
+          if (!fullLogError && execLogFull && execLogFull.length > 0) {
+            let readCount = 0;
+            let writeCount = 0;
+            
+            for (const log of execLogFull) {
+              const detail = log.detail || {};
+              if (detail.tool_name === 'mcp__supabase__execute_sql' || detail.tool_name === 'execute_sql') {
+                const query = detail.result?.query || detail.input?.query || '';
+                if (query.trim().toUpperCase().startsWith('SELECT')) {
+                  readCount++;
+                } else if (query.trim().match(/^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)) {
+                  writeCount++;
+                }
+              }
+            }
+            
+            if (readCount > 0 || writeCount > 0) {
+              const ratio = writeCount > 0 ? readCount / writeCount : readCount;
+              ratioAnalysis = {
+                read_count: readCount,
+                write_count: writeCount,
+                ratio: Math.round(ratio * 10) / 10,
+                exploration_spiral: ratio > 5 && readCount > 10,
+                diagnosis: ratio > 5 && readCount > 10 
+                  ? 'High read:write ratio suggests exploration spiral - agent may be stuck in analysis loop'
+                  : ratio > 3 
+                    ? 'Moderate read:write ratio - agent may need more focused objective'
+                    : 'Normal read:write ratio'
+              };
+            }
+          }
+          
+          // Detect failure archetype
+          let failureArchetype = 'stuck_wo'; // default
+          if (agentMismatch) {
+            failureArchetype = 'agent_mismatch';
+          } else if (ratioAnalysis?.exploration_spiral) {
+            failureArchetype = 'exploration_spiral';
+          }
+          
           const { error: failError } = await supabase.rpc(
             "update_work_order_state",
             {
               p_work_order_id: wo.id,
               p_status: "failed",
               p_summary: retryCount >= maxRetries
-                ? `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes. Max retries (${maxRetries}) exhausted.`
-                : `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes`,
+                ? `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes. Max retries (${maxRetries}) exhausted. Failure archetype: ${failureArchetype}`
+                : `Auto-failed by ops health-check: No activity for ${Math.round(minutesIdle)} minutes. Failure archetype: ${failureArchetype}`,
             }
           );
 
@@ -295,7 +370,7 @@ serve(async (req: Request) => {
           } else {
             response.marked_failed.push(wo.slug);
 
-            // Log the failure
+            // Log the failure with enhanced diagnostics
             await supabase.from("work_order_execution_log").insert({
               work_order_id: wo.id,
               phase: "failed",
@@ -307,8 +382,80 @@ serve(async (req: Request) => {
                 last_activity: lastActivity.toISOString(),
                 retry_count: retryCount,
                 retries_exhausted: retryCount >= maxRetries,
+                failure_archetype: failureArchetype,
+                agent_mismatch: agentMismatch,
+                ratio_analysis: ratioAnalysis,
+                diagnostics: {
+                  agent_mismatch: agentMismatch ? 'Agent lacks required tools for task domain' : null,
+                  exploration_spiral: ratioAnalysis?.exploration_spiral ? 'High read:write ratio detected' : null,
+                  recommendation: agentMismatch ? agentMismatch.recommendation : 
+                    ratioAnalysis?.exploration_spiral ? 'Decompose WO into focused sub-tasks' : null
+                }
               },
             });
+            
+            // Feature 1: Create remediation WO for specific failure types
+            const shouldCreateRemediation = failureArchetype === 'exploration_spiral' || 
+              failureArchetype === 'agent_mismatch';
+            
+            if (shouldCreateRemediation && retryCount >= maxRetries) {
+              try {
+                // Get parent WO details for remediation context
+                const { data: parentWO } = await supabase
+                  .from('work_orders')
+                  .select('slug, name, objective')
+                  .eq('id', wo.id)
+                  .single();
+                
+                if (parentWO) {
+                  const remediationName = `Fix: ${parentWO.slug} - ${failureArchetype}`;
+                  const remediationObjective = failureArchetype === 'agent_mismatch'
+                    ? `Remediate agent-task mismatch for ${parentWO.slug}:\n\nIssue: ${agentMismatch?.reason}\nAssigned: ${agentMismatch?.assigned_agent}\nRequired tools: ${agentMismatch?.required_tools?.join(', ')}\n\nAction: ${agentMismatch?.recommendation}\n\nParent objective: ${parentWO.objective}`
+                    : `Remediate exploration spiral for ${parentWO.slug}:\n\nIssue: High read:write ratio (${ratioAnalysis?.ratio}:1) with ${ratioAnalysis?.read_count} reads, ${ratioAnalysis?.write_count} writes\n\nAction: Decompose into focused sub-tasks with clear acceptance criteria\n\nParent objective: ${parentWO.objective}`;
+                  
+                  const { data: remediationWO, error: remError } = await supabase.rpc(
+                    'create_draft_work_order',
+                    {
+                      p_slug: null, // auto-generate
+                      p_name: remediationName,
+                      p_objective: remediationObjective,
+                      p_priority: 'p1_high',
+                      p_source: 'auto-qa',
+                      p_tags: ['remediation', `parent:${parentWO.slug}`, 'ops-diagnostic'],
+                      p_acceptance_criteria: failureArchetype === 'agent_mismatch'
+                        ? `1. Re-assign ${parentWO.slug} to appropriate agent with required tools\n2. Verify agent has tools: ${agentMismatch?.required_tools?.join(', ')}\n3. Re-dispatch work order`
+                        : `1. Review ${parentWO.slug} execution log and identify root cause\n2. Decompose into 2-3 focused sub-WOs with clear ACs\n3. Create child WOs via create_draft_work_order\n4. Cancel parent WO with cancellation_reason`,
+                      p_parent_id: wo.id
+                    }
+                  );
+                  
+                  if (remError) {
+                    response.errors.push(`Failed to create remediation WO: ${remError.message}`);
+                  } else if (remediationWO) {
+                    console.log(`[OPS] Created remediation WO ${remediationWO.slug} for ${parentWO.slug} (${failureArchetype})`);
+                    
+                    await supabase.from('work_order_execution_log').insert({
+                      work_order_id: wo.id,
+                      phase: 'stream',
+                      agent_name: 'ops',
+                      detail: {
+                        event_type: 'remediation_created',
+                        remediation_slug: remediationWO.slug,
+                        remediation_id: remediationWO.id,
+                        failure_archetype: failureArchetype,
+                        diagnostic_context: {
+                          agent_mismatch: agentMismatch,
+                          ratio_analysis: ratioAnalysis
+                        }
+                      }
+                    });
+                  }
+                }
+              } catch (remediationError) {
+                console.error('[OPS] Remediation WO creation failed:', remediationError);
+                response.errors.push(`Remediation creation error: ${remediationError instanceof Error ? remediationError.message : String(remediationError)}`);
+              }
+            }
           }
         }
       }
