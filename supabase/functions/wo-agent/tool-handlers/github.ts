@@ -101,7 +101,9 @@ export async function handleGithubReadFile(
       data: { content: limited, sha: data.sha, size: data.size, path: data.path },
     };
   } catch (e: any) {
-    return { success: false, error: `github_read_file exception: ${e.message}` };
+    const errorMsg = `github_read_file exception: ${e.message}`;
+    await logError(ctx, "error", "wo-agent/github_read_file", "EXCEPTION", errorMsg, { repo, path });
+    return { success: false, error: errorMsg };
   }
 }
 
