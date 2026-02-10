@@ -1,6 +1,6 @@
 // wo-agent/tool-handlers/system.ts
 // System tools: log_progress, read_execution_log, get_schema, mark_complete, mark_failed,
-//               resolve_qa_findings, update_qa_checklist
+//               resolve_qa_findings, update_qa_checklist, transition_state, search_knowledge_base
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
@@ -132,7 +132,7 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review — non-master agents use enforcement RPC, master uses bypass
+    // Transition to review â non-master agents use enforcement RPC, master uses bypass
     const MASTER = new Set(["ilmarinen"]);
     if (MASTER.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -154,7 +154,7 @@ export async function handleMarkComplete(
       }
     }
 
-    // Check if this is a remediation WO — propagate evidence to parent
+    // Check if this is a remediation WO â propagate evidence to parent
     const { data: wo } = await ctx.supabase
       .from("work_orders")
       .select("tags")
@@ -215,7 +215,7 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed — non-master agents use enforcement RPC, master uses bypass
+    // Transition to failed â non-master agents use enforcement RPC, master uses bypass
     const MASTER_FAIL = new Set(["ilmarinen"]);
     if (MASTER_FAIL.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -317,7 +317,7 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
-    return { success: true, data: `Checklist item ${checklist_item_id} → ${status}` };
+    return { success: true, data: `Checklist item ${checklist_item_id} â ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
   }
@@ -325,7 +325,7 @@ export async function handleUpdateQaChecklist(
 
 /**
  * WO-0186: Transition a WO status via the enforcement layer (no bypass).
- * Safe for all agents — goes through update_work_order_state() RPC.
+ * Safe for all agents â goes through update_work_order_state() RPC.
  */
 export async function handleTransitionState(
   input: Record<string, any>,
