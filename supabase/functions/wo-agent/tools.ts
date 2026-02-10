@@ -227,6 +227,122 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "web_fetch",
+    description:
+      "Fetch content from a URL and return text/markdown. Useful for reading documentation, API specs, or external resources. Handles HTML, text, markdown, and JSON responses.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: {
+          type: "string",
+          description: "The URL to fetch (must be a valid HTTP/HTTPS URL)",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "github_list_files",
+    description:
+      "List files and directories in a GitHub repository path. Returns metadata including name, path, type, size, and SHA for each item.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format, e.g. olivergale/metis-portal2",
+        },
+        path: {
+          type: "string",
+          description: "Directory path within the repo (empty string for root)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github_create_branch",
+    description:
+      "Create a new branch in a GitHub repository from an existing branch. Useful for preparing feature branches before making changes.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format",
+        },
+        branch: {
+          type: "string",
+          description: "Name of the new branch to create",
+        },
+        from_branch: {
+          type: "string",
+          description: "Base branch to create from (default: main)",
+        },
+      },
+      required: ["repo", "branch"],
+    },
+  },
+  {
+    name: "github_create_pr",
+    description:
+      "Create a pull request in a GitHub repository. Use after committing changes to a feature branch.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format",
+        },
+        head: {
+          type: "string",
+          description: "The branch containing your changes",
+        },
+        base: {
+          type: "string",
+          description: "The branch you want to merge into (default: main)",
+        },
+        title: {
+          type: "string",
+          description: "Pull request title",
+        },
+        body: {
+          type: "string",
+          description: "Pull request description",
+        },
+      },
+      required: ["repo", "head", "title"],
+    },
+  },
+  {
+    name: "search_knowledge_base",
+    description:
+      "Search the institutional knowledge base for lessons learned, patterns, and best practices. Returns relevant KB entries filtered by tags and severity.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query text",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Filter by tags (optional)",
+        },
+        limit: {
+          type: "number",
+          description: "Max results to return (default 10, max 20)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "log_progress",
     description:
       "Log a progress message to the work order execution log. Use to record what you're doing.",
@@ -375,7 +491,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking â parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking Ã¢ÂÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
