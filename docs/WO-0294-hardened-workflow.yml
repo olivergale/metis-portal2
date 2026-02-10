@@ -1,0 +1,125 @@
+# HARDENED CI/CD DEPLOY PIPELINE (WO-0294)
+# This file contains the corrected .github/workflows/deploy-functions.yml
+# Manual action required: Copy this to .github/workflows/deploy-functions.yml
+# (GitHub API blocks workflow file updates without 'workflow' scope on PAT)
+
+name: Deploy Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Changed: Full history for merge-base (was fetch-depth: 2)
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Detect changed functions
+        id: changed
+        run: |
+          # FIX #2: Use merge-base to handle squash merges and multi-commit pushes
+          # Old: git diff --name-only HEAD~1 HEAD
+          # New: Use merge-base for proper ancestry detection
+          BASE=$(git merge-base origin/main HEAD^)
+          CHANGED=$(git diff --name-only $BASE HEAD -- supabase/functions/ \
+            | grep -oP 'supabase/functions/\K[^/]+' \
+            | sort -u)
+          echo "functions<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "count=$(echo "$CHANGED" | grep -c . || echo 0)" >> $GITHUB_OUTPUT
+          echo "Changed functions: $CHANGED"
+          echo "Base commit: $BASE"
+
+      - name: Deploy changed functions
+        if: steps.changed.outputs.count != '0'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          # FIX #1: Fail immediately on any error (no more swallowing failures)
+          # Old: || echo "WARNING: Failed to deploy $func"
+          # New: set -e to fail fast
+          set -e
+          
+          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
+            [ -z "$func" ] && continue
+
+            # Skip shared module directories (not deployable)
+            if [ "$func" = "wo-daemon" ] || [ "$func" = "_shared" ]; then
+              echo "Skipping non-deployable: $func"
+              continue
+            fi
+
+            # Check if function directory still exists
+            if [ ! -d "supabase/functions/$func" ]; then
+              echo "Skipping deleted function: $func"
+              continue
+            fi
+
+            echo "Deploying: $func"
+            # Deploy will fail the workflow if it fails (no || echo WARNING)
+            supabase functions deploy "$func" \
+              --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+              --no-verify-jwt
+            echo "✓ Successfully deployed: $func"
+          done
+
+      # FIX #3: Add verification step to confirm functions are live
+      - name: Verify deployments
+        if: steps.changed.outputs.count != '0'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -e
+          
+          echo "Verifying deployed functions are live..."
+          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
+            [ -z "$func" ] && continue
+            
+            # Skip non-deployable and deleted functions
+            if [ "$func" = "wo-daemon" ] || [ "$func" = "_shared" ]; then
+              continue
+            fi
+            if [ ! -d "supabase/functions/$func" ]; then
+              continue
+            fi
+
+            echo "Verifying: $func"
+            # List functions and check if our function appears
+            if supabase functions list --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} | grep -q "$func"; then
+              echo "✓ Verified: $func is live"
+            else
+              echo "✗ Verification failed: $func not found in function list"
+              exit 1
+            fi
+          done
+
+      - name: Summary
+        if: steps.changed.outputs.count != '0'
+        run: |
+          echo "## Deployed Functions" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
+            [ -z "$func" ] && continue
+            if [ "$func" != "wo-daemon" ] && [ "$func" != "_shared" ] && [ -d "supabase/functions/$func" ]; then
+              echo "- ✓ $func (deployed and verified)" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+# REGARDING PROJECT-SCOPED TOKENS (FIX #4):
+# Supabase currently only supports account-level access tokens for CLI operations.
+# Project-scoped Management API keys exist but are for REST API only, not CLI deploy.
+# Recommendation: Keep using SUPABASE_ACCESS_TOKEN (account-level) until Supabase
+# adds support for project-scoped tokens in the CLI.
+# 
+# Source: https://supabase.com/docs/guides/cli/managing-environments
+# "Access tokens are account-level credentials that give full access to all projects"
