@@ -101,6 +101,14 @@ class WorkspaceApp {
         </div>
       </div>
     `;
+
+    // Add scorecard widget
+    const scorecardSection = document.createElement('div');
+    scorecardSection.className = 'sidebar-section';
+    const scorecardWidget = createScorecardWidget();
+    scorecardSection.appendChild(scorecardWidget);
+    sidebar.appendChild(scorecardSection);
+
     return sidebar;
   }
 
@@ -135,7 +143,7 @@ class WorkspaceApp {
     projectList.innerHTML = this.projects.map(p => `
       <div class="project-item">
         <div class="project-name">${escapeHtml(p.name)}</div>
-        <div class="project-meta">${p.code} Â· ${p.completion_pct || 0}%</div>
+        <div class="project-meta">${p.code} ÃÂ· ${p.completion_pct || 0}%</div>
       </div>
     `).join('');
   }
