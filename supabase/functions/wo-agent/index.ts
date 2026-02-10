@@ -1,5 +1,6 @@
-// wo-agent/index.ts v3
+// wo-agent/index.ts v4
 // WO-0153: Fixed imports for Deno Deploy compatibility
+// WO-0258: Auto-remediation on circuit breaker / timeout failures
 // Server-side agentic work order executor
 // Replaces CLI subprocess model with API-based tool-use loop
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -51,6 +52,113 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: e.message }, 500);
   }
 });
+
+/**
+ * WO-0258: Create a remediation WO when builder fails from circuit breaker or timeout.
+ * Routes to ilmarinen (builder already exhausted its budget).
+ * Skips remediation WOs to avoid loops.
+ */
+async function createFailureRemediation(
+  supabase: any,
+  wo: { id: string; slug: string; name: string; objective?: string; tags?: string[] },
+  failureReason: string
+): Promise<void> {
+  try {
+    const tags: string[] = wo.tags || [];
+    // Never remediate a remediation WO (avoid loops)
+    if (tags.includes("remediation")) {
+      console.log(`[WO-AGENT] Skip remediation for remediation WO ${wo.slug}`);
+      return;
+    }
+
+    // Check existing remediation count (circuit breaker)
+    const { data: existing } = await supabase
+      .from("work_orders")
+      .select("id, slug, status")
+      .contains("tags", ["remediation", `parent:${wo.slug}`])
+      .limit(10);
+
+    // Skip if active remediation already exists
+    const active = (existing || []).find(
+      (r: any) => ["draft", "ready", "in_progress", "review"].includes(r.status)
+    );
+    if (active) {
+      console.log(`[WO-AGENT] Active remediation ${active.slug} already exists for ${wo.slug}`);
+      return;
+    }
+
+    const attempts = (existing || []).length;
+    if (attempts >= 3) {
+      console.log(`[WO-AGENT] Remediation circuit breaker: ${attempts}/3 for ${wo.slug}`);
+      // Tag for manual triage
+      await supabase.rpc("run_sql_void", {
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'escalation:ilmarinen') WHERE id = '${wo.id}' AND NOT ('escalation:ilmarinen' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
+      });
+      return;
+    }
+
+    const attemptNum = attempts + 1;
+    const objectiveText =
+      `Fix and complete ${wo.slug} (${wo.name}) which failed due to: ${failureReason}\n\n` +
+      `The server-side builder agent exhausted its execution budget. ` +
+      `Review what was accomplished (check execution_log for parent WO), ` +
+      `then complete the remaining work.\n\n` +
+      `Parent WO objective: ${(wo.objective || "").slice(0, 1500)}`;
+
+    const { data: newWo, error: createErr } = await supabase.rpc("create_draft_work_order", {
+      p_slug: null,
+      p_name: `Fix: ${wo.slug} execution failure (attempt ${attemptNum}/3)`,
+      p_objective: objectiveText,
+      p_priority: "p1_high",
+      p_source: "auto-qa",
+      p_tags: ["remediation", `parent:${wo.slug}`, "auto-qa-loop"],
+      p_acceptance_criteria:
+        `1. Review parent WO ${wo.slug} execution log to understand what was completed\n` +
+        `2. Complete all remaining acceptance criteria from parent WO\n` +
+        `3. Verify changes are correct using read_table or execute_sql\n` +
+        `4. Mark complete with summary of what was fixed`,
+      p_parent_id: wo.id,
+    });
+
+    if (createErr) {
+      console.error(`[WO-AGENT] Failed to create remediation WO:`, createErr.message);
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "failed", agent_name: "wo-agent",
+        detail: { event_type: "remediation_create_failed", error: createErr.message, content: `Failed to create remediation WO for ${wo.slug}` },
+      }).then(null, () => {});
+      return;
+    }
+
+    const woId = typeof newWo === "string" ? newWo : newWo?.id;
+    if (!woId) {
+      console.error(`[WO-AGENT] create_draft_work_order returned no id`);
+      return;
+    }
+
+    // Auto-start — route to builder (fresh execution budget)
+    try {
+      await supabase.rpc("start_work_order", {
+        p_work_order_id: woId,
+        p_agent_name: "builder",
+      });
+      console.log(`[WO-AGENT] Auto-started remediation WO for ${wo.slug} (attempt ${attemptNum})`);
+    } catch (startErr: any) {
+      console.error(`[WO-AGENT] Failed to auto-start remediation:`, startErr.message);
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "failed", agent_name: "wo-agent",
+        detail: { event_type: "remediation_start_failed", error: startErr.message, content: `Remediation WO created but start_work_order failed for ${wo.slug}` },
+      }).then(null, () => {});
+    }
+  } catch (e: any) {
+    console.error(`[WO-AGENT] createFailureRemediation exception:`, e.message);
+    try {
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "failed", agent_name: "wo-agent",
+        detail: { event_type: "remediation_exception", error: e.message, content: `createFailureRemediation crashed for ${wo.slug}` },
+      });
+    } catch { /* meta-error — nothing else to do */ }
+  }
+}
 
 /**
  * POST /execute
@@ -194,11 +302,30 @@ async function handleExecute(req: Request): Promise<Response> {
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
       });
+
+      // WO-0258: Auto-create remediation WO on circuit breaker failure
+      await createFailureRemediation(supabase, wo, msg);
+
       return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
     }
 
-    // Build continuation context
+    // Build continuation context (with delegated children status)
     const cp = checkpoint.detail;
+    let childStatusContext = "";
+    if (cp.delegated_children && cp.delegated_children.length > 0) {
+      const childSlugs = cp.delegated_children.map((c: any) => c.child_slug);
+      const { data: childWOs } = await supabase
+        .from("work_orders")
+        .select("slug, status, summary")
+        .in("slug", childSlugs);
+      if (childWOs && childWOs.length > 0) {
+        childStatusContext = `\n## Delegated Children Status\n`;
+        for (const child of childWOs) {
+          childStatusContext += `- **${child.slug}** (${child.status}): ${(child.summary || "no summary yet").slice(0, 300)}\n`;
+        }
+        childStatusContext += `\n`;
+      }
+    }
     finalUserMessage = `# CONTINUATION Ã¢ÂÂ Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
     finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
@@ -207,6 +334,9 @@ async function handleExecute(req: Request): Promise<Response> {
     finalUserMessage += `## Original Objective\n${wo.objective}\n\n`;
     if (wo.acceptance_criteria) {
       finalUserMessage += `## Acceptance Criteria\n${wo.acceptance_criteria}\n\n`;
+    }
+    if (childStatusContext) {
+      finalUserMessage += childStatusContext;
     }
     finalUserMessage += `**IMPORTANT**: Do NOT redo work already done. Verify what was completed, then finish the remaining items. Call mark_complete when done.\n`;
 
@@ -231,8 +361,8 @@ async function handleExecute(req: Request): Promise<Response> {
     `[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`
   );
 
-  // WO-0187: If checkpoint, self-reinvoke via pg_net for continuation
-  if (result.status === "checkpoint") {
+  // WO-0187: If checkpoint or timeout, self-reinvoke via pg_net for continuation
+  if (result.status === "checkpoint" || result.status === "timeout") {
     try {
       const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
       const sbUrl = Deno.env.get("SUPABASE_URL")!;
@@ -251,6 +381,12 @@ async function handleExecute(req: Request): Promise<Response> {
       console.log(`[WO-AGENT] ${wo.slug} checkpointed Ã¢ÂÂ self-reinvoke queued`);
     } catch (e: any) {
       console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id,
+        phase: "failed",
+        agent_name: agentContext.agentName,
+        detail: { event_type: "continuation_failed", error: e.message, content: `Self-reinvoke failed after checkpoint: ${e.message}` },
+      }).then(null, () => {});
     }
   }
 
@@ -489,6 +625,38 @@ async function handleHealthCheck(req: Request): Promise<Response> {
       .limit(1);
 
     if (!recentLog || recentLog.length === 0) {
+      // Check for active children before marking failed
+      const { count: activeChildCount } = await supabase
+        .from("work_orders")
+        .select("id", { count: "exact", head: true })
+        .eq("parent_id", wo.id)
+        .in("status", ["in_progress", "review", "ready"]);
+
+      if ((activeChildCount || 0) > 0) {
+        // Parent has active children — tag as waiting, don't mark failed
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'waiting-on-children') WHERE id = '${wo.id}' AND NOT ('waiting-on-children' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
+        });
+
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id,
+          phase: "stream",
+          agent_name: "ops",
+          detail: {
+            event_type: "stuck_detection",
+            action: "skipped_has_active_children",
+            reason: `${activeChildCount} active child WO(s) - not marking failed`,
+            detection_time: now.toISOString(),
+          },
+        });
+
+        actions.push({
+          type: "stuck_detection",
+          wo_slug: wo.slug,
+          action: "skipped_has_active_children",
+          active_children: activeChildCount,
+        });
+      } else {
       // No heartbeat in 10 min Ã¢ÂÂ mark as failed (AC1: never overwrite summary)
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', completed_at = NOW() WHERE id = '${wo.id}' AND status = 'in_progress';`,
@@ -513,6 +681,7 @@ async function handleHealthCheck(req: Request): Promise<Response> {
         wo_slug: wo.slug,
         action: "marked_failed",
       });
+      }
     }
   }
 

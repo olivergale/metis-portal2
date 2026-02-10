@@ -20,8 +20,9 @@ const MODEL = "claude-sonnet-4-5-20250929";
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
-  'execute_sql', 'apply_migration', 'github_write_file',
+  'execute_sql', 'apply_migration', 'github_write_file', 'github_edit_file',
   'deploy_edge_function', 'resolve_qa_findings', 'update_qa_checklist',
+  'delegate_subtask',
 ]);
 
 interface VelocityWindow {
@@ -229,18 +230,34 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
 
   while (turn < Math.min(currentBudget, HARD_CEILING)) {
-    // Check timeout / checkpoint
+    // Check checkpoint / timeout — checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
-    if (elapsed > TIMEOUT_MS) {
-      const summary = `Execution timed out after ${turn} turns (${Math.round(elapsed / 1000)}s)`;
-      await logFailed(ctx, summary);
-      return { status: "timeout", turns: turn, summary, toolCalls };
-    }
 
-    // WO-0187: Checkpoint before timeout — save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ — both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
+
+      // Collect delegated children from tool calls in this execution
+      const delegatedChildren = toolCalls
+        .filter(tc => tc.tool === "delegate_subtask" && tc.success)
+        .map(tc => tc.tool); // slug/id come from result data, but we track tool name here
+      // Extract child info from execution log (more reliable)
+      let childWOs: Array<{ child_slug: string; child_id: string }> = [];
+      try {
+        const { data: delegationLogs } = await ctx.supabase
+          .from("work_order_execution_log")
+          .select("detail")
+          .eq("work_order_id", ctx.workOrderId)
+          .eq("phase", "stream")
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (delegationLogs) {
+          childWOs = delegationLogs
+            .filter((l: any) => l.detail?.tool_name === "delegate_subtask" && l.detail?.child_wo_slug)
+            .map((l: any) => ({ child_slug: l.detail.child_wo_slug, child_id: l.detail.child_wo_id }));
+        }
+      } catch { /* non-critical */ }
 
       await ctx.supabase.from("work_order_execution_log").insert({
         work_order_id: ctx.workOrderId,
@@ -254,6 +271,7 @@ export async function runAgentLoop(
           last_actions: lastActions,
           elapsed_ms: elapsed,
           budget_remaining: Math.min(currentBudget, HARD_CEILING) - turn,
+          delegated_children: childWOs.length > 0 ? childWOs : undefined,
         },
       });
 

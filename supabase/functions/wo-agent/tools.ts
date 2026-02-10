@@ -1,18 +1,14 @@
-// wo-agent/tools.ts v3
+// wo-agent/tools.ts v4
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0166: Role-based tool filtering per agent identity
+// WO-0245: delegate_subtask tool for WO tree execution
+// WO-0257: github_edit_file patch-based editing
 // Tool definitions for the agentic work order executor
 // Each tool maps to an Anthropic tool_use schema + a dispatch handler
 
 import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { 
-  handleGithubReadFile, 
-  handleGithubWriteFile,
-  handleGithubListFiles,
-  handleGithubCreateBranch,
-  handleGithubCreatePr
-} from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
 import {
   handleLogProgress,
@@ -23,10 +19,8 @@ import {
   handleResolveQaFindings,
   handleUpdateQaChecklist,
   handleTransitionState,
-  handleSearchKnowledgeBase,
 } from "./tool-handlers/system.ts";
-import { handleWebFetch } from "./tool-handlers/web.ts";
-import { handleDelegateSubtask } from "./tool-handlers/delegate.ts";
+import { handleDelegateSubtask, handleCheckChildStatus } from "./tool-handlers/delegate.ts";
 
 export interface ToolContext {
   supabase: any;
@@ -136,7 +130,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "github_write_file",
     description:
-      "Create or update a file in a GitHub repository. Automatically handles SHA for updates.",
+      "Create or update a file in a GitHub repository. Automatically handles SHA for updates. For modifying existing files, prefer github_edit_file instead (sends only the diff).",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -165,9 +159,44 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "github_edit_file",
+    description:
+      "Edit a file in a GitHub repository using patch-based replacement. Reads current file, replaces old_string with new_string, commits back. Much more efficient than github_write_file for modifications -- only send the diff, not the whole file. old_string must be unique in the file.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        path: {
+          type: "string",
+          description: "File path within the repo, e.g. src/App.tsx",
+        },
+        old_string: {
+          type: "string",
+          description: "The exact string to find and replace (must be unique in the file)",
+        },
+        new_string: {
+          type: "string",
+          description: "The replacement string",
+        },
+        message: {
+          type: "string",
+          description: "Commit message (default: 'Edit {path} via github_edit_file')",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
+    },
+  },
+  {
     name: "deploy_edge_function",
     description:
-      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ only for small functions.",
+      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly -- only for small functions.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -247,7 +276,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_complete",
     description:
-      "Mark the work order as complete with a summary. This is a TERMINAL action ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
+      "Mark the work order as complete with a summary. This is a TERMINAL action -- the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -262,7 +291,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_failed",
     description:
-      "Mark the work order as failed with a reason. This is a TERMINAL action ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
+      "Mark the work order as failed with a reason. This is a TERMINAL action -- the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -320,7 +349,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "transition_state",
     description:
-      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂreview, in_progressÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂfailed, reviewÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂdone.",
+      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progress->review, in_progress->failed, review->done.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -342,137 +371,9 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
-    name: "github_list_files",
-    description:
-      "List files in a GitHub repository directory. Returns file names, paths, and types (file/dir).",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format, e.g. olivergale/metis-portal2",
-        },
-        path: {
-          type: "string",
-          description: "Directory path within the repo (default: root)",
-        },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
-        },
-      },
-      required: ["repo"],
-    },
-  },
-  {
-    name: "github_create_branch",
-    description:
-      "Create a new branch in a GitHub repository from a base branch.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format",
-        },
-        branch_name: {
-          type: "string",
-          description: "Name for the new branch",
-        },
-        from_branch: {
-          type: "string",
-          description: "Base branch to create from (default: main)",
-        },
-      },
-      required: ["repo", "branch_name"],
-    },
-  },
-  {
-    name: "github_create_pr",
-    description:
-      "Create a pull request in a GitHub repository.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format",
-        },
-        title: {
-          type: "string",
-          description: "PR title",
-        },
-        body: {
-          type: "string",
-          description: "PR description/body",
-        },
-        head: {
-          type: "string",
-          description: "Branch containing changes",
-        },
-        base: {
-          type: "string",
-          description: "Branch to merge into (default: main)",
-        },
-      },
-      required: ["repo", "title", "head"],
-    },
-  },
-  {
-    name: "web_fetch",
-    description:
-      "Fetch content from a web URL. Returns the response body as text. Use for accessing external APIs or web resources.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        url: {
-          type: "string",
-          description: "URL to fetch",
-        },
-        method: {
-          type: "string",
-          description: "HTTP method (default: GET)",
-          enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-        },
-        headers: {
-          type: "object",
-          description: "HTTP headers as key-value pairs",
-        },
-        body: {
-          type: "string",
-          description: "Request body (for POST/PUT/PATCH)",
-        },
-      },
-      required: ["url"],
-    },
-  },
-  {
-    name: "search_knowledge_base",
-    description:
-      "Search the institutional knowledge base (lessons learned, directives, decisions). Returns relevant entries based on semantic similarity.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        query: {
-          type: "string",
-          description: "Search query",
-        },
-        limit: {
-          type: "number",
-          description: "Max results to return (default: 10)",
-        },
-        filters: {
-          type: "object",
-          description: "Optional filters (e.g. {\"severity\": \"critical\"})",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Use to delegate implementation subtasks to cheaper/faster models while the parent continues planning and verification.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking — parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -497,26 +398,42 @@ export const TOOL_DEFINITIONS: Tool[] = [
           type: "string",
           description: "Context/plan text to inject into the child WO's team_context for shared understanding",
         },
-        blocking: {
-          type: "boolean",
-          description: "If true, parent waits (polls) for child completion. If false (default), parent continues immediately.",
-        },
       },
       required: ["name", "objective", "acceptance_criteria"],
+    },
+  },
+  {
+    name: "check_child_status",
+    description:
+      "Check the status of a delegated child work order. Returns current status, summary (if completed/failed), and last activity. Use after delegate_subtask to poll for child completion.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        child_slug: {
+          type: "string",
+          description: "Slug of the child work order (e.g. WO-0300)",
+        },
+        child_id: {
+          type: "string",
+          description: "UUID of the child work order (alternative to child_slug)",
+        },
+      },
+      required: [],
     },
   },
 ];
 
 // Tool categories for filtering
-const ORCHESTRATION_TOOLS = ["delegate_subtask"];
+const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_write_file"];
+const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 
 /**
  * Return filtered tool list based on WO tags AND agent role (tools_allowed).
  * WO-0166: Intersects tag-based filtering with agent.tools_allowed from DB.
+ * WO-0203: GitHub tools now default-on. Only remediation/sql-only restricts to DB-only.
  *
  * Priority: agent.tools_allowed is the hard limit. Tag-based filtering
  * further reduces within what the agent is allowed.
@@ -528,13 +445,12 @@ export async function getToolsForWO(
 ): Promise<Tool[]> {
   const tagSet = new Set(tags || []);
 
-  // Step 1: Tag-based filtering (same as before)
+  // Step 1: Tag-based filtering -- 2 tiers
+  // Tier 1 (restricted): remediation/sql-only -> system + supabase only
+  // Tier 2 (default): everything else -> all tools
   let tagFiltered: Tool[];
   if (tagSet.has("remediation") || tagSet.has("sql-only")) {
     const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS]);
-    tagFiltered = TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
-  } else if (!tagSet.has("github") && !tagSet.has("build") && !tagSet.has("code-delivery")) {
-    const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS, ...DEPLOY_TOOLS]);
     tagFiltered = TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
   } else {
     tagFiltered = [...TOOL_DEFINITIONS];
@@ -554,7 +470,7 @@ export async function getToolsForWO(
         tagFiltered = tagFiltered.filter((t) => agentAllowed.has(t.name));
       }
     } catch {
-      // Agent lookup failed ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ fall through with tag-only filtering
+      // Agent lookup failed -- fall through with tag-only filtering
     }
   }
 
@@ -566,10 +482,6 @@ export function getToolsForWOSync(tags: string[]): Tool[] {
   const tagSet = new Set(tags || []);
   if (tagSet.has("remediation") || tagSet.has("sql-only")) {
     const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS]);
-    return TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
-  }
-  if (!tagSet.has("github") && !tagSet.has("build") && !tagSet.has("code-delivery")) {
-    const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS, ...DEPLOY_TOOLS]);
     return TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
   }
   return TOOL_DEFINITIONS;
@@ -592,6 +504,8 @@ export async function dispatchTool(
       return handleGithubReadFile(toolInput, ctx);
     case "github_write_file":
       return handleGithubWriteFile(toolInput, ctx);
+    case "github_edit_file":
+      return handleGithubEditFile(toolInput, ctx);
     case "deploy_edge_function":
       return handleDeployEdgeFunction(toolInput, ctx);
     case "log_progress":
@@ -610,6 +524,10 @@ export async function dispatchTool(
       return handleUpdateQaChecklist(toolInput, ctx);
     case "transition_state":
       return handleTransitionState(toolInput, ctx);
+    case "delegate_subtask":
+      return handleDelegateSubtask(toolInput, ctx);
+    case "check_child_status":
+      return handleCheckChildStatus(toolInput, ctx);
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }

@@ -1,0 +1,68 @@
+name: Deploy Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Detect changed functions
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- supabase/functions/ \
+            | grep -oP 'supabase/functions/\K[^/]+' \
+            | sort -u)
+          echo "functions<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "count=$(echo "$CHANGED" | grep -c . || echo 0)" >> $GITHUB_OUTPUT
+          echo "Changed functions: $CHANGED"
+
+      - name: Deploy changed functions
+        if: steps.changed.outputs.count != '0'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
+            [ -z "$func" ] && continue
+
+            # Skip shared module directories (not deployable)
+            if [ "$func" = "wo-daemon" ] || [ "$func" = "_shared" ]; then
+              echo "Skipping non-deployable: $func"
+              continue
+            fi
+
+            # Check if function directory still exists
+            if [ ! -d "supabase/functions/$func" ]; then
+              echo "Skipping deleted function: $func"
+              continue
+            fi
+
+            echo "Deploying: $func"
+            supabase functions deploy "$func" \
+              --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+              --no-verify-jwt \
+              || echo "WARNING: Failed to deploy $func"
+          done
+
+      - name: Summary
+        if: steps.changed.outputs.count != '0'
+        run: |
+          echo "## Deployed Functions" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
+            [ -z "$func" ] && continue
+            echo "- $func" >> $GITHUB_STEP_SUMMARY
+          done

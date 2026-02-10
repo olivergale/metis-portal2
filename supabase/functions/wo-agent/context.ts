@@ -1,9 +1,10 @@
-// wo-agent/context.ts v4
-// Context loading for the agentic work order executor
-// Builds comprehensive system prompt with WO details, directives, lessons, schema
+// wo-agent/context.ts v7
+// v7: WO-0245 — delegate_subtask + github_edit_file tool descriptions, restored v6 features
+// v6: WO-0253 — use parent_id for remediation context (fallback to parent: tag)
+// v5: WO-0252 — per-agent model selection from agents.model column
+// v4: WO-0164 — tag-filtered directive loading
+// v3: WO-0165 — concurrent WO awareness in agent context
 // v2: Agent name from DB (builder) instead of generated
-// v3: WO-0165 Ã¢ÂÂ concurrent WO awareness in agent context
-// v4: WO-0164 Ã¢ÂÂ tag-filtered directive loading
 
 import {
   loadWorkerPromptTemplate,
@@ -19,6 +20,7 @@ export interface WorkOrderContext {
   systemPrompt: string;
   userMessage: string;
   agentName: string;
+  model: string;
 }
 
 interface WorkOrder {
@@ -36,6 +38,7 @@ interface WorkOrder {
   project_brief_id: string | null;
   depends_on: string[] | null;
   assigned_to: string | null;
+  parent_id: string | null;
 }
 
 /**
@@ -48,15 +51,22 @@ export async function buildAgentContext(
 ): Promise<WorkOrderContext> {
   // Look up agent from DB based on assignment, fallback to builder
   let agentName = "builder";
+  let agentModel = "claude-opus-4-6";
   try {
     const { data: assignedAgent } = await supabase
       .from("agents")
-      .select("name")
+      .select("name, model")
       .eq("id", workOrder.assigned_to || "")
       .single();
     if (assignedAgent?.name) agentName = assignedAgent.name;
+    if (assignedAgent?.model) agentModel = assignedAgent.model;
   } catch {
     // Fallback to builder
+  }
+
+  // WO-0252: Allow WO-level model override via client_info.model
+  if (workOrder.client_info?.model) {
+    agentModel = workOrder.client_info.model;
   }
 
   // Load schema context
@@ -101,21 +111,17 @@ export async function buildAgentContext(
     github_read_file: "Read files from GitHub repos",
     github_write_file: "Write/update files in GitHub repos (whole file)",
     github_edit_file: "Patch-edit files in GitHub (send only the diff, not whole file)",
-    github_list_files: "List files in a GitHub repository directory",
-    github_create_branch: "Create a new branch in a GitHub repository",
-    github_create_pr: "Create a pull request in a GitHub repository",
     deploy_edge_function: "Deploy Supabase Edge Functions (small ones only)",
     log_progress: "Log progress messages",
     read_execution_log: "Read execution logs (useful for remediation)",
     get_schema: "Get database schema reference",
-    mark_complete: "Mark WO complete (TERMINAL Ã¢ÂÂ ends execution)",
-    mark_failed: "Mark WO failed (TERMINAL Ã¢ÂÂ ends execution)",
+    mark_complete: "Mark WO complete (TERMINAL -- ends execution)",
+    mark_failed: "Mark WO failed (TERMINAL -- ends execution)",
     resolve_qa_findings: "Resolve unresolved QA failure findings",
     update_qa_checklist: "Update a QA checklist item status",
     transition_state: "Transition WO status via enforcement RPC",
-    delegate_subtask: "Create a child WO with model assignment and dispatch it",
-    web_fetch: "Fetch content from a web URL (HTTP GET)",
-    search_knowledge_base: "Search institutional knowledge base entries",
+    delegate_subtask: "Create a child WO with model assignment and dispatch it (always non-blocking)",
+    check_child_status: "Check status/summary of a delegated child WO",
   };
   systemPrompt += `## Available Tools (${availableTools.length} for ${agentName})\n`;
   for (const tool of availableTools) {
@@ -129,8 +135,9 @@ export async function buildAgentContext(
   systemPrompt += `4. Call mark_complete with a detailed summary when done\n`;
   systemPrompt += `5. Call mark_failed if you cannot complete the objective\n`;
   systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
-  systemPrompt += `7. Never make up data Ã¢ÂÂ query first, then act\n`;
+  systemPrompt += `7. Never make up data -- query first, then act\n`;
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
+  systemPrompt += `9. For file edits, prefer github_edit_file over github_write_file (saves tokens)\n`;
 
   // Build user message with WO details
   let userMessage = `# Work Order: ${workOrder.slug}\n\n`;
@@ -170,36 +177,48 @@ export async function buildAgentContext(
 
   userMessage += `\n---\nExecute this work order now. Start by logging your plan, then proceed step by step.`;
 
-  return { systemPrompt, userMessage, agentName };
+  return { systemPrompt, userMessage, agentName, model: agentModel };
 }
 
 /**
  * Build remediation-specific context: parent WO details, execution history, QA failures
+ * WO-0253: Use parent_id first, fall back to parent: tag for backwards compat
  */
 async function buildRemediationContext(
   supabase: any,
   workOrder: WorkOrder
 ): Promise<string> {
+  let parentWo: any = null;
+
+  // WO-0253: Use parent_id first
+  if (workOrder.parent_id) {
+    const { data } = await supabase
+      .from("work_orders")
+      .select("id, slug, name, objective, acceptance_criteria, summary, qa_checklist, tags")
+      .eq("id", workOrder.parent_id)
+      .single();
+    parentWo = data;
+  }
+
+  // Fallback to parent: tag if parent_id not set or lookup failed
   const tags = workOrder.tags || [];
   const parentTag = tags.find((t: string) => t.startsWith("parent:"));
-  if (!parentTag) return "";
 
-  const parentSlug = parentTag.replace("parent:", "");
-  let ctx = `## REMEDIATION CONTEXT\n\n`;
-  ctx += `This is a **remediation** work order for parent WO **${parentSlug}**.\n`;
-  ctx += `Fix ONLY the listed failures. Do NOT redo work that already passed.\n\n`;
-
-  // Load parent WO
-  const { data: parentWo } = await supabase
-    .from("work_orders")
-    .select("id, slug, name, objective, acceptance_criteria, summary, qa_checklist, tags")
-    .eq("slug", parentSlug)
-    .single();
-
-  if (!parentWo) {
-    ctx += `**Warning**: Could not load parent WO ${parentSlug}\n\n`;
-    return ctx;
+  if (!parentWo && parentTag) {
+    const parentSlug = parentTag.replace("parent:", "");
+    const { data } = await supabase
+      .from("work_orders")
+      .select("id, slug, name, objective, acceptance_criteria, summary, qa_checklist, tags")
+      .eq("slug", parentSlug)
+      .single();
+    parentWo = data;
   }
+
+  if (!parentWo) return "";
+
+  let ctx = `## REMEDIATION CONTEXT\n\n`;
+  ctx += `This is a **remediation** work order for parent WO **${parentWo.slug}**.\n`;
+  ctx += `Fix ONLY the listed failures. Do NOT redo work that already passed.\n\n`;
 
   ctx += `### Parent Work Order: ${parentWo.name}\n`;
   ctx += `**Objective**: ${parentWo.objective}\n\n`;
@@ -262,14 +281,20 @@ async function buildRemediationContext(
     ctx += `\n`;
   }
 
-  // Previous remediation attempts
-  const { data: prevRemediations } = await supabase
+  // Previous remediation attempts -- use parent_id if available, fallback to tag
+  let prevRemediationQuery = supabase
     .from("work_orders")
     .select("slug, status, summary")
-    .contains("tags", ["remediation", `parent:${parentSlug}`])
     .neq("id", workOrder.id)
     .order("created_at", { ascending: false })
     .limit(3);
+
+  if (workOrder.parent_id) {
+    prevRemediationQuery = prevRemediationQuery.eq("parent_id", workOrder.parent_id);
+  } else {
+    prevRemediationQuery = prevRemediationQuery.contains("tags", ["remediation", `parent:${parentWo.slug}`]);
+  }
+  const { data: prevRemediations } = await prevRemediationQuery;
 
   if (prevRemediations && prevRemediations.length > 0) {
     ctx += `### Previous Remediation Attempts\n`;
@@ -300,7 +325,7 @@ async function buildDependencyContext(
   if (deps && deps.length > 0) {
     for (const dep of deps) {
       ctx += `- **${dep.slug}** (${dep.status}): ${dep.name}`;
-      if (dep.summary) ctx += ` Ã¢ÂÂ ${dep.summary.slice(0, 200)}`;
+      if (dep.summary) ctx += ` -- ${dep.summary.slice(0, 200)}`;
       ctx += `\n`;
     }
     ctx += `\n`;

@@ -103,10 +103,10 @@ async function validateAndRateLimit(supabase: any, endpoint: string, method: str
 async function checkAction(supabase: any, actionName: string, agentId: string | null, workOrderId: string | null): Promise<{ allowed: boolean; error?: StructuredError }> {
   try {
     const { data, error } = await supabase.rpc('check_allowed_action', { p_action_name: actionName, p_agent_id: agentId, p_work_order_id: workOrderId });
-    if (error) { console.warn('check_allowed_action RPC error (continuing):', error); return { allowed: true }; }
+    if (error) { console.error('check_allowed_action RPC error (fail-closed):', error); return { allowed: false, error: buildStructuredError('ERR_ACTION_DENIED', `Action check failed: ${error.message}`) }; }
     if (data && !data.allowed) { return { allowed: false, error: buildStructuredError('ERR_ACTION_DENIED', `Action denied: ${JSON.stringify(data.errors)}`, { action: actionName }) }; }
     return { allowed: true };
-  } catch (e) { console.warn('check_allowed_action exception (continuing):', e); return { allowed: true }; }
+  } catch (e: any) { console.error('check_allowed_action exception (fail-closed):', e); return { allowed: false, error: buildStructuredError('ERR_ACTION_DENIED', `Action check exception: ${e.message}`) }; }
 }
 
 async function evaluateGates(supabase: any, workOrderId: string, triggerType: string, context: Record<string, unknown> = {}): Promise<{ approved: boolean; pending?: unknown[]; error?: string }> {
@@ -115,9 +115,9 @@ async function evaluateGates(supabase: any, workOrderId: string, triggerType: st
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const resp = await fetch(`${baseUrl}/functions/v1/evaluate-gates`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` }, body: JSON.stringify({ work_order_id: workOrderId, trigger_type: triggerType, context }) });
     const data = await resp.json();
-    if (!resp.ok) return { approved: true, error: data.error };
+    if (!resp.ok) return { approved: false, error: data.error || 'Gate evaluation returned non-OK status' };
     return { approved: data.approved, pending: data.pending };
-  } catch (e) { console.warn('Gate evaluation failed (continuing):', e); return { approved: true }; }
+  } catch (e: any) { console.error('Gate evaluation failed (fail-closed):', e); return { approved: false, error: `Gate evaluation exception: ${e.message}` }; }
 }
 
 async function logPhase(supabase: any, workOrderId: string, phase: string, agentName = "ilmarinen", detail = {}, iteration = 1) {
@@ -162,24 +162,24 @@ async function initializeQAChecklistIfNeeded(supabase: any, workOrderId: string)
 async function validateQAChecklistComplete(supabase: any, workOrderId: string): Promise<{ complete: boolean; pending_items?: any[]; error?: StructuredError }> {
   try {
     const { data: isComplete, error: checkError } = await supabase.rpc('is_qa_checklist_complete', { wo_id: workOrderId });
-    if (checkError) { console.error('[QA-CHECKLIST] Validation error:', checkError); return { complete: true, error: buildStructuredError('ERR_QA_VALIDATION_FAILED', checkError.message) }; }
+    if (checkError) { console.error('[QA-CHECKLIST] Validation error (fail-closed):', checkError); return { complete: false, error: buildStructuredError('ERR_QA_VALIDATION_FAILED', checkError.message) }; }
     if (isComplete) return { complete: true };
     const { data: wo } = await supabase.from('work_orders').select('qa_checklist').eq('id', workOrderId).single();
     const pendingItems = (wo?.qa_checklist || []).filter((item: any) => item.status === 'pending');
     return { complete: false, pending_items: pendingItems.map((item: any) => ({ id: item.id, name: item.name, description: item.description })), error: buildStructuredError('ERR_QA_CHECKLIST_INCOMPLETE', `${pendingItems.length} items pending`, { count: pendingItems.length }) };
-  } catch (e) { console.error('[QA-CHECKLIST] Exception:', e); return { complete: true, error: buildStructuredError('ERR_QA_VALIDATION_FAILED', (e as Error).message) }; }
+  } catch (e: any) { console.error('[QA-CHECKLIST] Exception (fail-closed):', e); return { complete: false, error: buildStructuredError('ERR_QA_VALIDATION_FAILED', e.message) }; }
 }
 
 async function validateWorkOrderFreshness(supabase: any, workOrderId: string): Promise<{ fresh: boolean; stale_details?: any; error?: string }> {
   try {
     const { data, error } = await supabase.rpc('validate_wo_freshness', { p_work_order_id: workOrderId });
-    if (error) { console.error('[FRESHNESS-CHECK] RPC error:', error); return { fresh: true, error: error.message }; }
-    if (data.error) { console.error('[FRESHNESS-CHECK] Validation error:', data.error); return { fresh: true, error: data.error }; }
+    if (error) { console.error('[FRESHNESS-CHECK] RPC error (fail-closed):', error); return { fresh: false, error: error.message }; }
+    if (data.error) { console.error('[FRESHNESS-CHECK] Validation error (fail-closed):', data.error); return { fresh: false, error: data.error }; }
     return {
       fresh: !data.stale,
       stale_details: data.stale ? { conflicts: data.conflicts || [], conflicting_wos: data.conflicting_wos || [], recommendation: data.recommendation || 'update', check_timestamp: data.check_timestamp, wo_created_at: data.wo_created_at, schema_changes_count: data.schema_changes_count || 0, state_mutations_count: data.state_mutations_count || 0, completed_wos_count: data.completed_wos_count || 0 } : undefined
     };
-  } catch (e) { console.error('[FRESHNESS-CHECK] Exception:', e); return { fresh: true, error: (e as Error).message }; }
+  } catch (e: any) { console.error('[FRESHNESS-CHECK] Exception (fail-closed):', e); return { fresh: false, error: e.message }; }
 }
 
 async function refineStaleness(
@@ -280,7 +280,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       const currentTags: string[] = parentWo.tags || [];
       const escalationTags = [...new Set([...currentTags, 'escalation:ilmarinen', 'circuit-breaker-tripped'])];
 
-      await supabase.rpc('update_work_order_state', {
+      const { error: escStateErr } = await supabase.rpc('update_work_order_state', {
         p_work_order_id: parentWo.id,
         p_status: 'failed',
         p_approved_at: null,
@@ -289,6 +289,10 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
         p_completed_at: new Date().toISOString(),
         p_summary: escalationSummary
       });
+      if (escStateErr) {
+        console.error('[REMEDIATION] Escalation state transition failed:', escStateErr);
+        await logPhase(supabase, parentWo.id, "failed", "qa-gate", { action: "escalation_state_failed", error: escStateErr.message, slug: parentWo.slug });
+      }
 
       // Update tags (bypass needed since WO is now failed)
       await supabase.from('work_orders').update({ tags: escalationTags }).eq('id', parentWo.id);
@@ -365,6 +369,12 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
 
     objectiveText += `\n\nParent WO objective: ${(parentWo.objective || '').slice(0, 1000)}`;
 
+    // v61: Pass ALL 9 params explicitly to avoid PostgREST schema cache resolution issues
+    // (WO-0270 dropped the 7-param overload — PostgREST cache miss caused silent failures)
+    const acText = hasEvidenceGaps
+      ? `1. Use resolve_qa_findings tool to resolve false-negative findings on parent WO\n2. Use update_qa_checklist tool to mark parent checklist items as pass with evidence\n3. Verify parent WO ${parentWo.slug} QA gate is clear`
+      : `1. Complete all missing work with tool evidence (execute_sql, apply_migration)\n2. Log progress with log_progress tool\n3. Verify parent WO ${parentWo.slug} passes auto-QA`;
+
     const { data: newWoId, error: createError } = await supabase.rpc('create_draft_work_order', {
       p_slug: null,
       p_name: `Fix: ${parentWo.slug} auto-QA failures (attempt ${attemptNum}/${MAX_ATTEMPTS})`,
@@ -372,18 +382,42 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       p_priority: 'p1_high',
       p_source: 'auto-qa',
       p_tags: ['remediation', `parent:${parentWo.slug}`, 'auto-qa-loop'],
-      p_acceptance_criteria: hasEvidenceGaps
-        ? `1. Use resolve_qa_findings tool to resolve false-negative findings on parent WO\n2. Use update_qa_checklist tool to mark parent checklist items as pass with evidence\n3. Verify parent WO ${parentWo.slug} QA gate is clear`
-        : `1. Complete all missing work with tool evidence (execute_sql, apply_migration)\n2. Log progress with log_progress tool\n3. Verify parent WO ${parentWo.slug} passes auto-QA`
+      p_acceptance_criteria: acText,
+      p_parent_id: parentWo.id,
+      p_client_info: { remediation_attempt: attemptNum, failure_type: hasEvidenceGaps ? 'evidence_gap' : 'actual_bug' }
     });
 
     if (createError) {
       console.error('[REMEDIATION] Failed to create WO:', createError);
+      // Log to execution_log for observability (console.error alone is invisible)
+      try {
+        await supabase.from('work_order_execution_log').insert({
+          work_order_id: parentWo.id,
+          phase: 'stream',
+          agent_name: 'auto-qa',
+          detail: { event_type: 'remediation_error', error: createError.message, code: createError.code }
+        });
+      } catch { /* ignore logging failure */ }
       return { error: createError.message };
     }
 
     // create_draft_work_order returns { id, name, slug, status } — extract UUID
     const woId = typeof newWoId === 'string' ? newWoId : newWoId?.id;
+    const woSlug = typeof newWoId === 'object' ? newWoId?.slug : null;
+
+    if (!woId) {
+      const errMsg = `create_draft_work_order returned unexpected data: ${JSON.stringify(newWoId)}`;
+      console.error('[REMEDIATION]', errMsg);
+      try {
+        await supabase.from('work_order_execution_log').insert({
+          work_order_id: parentWo.id,
+          phase: 'stream',
+          agent_name: 'auto-qa',
+          detail: { event_type: 'remediation_error', error: errMsg }
+        });
+      } catch { /* ignore */ }
+      return { error: errMsg };
+    }
 
     // Set depends_on to block parent completion while remediation is active
     try {
@@ -395,15 +429,30 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       console.error('[REMEDIATION] Failed to set depends_on:', depErr);
     }
 
-    // Auto-start the remediation WO
+    // Auto-start: triggers handle draft→ready→in_progress automatically.
+    // Only call start_work_order if WO is still in draft/ready (trigger may have already started it).
     try {
-      await supabase.rpc('start_work_order', { p_work_order_id: woId });
-      console.log(`[REMEDIATION] Auto-started remediation WO ${woId} for ${parentWo.slug}`);
+      const { data: woCheck } = await supabase.from('work_orders').select('status').eq('id', woId).single();
+      if (woCheck && ['draft', 'ready'].includes(woCheck.status)) {
+        // Look up assigned agent name for start_work_order
+        const { data: agentData } = await supabase.from('work_orders')
+          .select('assigned_to').eq('id', woId).single();
+        let agentName = 'builder';
+        if (agentData?.assigned_to) {
+          const { data: agent } = await supabase.from('agents')
+            .select('name').eq('id', agentData.assigned_to).single();
+          if (agent?.name) agentName = agent.name;
+        }
+        await supabase.rpc('start_work_order', { p_work_order_id: woId, p_agent_name: agentName });
+        console.log(`[REMEDIATION] Manually started remediation WO ${woSlug || woId}`);
+      } else {
+        console.log(`[REMEDIATION] WO ${woSlug || woId} already ${woCheck?.status} (auto-started by triggers)`);
+      }
     } catch (startErr) {
-      console.error('[REMEDIATION] Failed to auto-start:', startErr);
+      console.error('[REMEDIATION] start_work_order failed (non-fatal, triggers may handle):', startErr);
     }
 
-    console.log(`[REMEDIATION] Created remediation WO for ${parentWo.slug} (attempt ${attemptNum})`);
+    console.log(`[REMEDIATION] Created remediation WO ${woSlug || woId} for ${parentWo.slug} (attempt ${attemptNum})`);
     return { remediation_wo_id: woId };
   } catch (e) {
     console.error('[REMEDIATION] Exception:', e);
@@ -841,9 +890,14 @@ Deno.serve(async (req) => {
 
         if ((failCount || 0) === 0 && wo.summary) {
           // Safe to auto-accept: no checklist to evaluate, no outstanding failures, has summary
-          await supabase.rpc('run_sql_void', {
+          const { error: autoAcceptErr } = await supabase.rpc('run_sql_void', {
             sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW() WHERE id = '${work_order_id}' AND status = 'review';`
           });
+          if (autoAcceptErr) {
+            console.error('[AUTO-QA] Auto-accept run_sql_void failed:', autoAcceptErr);
+            await logPhase(supabase, work_order_id, "failed", "qa-gate", { action: "auto-accept-failed", error: autoAcceptErr.message, slug: wo.slug });
+            return new Response(JSON.stringify({ all_pass: true, items_evaluated: 0, accepted: false, failures: [], message: `Auto-accept failed: ${autoAcceptErr.message}` }), { headers: {...corsHeaders,"Content-Type":"application/json"}, status: 500 });
+          }
           await logPhase(supabase, work_order_id, "completing", "qa-gate", { action: "auto-accepted-empty-checklist", slug: wo.slug, reason: "No checklist items, no fail findings, summary present" });
           return new Response(JSON.stringify({ all_pass: true, items_evaluated: 0, accepted: true, failures: [], message: "Auto-accepted: no checklist items, no failures, summary present" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
         }
@@ -1057,9 +1111,13 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
           accepted = true;
           await logPhase(supabase, work_order_id, "completing", "qa-gate", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug, model: 'sonnet-4.5' });
           // v46: If accepted remediation WO, re-trigger parent auto-QA
-          try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e) { console.error('[AUTO-QA] Remediation handler error:', e); }
+          try { await handleRemediationCompletion(supabase, { id: work_order_id, slug: wo.slug, tags: wo.tags }); } catch (e: any) {
+            console.error('[AUTO-QA] Remediation handler error:', e);
+            await logPhase(supabase, work_order_id, "failed", "qa-gate", { action: "remediation-completion-error", error: e.message, slug: wo.slug });
+          }
         } else {
           console.error('[AUTO-QA] Accept transition failed:', acceptError || acceptData);
+          await logPhase(supabase, work_order_id, "failed", "qa-gate", { action: "auto-accept-transition-failed", error: (acceptError?.message || JSON.stringify(acceptData)), slug: wo.slug });
         }
       }
 
@@ -1104,8 +1162,9 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
                 console.log(`[AUTO-QA] Escalated to parent ${parentSlug}: new attempt or circuit breaker`);
               }
             }
-          } catch (escErr) {
+          } catch (escErr: any) {
             console.error('[AUTO-QA] Failed to escalate auto-qa-loop failure:', escErr);
+            await logPhase(supabase, work_order_id, "failed", "qa-gate", { action: "escalation-exception", error: escErr.message, slug: wo.slug });
           }
         }
       }
