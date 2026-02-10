@@ -1,4 +1,5 @@
-// evaluate-gates/index.ts v1
+// evaluate-gates/index.ts v2
+// WO-0207: E2E test - builder code delivery cycle via GitHub (version bump test)
 // P0 Fix 2: Evaluates decision_gates for WO transitions.
 // If gate requires approval, creates approval_queue record.
 // Returns { approved: bool, pending: ApprovalRecord[], auto_approved: string[] }
