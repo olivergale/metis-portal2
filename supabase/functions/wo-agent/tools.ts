@@ -159,7 +159,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "deploy_edge_function",
     description:
-      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly Ã¢ÂÂ only for small functions.",
+      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly ÃÂ¢ÃÂÃÂ only for small functions.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -239,7 +239,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_complete",
     description:
-      "Mark the work order as complete with a summary. This is a TERMINAL action Ã¢ÂÂ the loop will end after this.",
+      "Mark the work order as complete with a summary. This is a TERMINAL action ÃÂ¢ÃÂÃÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -254,7 +254,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_failed",
     description:
-      "Mark the work order as failed with a reason. This is a TERMINAL action Ã¢ÂÂ the loop will end after this.",
+      "Mark the work order as failed with a reason. This is a TERMINAL action ÃÂ¢ÃÂÃÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -312,7 +312,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "transition_state",
     description:
-      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃ¢ÂÂreview, in_progressÃ¢ÂÂfailed, reviewÃ¢ÂÂdone.",
+      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃÂ¢ÃÂÃÂreview, in_progressÃÂ¢ÃÂÃÂfailed, reviewÃÂ¢ÃÂÃÂdone.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -372,6 +372,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 ];
 
 // Tool categories for filtering
+const ORCHESTRATION_TOOLS = ["delegate_subtask"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
 const GITHUB_TOOLS = ["github_read_file", "github_write_file"];
@@ -417,7 +418,7 @@ export async function getToolsForWO(
         tagFiltered = tagFiltered.filter((t) => agentAllowed.has(t.name));
       }
     } catch {
-      // Agent lookup failed Ã¢ÂÂ fall through with tag-only filtering
+      // Agent lookup failed ÃÂ¢ÃÂÃÂ fall through with tag-only filtering
     }
   }
 
