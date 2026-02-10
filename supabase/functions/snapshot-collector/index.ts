@@ -96,32 +96,32 @@ Deno.serve(async (req) => {
     const deadTablesCount = typeof deadTablesResult.data === 'number' ? deadTablesResult.data : 0;
 
     // Calculate percentages
-    const woCancelRate = woData.wo_total > 0 
-      ? Math.round((woData.wo_cancelled / woData.wo_total) * 1000) / 10 
+    const woCancelRate = woTotal > 0 
+      ? Math.round((woCancelled / woTotal) * 1000) / 10 
       : 0;
     
-    const qaPassRate = qaData.qa_findings_total > 0 
-      ? Math.round((qaData.qa_pass_count / qaData.qa_findings_total) * 1000) / 10 
+    const qaPassRate = qaTotal > 0 
+      ? Math.round((qaPass / qaTotal) * 1000) / 10 
       : 0;
     
     const verificationPassRate = verificationCount > 0 
       ? Math.round((verificationCount / verificationCount) * 1000) / 10 
       : 0;
     
-    const enforcerCoverage = woData.wo_total > 0 
-      ? Math.round((enforcerData.enforcer_runs_total / woData.wo_total) * 1000) / 10 
+    const enforcerCoverage = woTotal > 0 
+      ? Math.round((enforcerRunsTotal / woTotal) * 1000) / 10 
       : 0;
     
-    const lessonApplicationRate = lessonData.lessons_total > 0 
-      ? Math.round((lessonData.lessons_applied / lessonData.lessons_total) * 1000) / 10 
+    const lessonApplicationRate = lessonsTotal > 0 
+      ? Math.round((lessonsApplied / lessonsTotal) * 1000) / 10 
       : 0;
     
-    const autoApprovalSuccessRate = autoApprovalData.auto_approval_attempted > 0 
-      ? Math.round((autoApprovalData.auto_approval_succeeded / autoApprovalData.auto_approval_attempted) * 1000) / 10 
+    const autoApprovalSuccessRate = autoApprovalAttempted > 0 
+      ? Math.round((autoApprovalSucceeded / autoApprovalAttempted) * 1000) / 10 
       : 0;
     
-    const jwtCoverage = edgeFunctionData.edge_functions_total > 0 
-      ? Math.round((edgeFunctionData.edge_functions_jwt_enabled / edgeFunctionData.edge_functions_total) * 1000) / 10 
+    const jwtCoverage = edgeFunctionsTotal > 0 
+      ? Math.round((edgeFunctionsJwtEnabled / edgeFunctionsTotal) * 1000) / 10 
       : 0;
 
     // Get triggered_by from request body or default to 'cron'
