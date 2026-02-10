@@ -25,6 +25,7 @@ export function createHeader(activePage: 'chat' | 'workspace' | 'health' | 'regr
     { text: 'Chat', href: 'index.html', page: 'chat' },
     { text: 'Workspace', href: 'workspace.html', page: 'workspace' },
     { text: 'Health', href: 'health.html', page: 'health' },
+    { text: 'Regression', href: 'regression.html', page: 'regression' },
   ];
 
   links.forEach(link => {
