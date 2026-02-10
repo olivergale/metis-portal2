@@ -3044,13 +3044,22 @@
 
                     {/* Quick action buttons - always visible */}
                     <div className="card-quick-actions">
-                        {(workOrder.status === 'draft' || (workOrder.status === 'ready' && !workOrder.approved_at)) && (
+                        {workOrder.status === 'draft' && (
                             <button
                                 className="card-action-btn approve-btn"
                                 onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id); }}
                                 disabled={isLoading}
                             >
-                                {isLoading === 'approve' ? 'Approving...' : '✓ Approve & Start'}
+                                {isLoading === 'approve' ? 'Approving...' : '✓ Approve'}
+                            </button>
+                        )}
+                        {workOrder.status === 'ready' && !workOrder.approved_at && (
+                            <button
+                                className="card-action-btn approve-btn"
+                                onClick={(e) => { e.stopPropagation(); onApprove(workOrder.id, false, true); }}
+                                disabled={isLoading}
+                            >
+                                {isLoading === 'approve' ? 'Starting...' : '▶ Start'}
                             </button>
                         )}
                         {workOrder.status === 'review' && (
@@ -4082,10 +4091,29 @@
                 }
             };
 
-            const handleApprove = async (workOrderId, acknowledgeDuplicates = false) => {
+            const handleApprove = async (workOrderId, acknowledgeDuplicates = false, startOnly = false) => {
                 if (actionLoading[workOrderId]) return;
                 setActionLoading(prev => ({ ...prev, [workOrderId]: 'approve' }));
                 try {
+                    // For ready+unapproved WOs, skip approve and just start
+                    if (startOnly) {
+                        const wo = workOrders.find(w => w.id === workOrderId);
+                        const agentName = wo?.assigned_to ? agents.find(a => a.id === wo.assigned_to)?.name : null;
+                        if (!agentName) {
+                            addToast('No agent assigned - cannot start', 'error');
+                            return;
+                        }
+                        await api('/rest/v1/rpc/start_work_order', {
+                            method: 'POST',
+                            body: JSON.stringify({ p_work_order_id: workOrderId, p_agent_name: agentName }),
+                        });
+                        setWorkOrders(prev => prev.map(w =>
+                            w.id === workOrderId ? { ...w, status: 'in_progress', approved_at: new Date().toISOString(), started_at: new Date().toISOString() } : w
+                        ));
+                        addToast('Work order started', 'success');
+                        return;
+                    }
+
                     const res = await fetch(`${SUPABASE_URL}/functions/v1/work-order-executor/approve`, {
                         method: 'POST',
                         headers: {
@@ -4102,7 +4130,6 @@
                         return;
                     }
                     if (!res.ok) {
-                        // AC6: Display structured error codes
                         const errorMsg = data.error_code
                             ? `[${data.error_code}] ${data.error || data.message || 'Approval failed'}`
                             : (data.error || `Approval failed (${res.status})`);
@@ -4110,32 +4137,10 @@
                         return;
                     }
                     if (data.approved) {
-                        // After approval, auto-start if agent is assigned
-                        const wo = workOrders.find(w => w.id === workOrderId);
-                        const agentName = wo?.assigned_to ? agents.find(a => a.id === wo.assigned_to)?.name : null;
-                        if (agentName) {
-                            try {
-                                await api('/rest/v1/rpc/start_work_order', {
-                                    method: 'POST',
-                                    body: JSON.stringify({ p_work_order_id: workOrderId, p_agent_name: agentName }),
-                                });
-                                setWorkOrders(prev => prev.map(w =>
-                                    w.id === workOrderId ? { ...w, status: 'in_progress', approved_at: new Date().toISOString(), started_at: new Date().toISOString() } : w
-                                ));
-                                addToast('Work order approved and started', 'success');
-                            } catch (startErr) {
-                                // Approval succeeded but start failed — still show as ready
-                                setWorkOrders(prev => prev.map(w =>
-                                    w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
-                                ));
-                                addToast('Approved but auto-start failed: ' + startErr.message, 'warning');
-                            }
-                        } else {
-                            setWorkOrders(prev => prev.map(w =>
-                                w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
-                            ));
-                            addToast('Work order approved - ready for execution', 'success');
-                        }
+                        setWorkOrders(prev => prev.map(w =>
+                            w.id === workOrderId ? { ...w, status: 'ready', approved_at: new Date().toISOString() } : w
+                        ));
+                        addToast('Work order approved', 'success');
                     } else {
                         // AC6: Display structured error codes
                         const errorMsg = data.error_code
@@ -4408,21 +4413,8 @@
                         );
                     });
 
-                // Filter archived WOs unless showArchived is enabled
-                // Only hide: cancelled WOs and non-escalated failed WOs
-                // Done WOs always show (stale filter already handles old ones)
-                const archivedFiltered = showArchived
-                    ? searchFiltered
-                    : searchFiltered.filter(wo => {
-                        if (wo.status === 'cancelled') return false;
-                        if (wo.status === 'failed') {
-                            return wo.tags?.some(tag => tag.startsWith('escalation:'));
-                        }
-                        return true;
-                    });
-
                 return COLUMNS.reduce((acc, col) => {
-                    const filtered = archivedFiltered.filter(wo => wo.status === col.id);
+                    const filtered = searchFiltered.filter(wo => wo.status === col.id);
                     // Sort by created_at DESC (newest first)
                     acc[col.id] = filtered.sort((a, b) => {
                         const aDate = new Date(a.created_at);
@@ -4431,7 +4423,7 @@
                     });
                     return acc;
                 }, {});
-            }, [workOrders, searchTerm, showArchived]);
+            }, [workOrders, searchTerm]);
 
             const activeAgents = agents.filter(a => a.status === 'active').length;
             const totalTasks = workOrders.length;
