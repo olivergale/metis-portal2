@@ -190,6 +190,26 @@ serve(async (req: Request) => {
         }
       }
 
+      // WO-0266: Check for error spikes (>5 same error in last 10 minutes)
+      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+      const { data: errorSpikes, error: spikeError } = await supabase
+        .rpc("get_error_spikes", {
+          p_time_window_minutes: 10,
+          p_threshold: 5
+        });
+
+      if (spikeError) {
+        response.errors.push(`Error checking error spikes: ${spikeError.message}`);
+      } else if (errorSpikes && errorSpikes.length > 0) {
+        response.error_spikes = errorSpikes.map((spike: any) => ({
+          error_code: spike.error_code,
+          source_function: spike.source_function,
+          count: spike.error_count,
+          severity: spike.severity,
+          sample_message: spike.sample_message
+        }));
+      }
+
       return new Response(JSON.stringify(response), {
         status: 200,
         headers: { "Content-Type": "application/json" },
