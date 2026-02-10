@@ -1,5 +1,5 @@
 // wo-agent/tool-handlers/delegate.ts
-// WO-0245: delegate_subtask — create child WO with inherited context + model assignment
+// WO-0245: delegate_subtask – create child WO with inherited context + model assignment
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
@@ -9,6 +9,34 @@ const MODEL_TIER_MAP: Record<string, string> = {
   haiku: "claude-haiku-3-20250307",
 };
 
+/**
+ * Log error to error_events table for centralized error tracking
+ * WO-0266: Silent failure detection
+ */
+async function logError(
+  ctx: ToolContext,
+  severity: string,
+  sourceFunction: string,
+  errorCode: string,
+  message: string,
+  context: Record<string, any> = {}
+): Promise<void> {
+  try {
+    await ctx.supabase.rpc("log_error_event", {
+      p_severity: severity,
+      p_source_function: sourceFunction,
+      p_error_code: errorCode,
+      p_message: message,
+      p_context: context,
+      p_work_order_id: ctx.workOrderId,
+      p_agent_id: null,
+    });
+  } catch (e: any) {
+    // Silent failure in error logging - don't cascade
+    console.error(`[ERROR_LOG] Failed to log error: ${e.message}`);
+  }
+}
+
 export async function handleDelegateSubtask(
   input: Record<string, any>,
   ctx: ToolContext
@@ -17,15 +45,21 @@ export async function handleDelegateSubtask(
 
   // Validate required params
   if (!name || !objective) {
-    return { success: false, error: "Missing required parameters: name, objective" };
+    const errorMsg = "Missing required parameters: name, objective";
+    await logError(ctx, "error", "wo-agent/delegate_subtask", "MISSING_PARAMS", errorMsg, { provided: Object.keys(input) });
+    return { success: false, error: errorMsg };
   }
   if (!acceptance_criteria) {
-    return { success: false, error: "Missing required parameter: acceptance_criteria (must be numbered lines)" };
+    const errorMsg = "Missing required parameter: acceptance_criteria (must be numbered lines)";
+    await logError(ctx, "error", "wo-agent/delegate_subtask", "MISSING_AC", errorMsg, { name, objective });
+    return { success: false, error: errorMsg };
   }
 
   const tier = (model_tier || "sonnet").toLowerCase();
   if (!MODEL_TIER_MAP[tier]) {
-    return { success: false, error: `Invalid model_tier: ${tier}. Must be opus, sonnet, or haiku` };
+    const errorMsg = `Invalid model_tier: ${tier}. Must be opus, sonnet, or haiku`;
+    await logError(ctx, "error", "wo-agent/delegate_subtask", "INVALID_MODEL_TIER", errorMsg, { provided: tier });
+    return { success: false, error: errorMsg };
   }
 
   try {
@@ -37,7 +71,9 @@ export async function handleDelegateSubtask(
       .single();
 
     if (parentErr || !parentWo) {
-      return { success: false, error: `Could not fetch parent WO: ${parentErr?.message}` };
+      const errorMsg = `Could not fetch parent WO: ${parentErr?.message}`;
+      await logError(ctx, "error", "wo-agent/delegate_subtask", "PARENT_WO_NOT_FOUND", errorMsg, { work_order_id: ctx.workOrderId });
+      return { success: false, error: errorMsg };
     }
 
     // Inherit parent tags minus remediation/auto-qa-loop, add parent: tag
@@ -60,13 +96,17 @@ export async function handleDelegateSubtask(
     });
 
     if (createErr) {
-      return { success: false, error: `create_draft_work_order failed: ${createErr.message}` };
+      const errorMsg = `create_draft_work_order failed: ${createErr.message}`;
+      await logError(ctx, "error", "wo-agent/delegate_subtask", "CREATE_CHILD_FAILED", errorMsg, { name, objective });
+      return { success: false, error: errorMsg };
     }
 
     const childId = childWo?.id;
     const childSlug = childWo?.slug;
     if (!childId) {
-      return { success: false, error: "create_draft_work_order returned no id" };
+      const errorMsg = "create_draft_work_order returned no id";
+      await logError(ctx, "error", "wo-agent/delegate_subtask", "NO_CHILD_ID", errorMsg, { response: childWo });
+      return { success: false, error: errorMsg };
     }
 
     // 3. Write context_injection to team_context (if provided)
@@ -81,7 +121,8 @@ export async function handleDelegateSubtask(
       });
 
       if (ctxErr) {
-        // Non-fatal — log warning but continue
+        // Non-fatal – log warning but continue
+        await logError(ctx, "warning", "wo-agent/delegate_subtask", "CONTEXT_INJECTION_FAILED", ctxErr.message, { child_id: childId, child_slug: childSlug });
         await ctx.supabase.from("work_order_execution_log").insert({
           work_order_id: ctx.workOrderId,
           phase: "stream",
@@ -102,9 +143,11 @@ export async function handleDelegateSubtask(
     });
 
     if (startErr) {
+      const errorMsg = `Child WO ${childSlug} created but start_work_order failed: ${startErr.message}`;
+      await logError(ctx, "error", "wo-agent/delegate_subtask", "START_CHILD_FAILED", errorMsg, { child_id: childId, child_slug: childSlug });
       return {
         success: false,
-        error: `Child WO ${childSlug} created but start_work_order failed: ${startErr.message}`,
+        error: errorMsg,
       };
     }
 
@@ -159,7 +202,7 @@ export async function handleDelegateSubtask(
         }
       }
 
-      // Timeout — return current status
+      // Timeout – return current status
       return {
         success: true,
         data: {
@@ -173,7 +216,7 @@ export async function handleDelegateSubtask(
       };
     }
 
-    // 7. Non-blocking — return immediately
+    // 7. Non-blocking – return immediately
     return {
       success: true,
       data: {
@@ -185,6 +228,8 @@ export async function handleDelegateSubtask(
       },
     };
   } catch (e: any) {
-    return { success: false, error: `delegate_subtask exception: ${e.message}` };
+    const errorMsg = `delegate_subtask exception: ${e.message}`;
+    await logError(ctx, "error", "wo-agent/delegate_subtask", "EXCEPTION", errorMsg, { stack: e.stack?.substring(0, 500) });
+    return { success: false, error: errorMsg };
   }
 }
