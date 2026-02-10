@@ -1,14 +1,42 @@
 // wo-agent/tool-handlers/supabase.ts
-// WO-0186: Bypass guard — non-master agents cannot use set_config to bypass enforcement
+// WO-0186: Bypass guard â non-master agents cannot use set_config to bypass enforcement
 // WO-0166: Read-only guard for non-executor agents
 // Supabase database tools: execute_sql, apply_migration, read_table
 
 import type { ToolContext, ToolResult } from "../tools.ts";
 
 /**
+ * Log error to error_events table for centralized error tracking
+ * WO-0266: Silent failure detection
+ */
+async function logError(
+  ctx: ToolContext,
+  severity: string,
+  sourceFunction: string,
+  errorCode: string,
+  message: string,
+  context: Record<string, any> = {}
+): Promise<void> {
+  try {
+    await ctx.supabase.rpc("log_error_event", {
+      p_severity: severity,
+      p_source_function: sourceFunction,
+      p_error_code: errorCode,
+      p_message: message,
+      p_context: context,
+      p_work_order_id: ctx.workOrderId,
+      p_agent_id: null,
+    });
+  } catch (e: any) {
+    // Silent failure in error logging - don't cascade
+    console.error(`[ERROR_LOG] Failed to log error: ${e.message}`);
+  }
+}
+
+/**
  * Execute SQL via the run_sql() RPC function (service_role only).
  * Returns query results as JSONB array.
- * NOTE: run_sql wraps query in SELECT jsonb_agg(...) — DDL will fail silently.
+ * NOTE: run_sql wraps query in SELECT jsonb_agg(...) â DDL will fail silently.
  * Use executeDdlViaRpc() for DDL operations.
  */
 async function executeSqlViaRpc(query: string, supabase: any): Promise<{ data: any; error: string | null }> {
@@ -29,7 +57,7 @@ async function executeSqlViaRpc(query: string, supabase: any): Promise<{ data: a
 
 /**
  * Execute DDL via run_sql_void() RPC (service_role only).
- * Uses EXECUTE directly — DDL persists correctly.
+ * Uses EXECUTE directly â DDL persists correctly.
  * Returns {success: true} or {error: "..."}.
  */
 async function executeDdlViaRpc(query: string, supabase: any): Promise<{ success: boolean; error: string | null }> {
@@ -113,12 +141,12 @@ export async function handleApplyMigration(
 
   try {
     // WO-0165: Advisory lock to serialize DDL across concurrent agents.
-    // Uses run_sql_void (EXECUTE directly) — run_sql wraps in SELECT subquery which breaks DDL.
+    // Uses run_sql_void (EXECUTE directly) â run_sql wraps in SELECT subquery which breaks DDL.
     const lockedQuery = `SET LOCAL lock_timeout = '10s'; SELECT pg_advisory_xact_lock(hashtext('${name.replace(/'/g, "''")}')); ${query}`;
     const { success: ddlOk, error } = await executeDdlViaRpc(lockedQuery, ctx.supabase);
     if (!ddlOk || error) {
       if (error && (error.includes("lock timeout") || error.includes("could not obtain lock"))) {
-        return { success: false, error: `Migration blocked — another agent is running DDL. Try again in a few seconds.` };
+        return { success: false, error: `Migration blocked â another agent is running DDL. Try again in a few seconds.` };
       }
       return { success: false, error: `Migration failed: ${error || "unknown DDL error"}` };
     }
