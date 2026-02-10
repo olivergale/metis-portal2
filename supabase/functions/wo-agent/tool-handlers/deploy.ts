@@ -46,9 +46,11 @@ export async function handleDeployEdgeFunction(
   // Safety: refuse to deploy large functions via this path
   const totalSize = files.reduce((acc: number, f: any) => acc + (f.content?.length || 0), 0);
   if (totalSize > 50000) {
+    const errorMsg = `Function too large (${totalSize} chars). Deploy via CLI instead to avoid partial deploys.`;
+    await logError(ctx, "warning", "wo-agent/deploy_edge_function", "FUNCTION_TOO_LARGE", errorMsg, { function_name, totalSize });
     return {
       success: false,
-      error: `Function too large (${totalSize} chars). Deploy via CLI instead to avoid partial deploys.`,
+      error: errorMsg,
     };
   }
 
