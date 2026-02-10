@@ -93,11 +93,11 @@ serve(async (req) => {
 
     // Create alert WO if threshold exceeded
     if (failuresLastHour >= 3) {
-      console.log(`â ï¸ HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
+      console.log(`Ã¢ÂÂ Ã¯Â¸Â HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
       
       const { error: alertError } = await supabase.rpc('create_draft_work_order', {
         p_slug: null,
-        p_name: `ð¨ High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
+        p_name: `Ã°ÂÂÂ¨ High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
         p_objective: `Investigate spike in work order failures. ${failuresLastHour} WOs failed in the last hour (trending ${trending}). Recent failures: ${recentFailures?.slice(0, 5).map(f => f.slug).join(', ')}`,
         p_priority: 'p0_critical',
         p_source: 'daemon',
@@ -201,7 +201,7 @@ serve(async (req) => {
             needs_decomposition: true
           });
 
-          console.log(`â ï¸ DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
+          console.log(`Ã¢ÂÂ Ã¯Â¸Â DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
         }
       }
     }
@@ -238,12 +238,12 @@ serve(async (req) => {
           needs_escalation: true
         });
 
-        console.log(`ð¨ SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
+        console.log(`Ã°ÂÂÂ¨ SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
 
         // Create escalation WO
         const { error: escalateError } = await supabase.rpc('create_draft_work_order', {
           p_slug: null,
-          p_name: `ð Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
+          p_name: `Ã°ÂÂÂ Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
           p_objective: `Manual intervention required. Work order ${parent?.slug} (${parentId}) has failed ${failCount} automated remediation attempts. Review execution logs and determine root cause.`,
           p_priority: 'p0_critical',
           p_source: 'daemon',
@@ -326,17 +326,17 @@ serve(async (req) => {
     if (snapshotError) console.error('Failed to save health snapshot:', snapshotError);
 
     console.log("Health check complete:", {
-      status: snapshot.health_status,
-      summary: snapshot.metrics_summary
+      status: health_status,
+      summary: snapshot.metadata.summary
     });
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        health_status: snapshot.health_status,
+        health_status,
         metrics,
-        summary: snapshot.metrics_summary,
-        timestamp: snapshot.timestamp
+        summary: snapshot.metadata.summary,
+        timestamp: snapshot.snapshot_at
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
