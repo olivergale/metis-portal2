@@ -22,6 +22,13 @@ interface HealthCheckResponse {
     minutes_since_checkpoint: number;
   }>;
   marked_failed: string[];
+  error_spikes: Array<{
+    error_code: string;
+    source_function: string;
+    count: number;
+    severity: string;
+    sample_message: string;
+  }>;
   errors: string[];
 }
 
