@@ -44,6 +44,7 @@ serve(async (req: Request) => {
         stuck_wos: [],
         continuation_wos_skipped: [],
         marked_failed: [],
+        error_spikes: [],
         errors: [],
       };
 
