@@ -167,7 +167,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "deploy_edge_function",
     description:
-      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ only for small functions.",
+      "Deploy a Supabase Edge Function. Provide the function name and file contents. Use sparingly ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ only for small functions.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -247,7 +247,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_complete",
     description:
-      "Mark the work order as complete with a summary. This is a TERMINAL action ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
+      "Mark the work order as complete with a summary. This is a TERMINAL action ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -262,7 +262,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "mark_failed",
     description:
-      "Mark the work order as failed with a reason. This is a TERMINAL action ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
+      "Mark the work order as failed with a reason. This is a TERMINAL action ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ the loop will end after this.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -320,7 +320,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "transition_state",
     description:
-      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂreview, in_progressÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂfailed, reviewÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂdone.",
+      "Transition a work order's status via the enforcement layer (no bypass). Use this instead of direct SQL UPDATE on work_orders.status. Valid transitions: in_progressÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂreview, in_progressÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂfailed, reviewÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂdone.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -339,6 +339,134 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["new_status"],
+    },
+  },
+  {
+    name: "github_list_files",
+    description:
+      "List files in a GitHub repository directory. Returns file names, paths, and types (file/dir).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format, e.g. olivergale/metis-portal2",
+        },
+        path: {
+          type: "string",
+          description: "Directory path within the repo (default: root)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github_create_branch",
+    description:
+      "Create a new branch in a GitHub repository from a base branch.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format",
+        },
+        branch_name: {
+          type: "string",
+          description: "Name for the new branch",
+        },
+        from_branch: {
+          type: "string",
+          description: "Base branch to create from (default: main)",
+        },
+      },
+      required: ["repo", "branch_name"],
+    },
+  },
+  {
+    name: "github_create_pr",
+    description:
+      "Create a pull request in a GitHub repository.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format",
+        },
+        title: {
+          type: "string",
+          description: "PR title",
+        },
+        body: {
+          type: "string",
+          description: "PR description/body",
+        },
+        head: {
+          type: "string",
+          description: "Branch containing changes",
+        },
+        base: {
+          type: "string",
+          description: "Branch to merge into (default: main)",
+        },
+      },
+      required: ["repo", "title", "head"],
+    },
+  },
+  {
+    name: "web_fetch",
+    description:
+      "Fetch content from a web URL. Returns the response body as text. Use for accessing external APIs or web resources.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: {
+          type: "string",
+          description: "URL to fetch",
+        },
+        method: {
+          type: "string",
+          description: "HTTP method (default: GET)",
+          enum: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+        },
+        headers: {
+          type: "object",
+          description: "HTTP headers as key-value pairs",
+        },
+        body: {
+          type: "string",
+          description: "Request body (for POST/PUT/PATCH)",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "search_knowledge_base",
+    description:
+      "Search the institutional knowledge base (lessons learned, directives, decisions). Returns relevant entries based on semantic similarity.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query",
+        },
+        limit: {
+          type: "number",
+          description: "Max results to return (default: 10)",
+        },
+        filters: {
+          type: "object",
+          description: "Optional filters (e.g. {\"severity\": \"critical\"})",
+        },
+      },
+      required: ["query"],
     },
   },
   {
@@ -426,7 +554,7 @@ export async function getToolsForWO(
         tagFiltered = tagFiltered.filter((t) => agentAllowed.has(t.name));
       }
     } catch {
-      // Agent lookup failed ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ fall through with tag-only filtering
+      // Agent lookup failed ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ fall through with tag-only filtering
     }
   }
 
