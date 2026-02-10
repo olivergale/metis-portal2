@@ -1,4 +1,4 @@
-export function createHeader(activePage: 'chat' | 'workspace' | 'health'): HTMLElement {
+export function createHeader(activePage: 'chat' | 'workspace' | 'health' | 'regression'): HTMLElement {
   const nav = document.createElement('nav');
   nav.style.cssText = `
     display: flex;
