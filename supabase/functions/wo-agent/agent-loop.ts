@@ -1,5 +1,5 @@
 // wo-agent/agent-loop.ts v6
-// WO-0187: Continuation pattern Ã¢ÂÂ checkpoint at ~100s, self-reinvoke via pg_net
+// WO-0187: Continuation pattern ÃÂ¢ÃÂÃÂ checkpoint at ~100s, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -11,10 +11,10 @@ import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type 
 
 const INITIAL_BUDGET = 15; // Start with 15 turns, extend based on velocity
 const REMEDIATION_INITIAL_BUDGET = 20; // Remediation gets more room to investigate
-const HARD_CEILING = 50; // Absolute max Ã¢ÂÂ never exceed regardless of velocity
+const HARD_CEILING = 50; // Absolute max ÃÂ¢ÃÂÃÂ never exceed regardless of velocity
 const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
-const TIMEOUT_MS = 125_000; // 125s Ã¢ÂÂ leave 25s buffer for 150s edge function limit
-const CHECKPOINT_MS = 100_000; // 100s Ã¢ÂÂ save checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 125_000; // 125s ÃÂ¢ÃÂÃÂ leave 25s buffer for 150s edge function limit
+const CHECKPOINT_MS = 100_000; // 100s ÃÂ¢ÃÂÃÂ save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
 const MODEL = "claude-sonnet-4-5-20250929";
 
@@ -230,10 +230,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
 
   while (turn < Math.min(currentBudget, HARD_CEILING)) {
-    // Check checkpoint / timeout Ã¢ÂÂ checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout ÃÂ¢ÃÂÃÂ checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ Ã¢ÂÂ both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ ÃÂ¢ÃÂÃÂ both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -259,6 +259,46 @@ export async function runAgentLoop(
         }
       } catch { /* non-critical */ }
 
+      // WO-0387: Build accomplishments array with tool results for continuation context
+      const accomplishments: Array<{ tool: string; turn: number; summary: string }> = [];
+      for (const tc of toolCalls.filter(tc => MUTATION_TOOLS.has(tc.tool) && tc.success)) {
+        // Get the tool result from execution log for this turn
+        try {
+          const { data: logEntry } = await ctx.supabase
+            .from("work_order_execution_log")
+            .select("detail")
+            .eq("work_order_id", ctx.workOrderId)
+            .eq("phase", "stream")
+            .contains("detail", { tool_name: tc.tool })
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (logEntry?.detail?.content) {
+            const content = typeof logEntry.detail.content === 'string' 
+              ? logEntry.detail.content 
+              : JSON.stringify(logEntry.detail.content);
+            accomplishments.push({
+              tool: tc.tool,
+              turn: tc.turn,
+              summary: content.slice(0, 100),
+            });
+          } else {
+            accomplishments.push({
+              tool: tc.tool,
+              turn: tc.turn,
+              summary: `${tc.tool} completed successfully`,
+            });
+          }
+        } catch {
+          accomplishments.push({
+            tool: tc.tool,
+            turn: tc.turn,
+            summary: `${tc.tool} completed successfully`,
+          });
+        }
+      }
+
       // WO-0371: Call evaluate_wo_lifecycle before saving checkpoint
       const { data: lifecycleVerdict, error: lifecycleErr } = await ctx.supabase.rpc(
         "evaluate_wo_lifecycle",
@@ -270,10 +310,7 @@ export async function runAgentLoop(
             mutations: velocityWindow.mutations,
             turns_completed: turn,
             tools_used: Array.from(velocityWindow.uniqueTools),
-            accomplishments: toolCalls
-              .filter(tc => MUTATION_TOOLS.has(tc.tool) && tc.success)
-              .slice(-10)
-              .map(tc => `${tc.tool} at turn ${tc.turn}`),
+            accomplishments: accomplishments.map(a => `${a.tool} at turn ${a.turn}`),
           },
         }
       );
@@ -328,7 +365,7 @@ export async function runAgentLoop(
     if (messages.length > maxMessages) {
       const trimCount = messages.length - maxMessages;
 
-      // Summarize before discarding Ã¢ÂÂ extract tool calls, mutations, errors
+      // Summarize before discarding ÃÂ¢ÃÂÃÂ extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -477,7 +514,7 @@ export async function runAgentLoop(
             wrapUpInjected = true;
             messages.push({
               role: "user",
-              content: `VELOCITY CHECK Ã¢ÂÂ ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
+              content: `VELOCITY CHECK ÃÂ¢ÃÂÃÂ ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
             });
             console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity WRAP_UP: ${velocity.reason}`);
           } else {
@@ -599,7 +636,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical Ã¢ÂÂ don't fail the loop
+    // Non-critical ÃÂ¢ÃÂÃÂ don't fail the loop
   }
 }
 
