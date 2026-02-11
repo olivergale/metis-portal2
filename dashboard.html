@@ -447,6 +447,61 @@
             }).join('');
         }
 
+        // --- Document staleness ---
+        async function refreshDocuments() {
+            try {
+                const docs = await apiFetch('/rest/v1/project_documents?select=id,title,doc_type,updated_at,status&order=updated_at.desc');
+                renderDocumentStaleness(docs);
+            } catch (err) {
+                console.error('Document refresh error:', err);
+                document.getElementById('docList').innerHTML = '<div class="chart-empty">Failed to load documents</div>';
+            }
+        }
+
+        function calculateStaleness(updatedAt) {
+            const now = Date.now();
+            const updated = new Date(updatedAt).getTime();
+            const daysSince = (now - updated) / (1000 * 60 * 60 * 24);
+            
+            if (daysSince < 30) return { class: 'stale-fresh', label: 'Fresh', color: 'var(--status-active)', days: Math.floor(daysSince) };
+            if (daysSince < 90) return { class: 'stale-aging', label: 'Aging', color: 'var(--status-warning)', days: Math.floor(daysSince) };
+            return { class: 'stale-stale', label: 'Stale', color: 'var(--status-error)', days: Math.floor(daysSince) };
+        }
+
+        function renderDocumentStaleness(docs) {
+            const fresh = docs.filter(d => calculateStaleness(d.updated_at).days < 30).length;
+            const aging = docs.filter(d => {
+                const days = calculateStaleness(d.updated_at).days;
+                return days >= 30 && days < 90;
+            }).length;
+            const stale = docs.filter(d => calculateStaleness(d.updated_at).days >= 90).length;
+
+            document.getElementById('freshCount').textContent = fresh;
+            document.getElementById('agingCount').textContent = aging;
+            document.getElementById('staleCount').textContent = stale;
+
+            const listEl = document.getElementById('docList');
+            if (docs.length === 0) {
+                listEl.innerHTML = '<div class="chart-empty">No documents found</div>';
+                return;
+            }
+
+            listEl.innerHTML = docs.map(doc => {
+                const staleness = calculateStaleness(doc.updated_at);
+                const docType = doc.doc_type || 'unknown';
+                return `<div class="doc-item ${staleness.class}">
+                    <div class="doc-info">
+                        <div class="doc-title">${doc.title || 'Untitled'}</div>
+                        <div class="doc-meta">${docType.toUpperCase()} · ${doc.status || 'draft'} · Updated ${formatDateTime(doc.updated_at)}</div>
+                    </div>
+                    <div class="doc-staleness">
+                        <span class="staleness-dot" style="background: ${staleness.color}"></span>
+                        <span style="color: ${staleness.color}">${staleness.label} (${staleness.days}d)</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
         // --- Main refresh ---
         async function refresh() {
             try {
@@ -456,6 +511,7 @@
                 document.getElementById('lastUpdated').textContent =
                     `${allSnapshots.length} snapshot${allSnapshots.length !== 1 ? 's' : ''} \u00b7 Updated ${new Date().toLocaleTimeString()}`;
                 render();
+                refreshDocuments(); // Add document refresh
             } catch (err) {
                 console.error('Refresh error:', err);
                 setConnection(false);
