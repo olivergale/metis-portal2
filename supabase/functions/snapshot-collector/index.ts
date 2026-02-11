@@ -189,9 +189,9 @@ Deno.serve(async (req) => {
         edge_functions_total: edgeFunctionsTotal,
         edge_functions_jwt_enabled: edgeFunctionsJwtEnabled,
         jwt_coverage_pct: jwtCoverage,
-        total_tokens_consumed: 0, // Not collected in this version
-        total_cost_usd: 0, // Not collected in this version
-        dead_tables_count: deadTablesCount,
+        total_tokens_consumed: tokenData.total_tokens || 0,
+        total_cost_usd: tokenData.total_cost || 0,
+        dead_tables_count: deadTablesData.dead_tables_count || 0,
         triggered_by: triggeredBy,
         metadata: body.metadata || {}
       })
