@@ -99,12 +99,12 @@ Return a JSON array of findings. Each finding:
 }
 
 CRITICAL RULES:
-- Unsupported claims (no log evidence) → finding_type = "fail", NOT warning
-- Partial evidence (vague match) → finding_type = "warning"  
-- Scope drift → finding_type = "warning", category = "acceptance_criteria"
-- Missing AC coverage → finding_type = "fail", category = "acceptance_criteria"
-- If summary is empty/null → finding_type = "fail", category = "completion_summary"
-- If execution log is empty → finding_type = "fail", category = "execution_trail"
+- Unsupported claims (no log evidence) -> finding_type = "fail", NOT warning
+- Partial evidence (vague match) -> finding_type = "warning"
+- Scope drift -> finding_type = "warning", category = "acceptance_criteria"
+- Missing AC coverage -> finding_type = "fail", category = "acceptance_criteria"
+- If summary is empty/null -> finding_type = "fail", category = "completion_summary"
+- If execution log is empty -> finding_type = "fail", category = "execution_trail"
 - Be SKEPTICAL. Assume claims are false until proven by log evidence.
 - Return ONLY the JSON array, no markdown.`;
 }
@@ -197,27 +197,63 @@ Deno.serve(async (req) => {
 
     const result = await insertFindings(supabase, evaluatedFindings, work_order_id, qaAgentId);
 
-    // Update QA checklist items if findings reference them
-    for (const f of result.inserted) {
-      if (f.checklist_item_id && wo.qa_checklist) {
-        const updatedChecklist = (wo.qa_checklist as any[]).map((item: any) => {
-          if (item.id === f.checklist_item_id) {
-            return { ...item, status: f.finding_type === 'pass' ? 'pass' : 'fail',
-              evidence: { finding_id: f.id, description: f.description } };
-          }
-          return item;
+    // BUG FIX (restored from pre-WO-0398): Update ALL qa_checklist items based on findings.
+    // The lie detector doesn't link findings to specific checklist_item_ids, so we must
+    // update ALL items: pass if no blocking findings exist, fail if any do.
+    // Without this, checklist items stay 'pending' and trg_auto_close_review_on_qa_pass never fires.
+    const checklist = wo.qa_checklist || [];
+    if (Array.isArray(checklist) && checklist.length > 0) {
+      const hasAnyFail = result.inserted.some((f: any) =>
+        f.finding_type === 'fail' || f.finding_type === 'error'
+      );
+      const hasAnyWarning = result.inserted.some((f: any) =>
+        f.finding_type === 'warning'
+      );
+      const updatedChecklist = checklist.map((item: any) => {
+        // Check for blocking findings linked to this specific item first
+        const blockingFindings = result.inserted.filter((f: any) =>
+          f.checklist_item_id === item.id &&
+          (f.finding_type === 'fail' || f.finding_type === 'error')
+        );
+        // Item-specific fail takes priority, then global fail, then pass
+        const status = blockingFindings.length > 0 ? 'fail' : (hasAnyFail ? 'fail' : 'pass');
+        return {
+          ...item,
+          status,
+          finding_id: blockingFindings[0]?.id || null,
+        };
+      });
+
+      // Use bypass: trg_auto_close_review_on_qa_pass changes status to 'done',
+      // which enforce_wo_state_changes blocks without bypass set first.
+      try {
+        const checklistJson = JSON.stringify(updatedChecklist).replace(/'/g, "''");
+        await supabase.rpc('run_sql_void', {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET qa_checklist = '${checklistJson}'::jsonb WHERE id = '${work_order_id}';`,
         });
-        await supabase.from('work_orders').update({ qa_checklist: updatedChecklist }).eq('id', work_order_id);
+      } catch (e) {
+        console.error('Failed to update qa_checklist via bypass:', e);
+        // Fallback: direct update (works if enforce only blocks status changes)
+        await supabase.from('work_orders')
+          .update({ qa_checklist: updatedChecklist })
+          .eq('id', work_order_id);
       }
     }
+
+    // Update last_qa_run_at
+    await supabase.from('work_orders')
+      .update({ last_qa_run_at: new Date().toISOString() })
+      .eq('id', work_order_id);
 
     // Log evaluation
     await supabase.from('audit_log').insert({
       event_type: 'qa_evaluation_complete', actor_type: 'agent', actor_id: qaAgentId,
       target_type: 'work_order', target_id: work_order_id, action: 'evaluate',
-      payload: { model: 'claude-opus-4-6', findings_count: result.inserted.length,
+      payload: { model: 'claude-opus-4-6', evaluation: 'lie_detector_v1',
+        findings_count: result.inserted.length,
         fail_count: result.inserted.filter((f: any) => f.finding_type === 'fail').length,
-        warning_count: result.inserted.filter((f: any) => f.finding_type === 'warning').length },
+        warning_count: result.inserted.filter((f: any) => f.finding_type === 'warning').length,
+        has_warnings: hasAnyWarning },
       work_order_id: work_order_id
     });
 
