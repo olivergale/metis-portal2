@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
 
     console.log('Starting platform health snapshot collection...');
 
-    // Query all metrics in parallel using Supabase client directly
+    // Query all metrics in parallel
     const [
       woStats,
       qaStats,
@@ -27,7 +27,8 @@ Deno.serve(async (req) => {
       lessonStats,
       autoApprovalStats,
       edgeFunctionStats,
-      deadTablesResult
+      tokenStats,
+      deadTables
     ] = await Promise.all([
       // Work order statistics
       supabase.from('work_orders').select('status', { count: 'exact', head: false }),
