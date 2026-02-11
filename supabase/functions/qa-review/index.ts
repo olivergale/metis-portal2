@@ -6,409 +6,237 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Valid categories per database constraint
 const VALID_CATEGORIES = [
-  'state_consistency',
-  'acceptance_criteria',
-  'acceptance_criterion',
-  'anomaly',
-  'security',
-  'completeness',
-  'execution_log',
-  'execution_trail',
-  'completion_summary',
-  'qa_checklist',
-  'qa_checklist_item'
+  'state_consistency','acceptance_criteria','acceptance_criterion','anomaly',
+  'security','completeness','execution_log','execution_trail',
+  'completion_summary','qa_checklist','qa_checklist_item'
 ] as const;
 
 const VALID_FINDING_TYPES = ['pass', 'fail', 'warning', 'info', 'na'] as const;
 
 interface QAFinding {
-  id?: string;
-  finding_type: typeof VALID_FINDING_TYPES[number];
-  category: typeof VALID_CATEGORIES[number];
-  description: string;
-  evidence: any;
-  checklist_item_id?: string;
-  error_code?: string;
+  finding_type: string; category: string; description: string;
+  evidence: any; checklist_item_id?: string; error_code?: string;
 }
 
-interface EvidenceRequest {
-  finding_id: string;
-  question: string;
-  required_evidence_type: string;
+function initClients() {
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
+  return { supabase, anthropic };
+}
+
+async function insertFindings(supabase: any, findings: QAFinding[], woId: string, agentId: string) {
+  const inserted: any[] = [], errors: any[] = [];
+  for (const f of findings) {
+    const cat = f.category || 'anomaly';
+    if (!VALID_CATEGORIES.includes(cat as any)) { errors.push({ finding: f, error: `Invalid category: ${cat}` }); continue; }
+    const ft = VALID_FINDING_TYPES.includes(f.finding_type as any) ? f.finding_type : 'warning';
+    const { data, error } = await supabase.from('qa_findings').insert({
+      work_order_id: woId, finding_type: ft, category: cat,
+      description: f.description, evidence: f.evidence || {},
+      agent_id: agentId, checklist_item_id: f.checklist_item_id, error_code: f.error_code
+    }).select().single();
+    if (error) errors.push({ finding: f, error: error.message });
+    else if (data) {
+      inserted.push(data);
+      await supabase.from('audit_log').insert({
+        event_type: 'qa_finding_created', actor_type: 'agent', actor_id: agentId,
+        target_type: 'qa_finding', target_id: data.id, action: 'create',
+        payload: f, work_order_id: woId
+      });
+    }
+  }
+  return { inserted, errors };
+}
+
+function buildLieDetectorPrompt(wo: any, execLog: any[], acList: string) {
+  const logSummary = (execLog || []).map((e: any) => {
+    const d = e.detail || {};
+    const toolInfo = d.tool_name ? ` [tool:${d.tool_name}]` : d.tool_names ? ` [tools:${d.tool_names.join(',')}]` : '';
+    const success = d.success !== undefined ? ` success=${d.success}` : '';
+    const content = d.content ? ` content=${String(d.content).slice(0, 200)}` : '';
+    return `${e.phase}${toolInfo}${success}${content}`;
+  }).join('\n');
+
+  return `You are a FORENSIC QA AUDITOR. Your job is to detect FABRICATION and UNSUPPORTED CLAIMS in work order completion summaries.
+
+## WORK ORDER
+Slug: ${wo.slug}
+Objective: ${wo.objective}
+Acceptance Criteria:
+${acList}
+Summary: ${wo.summary || 'NO SUMMARY PROVIDED'}
+Status: ${wo.status}
+
+## EXECUTION LOG (ground truth - ${(execLog || []).length} entries)
+${logSummary || 'NO EXECUTION LOG ENTRIES'}
+
+## YOUR TASK: FORENSIC VERIFICATION
+For EACH claim in the summary, cross-reference against the execution log. Apply these checks:
+
+### CHECK 1: Claims vs Execution Log Evidence
+Every factual claim in the summary (file created, query run, migration applied, function deployed) MUST have a corresponding execution_log entry. If a claim has NO matching log entry, it is FABRICATED.
+
+### CHECK 2: Mutation Claims vs Actual Mutations
+If the summary says "created table X", "applied migration Y", "inserted Z rows" — there MUST be a matching tool call (apply_migration, execute_sql with INSERT/CREATE) in the log. No matching tool call = FABRICATED.
+
+### CHECK 3: "Deployed" / "Verified" Statements
+If the summary says "deployed function X" or "verified endpoint Y" — there MUST be a deploy_edge_function call or a verification query in the log. Unsubstantiated deploy/verify claims = FABRICATED.
+
+### CHECK 4: Scope Drift Outside ACs
+Compare work done (per execution log) against acceptance criteria. Flag any claims about work NOT in the acceptance criteria. Also flag ACs that were NOT addressed.
+
+### CHECK 5: Inflated or Vague Claims
+Flag summaries that use vague language ("set up", "handled", "implemented properly") without specific evidence. Flag claims of completeness ("all ACs met") when log evidence is thin.
+
+## OUTPUT FORMAT
+Return a JSON array of findings. Each finding:
+{
+  "finding_type": "fail" | "warning" | "info" | "pass",
+  "category": one of [${VALID_CATEGORIES.join(', ')}],
+  "description": "specific description",
+  "evidence": { "claim": "what was claimed", "log_support": "matching log entry or NONE", "verdict": "supported|unsupported|partial" }
+}
+
+CRITICAL RULES:
+- Unsupported claims (no log evidence) → finding_type = "fail", NOT warning
+- Partial evidence (vague match) → finding_type = "warning"  
+- Scope drift → finding_type = "warning", category = "acceptance_criteria"
+- Missing AC coverage → finding_type = "fail", category = "acceptance_criteria"
+- If summary is empty/null → finding_type = "fail", category = "completion_summary"
+- If execution log is empty → finding_type = "fail", category = "execution_trail"
+- Be SKEPTICAL. Assume claims are false until proven by log evidence.
+- Return ONLY the JSON array, no markdown.`;
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { work_order_id, agent_id, findings, evidence_requests } = await req.json();
+    const body = await req.json();
+    const { work_order_id, agent_id, findings, evidence_requests } = body;
 
     if (!work_order_id) {
-      return new Response(
-        JSON.stringify({ error: 'work_order_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ error: 'work_order_id is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY')!;
-
-    const supabase = createClient(supabaseUrl, supabaseKey);
-    const anthropic = new Anthropic({ apiKey: anthropicKey });
-
-    // Get QA agent info
+    const { supabase, anthropic } = initClients();
     const qaAgentId = agent_id || 'a53f20af-69e3-4768-99d1-72be21185af4';
-    const { data: qaAgent } = await supabase
-      .from('agents')
-      .select('*')
-      .eq('id', qaAgentId)
-      .single();
 
-    if (!qaAgent) {
-      return new Response(
-        JSON.stringify({ error: 'QA agent not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const { data: qaAgent } = await supabase.from('agents').select('*').eq('id', qaAgentId).single();
+    if (!qaAgent) return new Response(JSON.stringify({ error: 'QA agent not found' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    // Get work order details
-    const { data: wo, error: woError } = await supabase
-      .from('work_orders')
-      .select('*, qa_checklist')
-      .eq('id', work_order_id)
-      .single();
+    const { data: wo, error: woError } = await supabase.from('work_orders')
+      .select('*, qa_checklist').eq('id', work_order_id).single();
+    if (woError || !wo) return new Response(JSON.stringify({ error: 'Work order not found', details: woError }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    if (woError || !wo) {
-      return new Response(
-        JSON.stringify({ error: 'Work order not found', details: woError }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const { data: execLog } = await supabase.from('work_order_execution_log')
+      .select('*').eq('work_order_id', work_order_id)
+      .order('created_at', { ascending: false }).limit(50);
 
-    // Get execution log for evidence
-    const { data: execLog } = await supabase
-      .from('work_order_execution_log')
-      .select('*')
-      .eq('work_order_id', work_order_id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    // Handle evidence requests if provided
-    if (evidence_requests && evidence_requests.length > 0) {
+    // Handle evidence requests
+    if (evidence_requests?.length > 0) {
       const responses = [];
       for (const request of evidence_requests) {
-        const { data: finding } = await supabase
-          .from('qa_findings')
-          .select('*')
-          .eq('id', request.finding_id)
-          .single();
-
+        const { data: finding } = await supabase.from('qa_findings').select('*').eq('id', request.finding_id).single();
         if (!finding) continue;
-
-        // Use Claude to analyze and respond to evidence request
-        const prompt = `You are a QA agent reviewing a work order. A finding has been flagged:
-
-Finding: ${finding.description}
-Category: ${finding.category}
-Severity: ${finding.finding_type}
-
-Evidence request: ${request.question}
-Required evidence type: ${request.required_evidence_type}
-
-Execution log context:
-${JSON.stringify(execLog?.slice(0, 10), null, 2)}
-
-Work order context:
-- Status: ${wo.status}
-- Objective: ${wo.objective}
-- Summary: ${wo.summary}
-
-Provide a structured response with:
-1. Evidence found (yes/no)
-2. Details of the evidence
-3. Whether this satisfies the finding or if it should be escalated
-
-Respond in JSON format.`;
-
-        const message = await anthropic.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 2000,
-          messages: [{ role: 'user', content: prompt }]
+        const msg = await anthropic.messages.create({
+          model: 'claude-opus-4-6', max_tokens: 2000,
+          messages: [{ role: 'user', content: `QA evidence review.\nFinding: ${finding.description}\nCategory: ${finding.category}\nSeverity: ${finding.finding_type}\nQuestion: ${request.question}\nEvidence type needed: ${request.required_evidence_type}\nExecution log:\n${JSON.stringify(execLog?.slice(0, 10), null, 2)}\nWO status: ${wo.status}, objective: ${wo.objective}, summary: ${wo.summary}\nRespond in JSON: {evidence_found: bool, details: string, satisfies_finding: bool}` }]
         });
-
-        const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
-        let parsedResponse;
-        try {
-          parsedResponse = JSON.parse(responseText);
-        } catch {
-          parsedResponse = { raw_response: responseText };
-        }
-
-        responses.push({
-          finding_id: request.finding_id,
-          request: request.question,
-          response: parsedResponse
-        });
-
-        // Update finding with evidence response
-        await supabase
-          .from('qa_findings')
-          .update({
-            evidence: {
-              ...finding.evidence,
-              evidence_response: parsedResponse,
-              evidence_requested_at: new Date().toISOString()
-            }
-          })
-          .eq('id', request.finding_id);
-
-        // Log to audit_log
+        const txt = msg.content[0].type === 'text' ? msg.content[0].text : '';
+        let parsed; try { parsed = JSON.parse(txt); } catch { parsed = { raw_response: txt }; }
+        responses.push({ finding_id: request.finding_id, request: request.question, response: parsed });
+        await supabase.from('qa_findings').update({
+          evidence: { ...finding.evidence, evidence_response: parsed, evidence_requested_at: new Date().toISOString() }
+        }).eq('id', request.finding_id);
         await supabase.from('audit_log').insert({
-          event_type: 'qa_evidence_requested',
-          actor_type: 'agent',
-          actor_id: qaAgentId,
-          target_type: 'qa_finding',
-          target_id: request.finding_id,
-          action: 'evidence_request',
-          payload: { question: request.question, response: parsedResponse },
-          work_order_id: work_order_id
+          event_type: 'qa_evidence_requested', actor_type: 'agent', actor_id: qaAgentId,
+          target_type: 'qa_finding', target_id: request.finding_id, action: 'evidence_request',
+          payload: { question: request.question, response: parsed }, work_order_id: work_order_id
         });
       }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          evidence_responses: responses,
-          message: `Processed ${responses.length} evidence requests`
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ success: true, evidence_responses: responses,
+        message: `Processed ${responses.length} evidence requests` }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Process findings if provided
-    if (findings && findings.length > 0) {
-      const insertedFindings = [];
-      const errors = [];
-
-      for (const finding of findings) {
-        // Validate category
-        const category = finding.category || 'anomaly';
-        if (!VALID_CATEGORIES.includes(category as any)) {
-          errors.push({ finding, error: `Invalid category: ${category}. Must be one of: ${VALID_CATEGORIES.join(', ')}` });
-          continue;
-        }
-
-        const { data: inserted, error: insertError } = await supabase
-          .from('qa_findings')
-          .insert({
-            work_order_id: work_order_id,
-            finding_type: finding.finding_type || 'warning',
-            category: category,
-            description: finding.description,
-            evidence: finding.evidence || {},
-            agent_id: qaAgentId,
-            checklist_item_id: finding.checklist_item_id,
-            error_code: finding.error_code
-          })
-          .select()
-          .single();
-
-        if (insertError) {
-          errors.push({ finding, error: insertError.message });
-        } else if (inserted) {
-          insertedFindings.push(inserted);
-
-          // Log to audit_log
-          await supabase.from('audit_log').insert({
-            event_type: 'qa_finding_created',
-            actor_type: 'agent',
-            actor_id: qaAgentId,
-            target_type: 'qa_finding',
-            target_id: inserted.id,
-            action: 'create',
-            payload: finding,
-            work_order_id: work_order_id
-          });
-        }
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          findings: insertedFindings,
-          errors: errors.length > 0 ? errors : undefined,
-          message: `Created ${insertedFindings.length} findings${errors.length > 0 ? ` (${errors.length} errors)` : ''}`
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    // Handle direct findings submission
+    if (findings?.length > 0) {
+      const result = await insertFindings(supabase, findings, work_order_id, qaAgentId);
+      return new Response(JSON.stringify({
+        success: true, findings: result.inserted,
+        errors: result.errors.length > 0 ? result.errors : undefined,
+        message: `Created ${result.inserted.length} findings${result.errors.length > 0 ? ` (${result.errors.length} errors)` : ''}`
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Default: Run QA evaluation using Claude
-    const checklistContext = wo.qa_checklist || [];
-    const prompt = `You are a QA agent reviewing work order completion.
-
-Work Order: ${wo.slug}
-Objective: ${wo.objective}
-Status: ${wo.status}
-Summary: ${wo.summary || 'N/A'}
-
-QA Checklist:
-${JSON.stringify(checklistContext, null, 2)}
-
-Recent execution log (last 10 entries):
-${JSON.stringify(execLog?.slice(0, 10), null, 2)}
-
-Evaluate this work order and identify any issues. For each issue found, provide:
-1. finding_type: "error", "warning", or "info"
-2. category: one of ${VALID_CATEGORIES.join(', ')}
-3. description: clear description of the issue
-4. evidence: relevant evidence from logs or checklist
-5. checklist_item_id: if related to a specific checklist item
-
-Respond with a JSON array of findings. If no issues, return empty array.`;
+    // Default: Run LIE DETECTOR QA evaluation
+    const acText = wo.acceptance_criteria || 'No acceptance criteria defined';
+    const prompt = buildLieDetectorPrompt(wo, execLog || [], acText);
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 4000,
+      model: 'claude-opus-4-6', max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
 
     const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
-    let evaluatedFindings = [];
+    let evaluatedFindings: any[] = [];
     try {
       const jsonMatch = responseText.match(/\[.*\]/s);
-      if (jsonMatch) {
-        evaluatedFindings = JSON.parse(jsonMatch[0]);
-      }
-    } catch (e) {
-      console.error('Failed to parse Claude response:', e);
+      if (jsonMatch) evaluatedFindings = JSON.parse(jsonMatch[0]);
+    } catch (e) { console.error('Failed to parse response:', e); }
+
+    // Validate and enforce: unsupported claims MUST be fail
+    for (const f of evaluatedFindings) {
+      if (f.evidence?.verdict === 'unsupported' && f.finding_type !== 'fail') f.finding_type = 'fail';
     }
 
-    // Insert evaluated findings
-    const insertedFindings = [];
-    const errors = [];
+    const result = await insertFindings(supabase, evaluatedFindings, work_order_id, qaAgentId);
 
-    for (const finding of evaluatedFindings) {
-      const category = finding.category || 'anomaly';
-      if (!VALID_CATEGORIES.includes(category as any)) {
-        errors.push({ finding, error: `Invalid category: ${category}` });
-        continue;
-      }
-
-      const { data: inserted } = await supabase
-        .from('qa_findings')
-        .insert({
-          work_order_id: work_order_id,
-          finding_type: finding.finding_type || 'warning',
-          category: category,
-          description: finding.description,
-          evidence: finding.evidence || {},
-          agent_id: qaAgentId,
-          checklist_item_id: finding.checklist_item_id,
-          error_code: finding.error_code
-        })
-        .select()
-        .single();
-
-      if (inserted) {
-        insertedFindings.push(inserted);
-
-        // Log to audit_log
-        await supabase.from('audit_log').insert({
-          event_type: 'qa_finding_created',
-          actor_type: 'agent',
-          actor_id: qaAgentId,
-          target_type: 'qa_finding',
-          target_id: inserted.id,
-          action: 'create',
-          payload: finding,
-          work_order_id: work_order_id
+    // Update QA checklist items if findings reference them
+    for (const f of result.inserted) {
+      if (f.checklist_item_id && wo.qa_checklist) {
+        const updatedChecklist = (wo.qa_checklist as any[]).map((item: any) => {
+          if (item.id === f.checklist_item_id) {
+            return { ...item, status: f.finding_type === 'pass' ? 'pass' : 'fail',
+              evidence: { finding_id: f.id, description: f.description } };
+          }
+          return item;
         });
+        await supabase.from('work_orders').update({ qa_checklist: updatedChecklist }).eq('id', work_order_id);
       }
     }
 
-    // BUG FIX: Update qa_checklist based on findings to close the auto-QA loop.
-    // Without this, checklist items stay 'pending' and trg_auto_close_review_on_qa_pass never fires.
-    const checklist = wo.qa_checklist || [];
-    if (Array.isArray(checklist) && checklist.length > 0) {
-      const updatedChecklist = checklist.map((item: any) => {
-        // Only error/fail findings linked to this item cause failure
-        const blockingFindings = insertedFindings.filter((f: any) =>
-          f.checklist_item_id === item.id &&
-          (f.finding_type === 'error' || f.finding_type === 'fail')
-        );
-        return {
-          ...item,
-          status: blockingFindings.length > 0 ? 'fail' : 'pass',
-          finding_id: blockingFindings[0]?.id || null,
-        };
-      });
-
-      // Use bypass: trg_auto_close_review_on_qa_pass changes status to 'done',
-      // which enforce_wo_state_changes blocks without bypass set first.
-      try {
-        const checklistJson = JSON.stringify(updatedChecklist).replace(/'/g, "''");
-        await supabase.rpc('run_sql_void', {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET qa_checklist = '${checklistJson}'::jsonb WHERE id = '${work_order_id}';`,
-        });
-      } catch (e) {
-        console.error('Failed to update qa_checklist:', e);
-        // Fallback: try direct update (works if enforce only blocks status changes)
-        await supabase
-          .from('work_orders')
-          .update({ qa_checklist: updatedChecklist })
-          .eq('id', work_order_id);
-      }
-    }
-
-    // Update work order last_qa_run_at
-    await supabase
-      .from('work_orders')
-      .update({ last_qa_run_at: new Date().toISOString() })
-      .eq('id', work_order_id);
-
-    // Log QA review completion
+    // Log evaluation
     await supabase.from('audit_log').insert({
-      event_type: 'qa_review_completed',
-      actor_type: 'agent',
-      actor_id: qaAgentId,
-      target_type: 'work_order',
-      target_id: work_order_id,
-      action: 'qa_review',
-      payload: {
-        findings_count: insertedFindings.length,
-        has_errors: insertedFindings.some(f => f.finding_type === 'error'),
-        has_warnings: insertedFindings.some(f => f.finding_type === 'warning')
-      },
+      event_type: 'qa_evaluation_complete', actor_type: 'agent', actor_id: qaAgentId,
+      target_type: 'work_order', target_id: work_order_id, action: 'evaluate',
+      payload: { model: 'claude-opus-4-6', findings_count: result.inserted.length,
+        fail_count: result.inserted.filter((f: any) => f.finding_type === 'fail').length,
+        warning_count: result.inserted.filter((f: any) => f.finding_type === 'warning').length },
       work_order_id: work_order_id
     });
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        findings: insertedFindings,
-        errors: errors.length > 0 ? errors : undefined,
-        evaluation: {
-          total_findings: insertedFindings.length,
-          errors: insertedFindings.filter(f => f.finding_type === 'error').length,
-          warnings: insertedFindings.filter(f => f.finding_type === 'warning').length,
-          info: insertedFindings.filter(f => f.finding_type === 'info').length
-        },
-        message: 'QA review completed'
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({
+      success: true, model: 'claude-opus-4-6', evaluation: 'lie_detector_v1',
+      findings: result.inserted,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+      summary: {
+        total: result.inserted.length,
+        fail: result.inserted.filter((f: any) => f.finding_type === 'fail').length,
+        warning: result.inserted.filter((f: any) => f.finding_type === 'warning').length,
+        info: result.inserted.filter((f: any) => f.finding_type === 'info').length,
+        pass: result.inserted.filter((f: any) => f.finding_type === 'pass').length
+      }
+    }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (error) {
-    console.error('QA review error:', error);
-    return new Response(
-      JSON.stringify({ error: error.message, stack: error.stack }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.error('qa-review error:', error);
+    return new Response(JSON.stringify({ error: 'Internal server error', details: String(error) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
