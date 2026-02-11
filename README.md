@@ -17,7 +17,25 @@ git clone <repository-url>
 cd metis-portal2
 ```
 
-### 2. Install Dependencies
+### 2. Install Git Hooks (Recommended)
+
+Install git hooks to prevent common issues:
+
+```bash
+# Run the install script
+bash .githooks/install.sh
+
+# Or manually
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-push
+```
+
+**Available hooks:**
+- `pre-push` - Prevents CLI-API race condition by blocking pushes when remote has commits not in local
+
+See [`.githooks/README.md`](.githooks/README.md) for details.
+
+### 3. Install Dependencies
 
 ```bash
 # Install Deno (if not already installed)
@@ -129,19 +147,19 @@ curl https://phfblljwuvzqzlbzkzpr.supabase.co/rest/v1/agents \
 
 ```
 metis-portal2/
-├── .env.example          # Environment variable template
-├── deno.json             # Shared Deno configuration and import map
-├── deno.lock             # Dependency lock file
-├── README.md             # This file
-├── supabase/
-│   └── functions/        # Edge functions
-│       ├── portal-chat/
-│       ├── langfuse/
-│       ├── audit-enforcer/
-│       └── ...
-├── index.html            # Portal UI
-├── workspace.html        # Workspace UI
-└── docs/                 # Documentation
+âââ .env.example          # Environment variable template
+âââ deno.json             # Shared Deno configuration and import map
+âââ deno.lock             # Dependency lock file
+âââ README.md             # This file
+âââ supabase/
+â   âââ functions/        # Edge functions
+â       âââ portal-chat/
+â       âââ langfuse/
+â       âââ audit-enforcer/
+â       âââ ...
+âââ index.html            # Portal UI
+âââ workspace.html        # Workspace UI
+âââ docs/                 # Documentation
 ```
 
 ## Development Workflow
