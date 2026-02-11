@@ -160,7 +160,7 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review ÃÂ¢ÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to review ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER = new Set(["ilmarinen"]);
     if (MASTER.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -182,7 +182,7 @@ export async function handleMarkComplete(
       }
     }
 
-    // Check if this is a remediation WO ÃÂ¢ÃÂÃÂ propagate evidence to parent
+    // Check if this is a remediation WO ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ propagate evidence to parent
     const { data: wo } = await ctx.supabase
       .from("work_orders")
       .select("tags")
@@ -243,7 +243,7 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed ÃÂ¢ÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to failed ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER_FAIL = new Set(["ilmarinen"]);
     if (MASTER_FAIL.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -345,7 +345,7 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
-    return { success: true, data: `Checklist item ${checklist_item_id} ÃÂ¢ÃÂÃÂ ${status}` };
+    return { success: true, data: `Checklist item ${checklist_item_id} ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
   }
@@ -353,7 +353,7 @@ export async function handleUpdateQaChecklist(
 
 /**
  * WO-0186: Transition a WO status via the enforcement layer (no bypass).
- * Safe for all agents ÃÂ¢ÃÂÃÂ goes through update_work_order_state() RPC.
+ * Safe for all agents ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ goes through update_work_order_state() RPC.
  */
 export async function handleTransitionState(
   input: Record<string, any>,
@@ -374,7 +374,8 @@ export async function handleTransitionState(
     }
 
     // WO-0236: Correct 7-param RPC signature
-    const { error } = await ctx.supabase.rpc("update_work_order_state", {
+    // WO-0352: Capture both data and error from RPC call
+    const { data: rpcData, error: rpcError } = await ctx.supabase.rpc("update_work_order_state", {
       p_work_order_id: woId,
       p_status: new_status,
       p_approved_at: null,
@@ -384,11 +385,89 @@ export async function handleTransitionState(
       p_summary: summary || null,
     });
 
-    if (error) {
-      return { success: false, error: `transition_state error: ${error.message}` };
+    // WO-0352: Check for RPC error and log it
+    if (rpcError) {
+      // Log error to execution_log
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: woId,
+        phase: "failed",
+        agent_name: ctx.agentName,
+        detail: {
+          event_type: "tool_result",
+          tool_name: "transition_state",
+          content: `transition_state RPC failed: ${rpcError.message}`,
+          new_status,
+          error: rpcError.message,
+          error_code: rpcError.code,
+        },
+      });
+
+      // Log to error_events table
+      await logError(
+        ctx,
+        "error",
+        "handleTransitionState",
+        "ERR_TRANSITION_FAILED",
+        `Failed to transition WO ${woId} to ${new_status}: ${rpcError.message}`,
+        { new_status, rpc_error: rpcError }
+      );
+
+      return { success: false, error: `transition_state RPC failed: ${rpcError.message}` };
     }
 
-    // Log the transition
+    // WO-0352: Verify the status actually changed in the database
+    const { data: woCheck, error: checkError } = await ctx.supabase
+      .from("work_orders")
+      .select("status")
+      .eq("id", woId)
+      .single();
+
+    if (checkError) {
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: woId,
+        phase: "failed",
+        agent_name: ctx.agentName,
+        detail: {
+          event_type: "tool_result",
+          tool_name: "transition_state",
+          content: `Failed to verify status after RPC: ${checkError.message}`,
+          new_status,
+        },
+      });
+      return { success: false, error: `Failed to verify status change: ${checkError.message}` };
+    }
+
+    // WO-0352: Check if status actually matches what we requested
+    if (woCheck?.status !== new_status) {
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: woId,
+        phase: "failed",
+        agent_name: ctx.agentName,
+        detail: {
+          event_type: "tool_result",
+          tool_name: "transition_state",
+          content: `Status mismatch after RPC: expected ${new_status}, got ${woCheck?.status}`,
+          expected_status: new_status,
+          actual_status: woCheck?.status,
+        },
+      });
+
+      await logError(
+        ctx,
+        "error",
+        "handleTransitionState",
+        "ERR_STATUS_MISMATCH",
+        `Status did not persist: expected ${new_status}, got ${woCheck?.status}`,
+        { expected: new_status, actual: woCheck?.status, rpc_data: rpcData }
+      );
+
+      return {
+        success: false,
+        error: `Status transition failed: DB shows ${woCheck?.status} instead of ${new_status}`,
+      };
+    }
+
+    // Log successful transition with verification
     await ctx.supabase.from("work_order_execution_log").insert({
       work_order_id: woId,
       phase: "stream",
@@ -396,18 +475,42 @@ export async function handleTransitionState(
       detail: {
         event_type: "tool_result",
         tool_name: "transition_state",
-        content: `Transitioned to ${new_status} via enforcement RPC`,
+        content: `Successfully transitioned to ${new_status} (verified in DB)`,
         new_status,
+        verified: true,
       },
     });
 
     const isTerminal = new_status === "done" || new_status === "failed";
     return {
       success: true,
-      data: `Work order transitioned to ${new_status}`,
+      data: `Work order transitioned to ${new_status} (verified)`,
       terminal: isTerminal,
     };
   } catch (e: any) {
+    // WO-0352: Log exception to execution_log and error_events
+    await ctx.supabase.from("work_order_execution_log").insert({
+      work_order_id: woId,
+      phase: "failed",
+      agent_name: ctx.agentName,
+      detail: {
+        event_type: "tool_result",
+        tool_name: "transition_state",
+        content: `transition_state exception: ${e.message}`,
+        new_status,
+        exception: e.message,
+      },
+    });
+
+    await logError(
+      ctx,
+      "error",
+      "handleTransitionState",
+      "ERR_TRANSITION_EXCEPTION",
+      `Exception during transition to ${new_status}: ${e.message}`,
+      { new_status, exception: e.message, stack: e.stack }
+    );
+
     return { success: false, error: `transition_state exception: ${e.message}` };
   }
 }
