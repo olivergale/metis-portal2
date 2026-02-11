@@ -1,9 +1,9 @@
 // wo-agent/context.ts v7
-// v7: WO-0245 — delegate_subtask + github_edit_file tool descriptions, restored v6 features
-// v6: WO-0253 — use parent_id for remediation context (fallback to parent: tag)
-// v5: WO-0252 — per-agent model selection from agents.model column
-// v4: WO-0164 — tag-filtered directive loading
-// v3: WO-0165 — concurrent WO awareness in agent context
+// v7: WO-0245 â delegate_subtask + github_edit_file tool descriptions, restored v6 features
+// v6: WO-0253 â use parent_id for remediation context (fallback to parent: tag)
+// v5: WO-0252 â per-agent model selection from agents.model column
+// v4: WO-0164 â tag-filtered directive loading
+// v3: WO-0165 â concurrent WO awareness in agent context
 // v2: Agent name from DB (builder) instead of generated
 
 import {
@@ -96,10 +96,70 @@ export async function buildAgentContext(
     systemPrompt += `\n\n${knowledgeBase}`;
   }
 
+  // Load agent execution profile (WO-0380)
+  let agentProfile: any = null;
+  try {
+    const { data } = await supabase
+      .from("agent_execution_profiles")
+      .select("*")
+      .eq("agent_name", agentName)
+      .single();
+    agentProfile = data;
+  } catch {
+    // Profile not found, continue with defaults
+  }
+
   // Add agent-specific instructions
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
   systemPrompt += `You are executing work order **${workOrder.slug}** (${workOrder.name}).\n`;
   systemPrompt += `Agent identity: **${agentName}**\n\n`;
+
+  // Inject agent profile if available
+  if (agentProfile) {
+    systemPrompt += `## Agent Profile\n`;
+    systemPrompt += `**Mission**: ${agentProfile.mission}\n`;
+    systemPrompt += `**Pace**: ${agentProfile.pace} — `;
+    if (agentProfile.pace === "aggressive") {
+      systemPrompt += `Prioritize speed and iteration velocity. Implement fast, verify incrementally.\n`;
+    } else if (agentProfile.pace === "measured") {
+      systemPrompt += `Balance speed and thoroughness. Plan before executing.\n`;
+    } else {
+      systemPrompt += `Prioritize correctness over speed. Verify before mutating.\n`;
+    }
+    systemPrompt += `**Error Handling**: ${agentProfile.error_style} — `;
+    if (agentProfile.error_style === "retry-then-escalate") {
+      systemPrompt += `Classify errors (retriable vs non-retriable), retry up to ${agentProfile.escalation_rules?.max_retries || 3}x on retriable errors, escalate non-retriable.\n`;
+    } else if (agentProfile.error_style === "fail-fast") {
+      systemPrompt += `Do not retry on errors. Log and exit immediately for manual review.\n`;
+    } else {
+      systemPrompt += `Log errors but continue execution. Do not block on transient failures.\n`;
+    }
+    
+    if (agentProfile.budget_guidance) {
+      systemPrompt += `**Budget Guidance**: Max ${agentProfile.budget_guidance.max_turns || 50} turns. `;
+      systemPrompt += `Target ${Math.round((agentProfile.budget_guidance.mutation_ratio_target || 0.3) * 100)}% mutation rate. `;
+      systemPrompt += `Implement-first: ${agentProfile.budget_guidance.implement_first_pct || 80}%, verify: ${agentProfile.budget_guidance.verification_budget_pct || 20}%.\n`;
+    }
+
+    if (agentProfile.scope_boundaries) {
+      systemPrompt += `**Scope Boundaries**: ${agentProfile.scope_boundaries.mutation_scope || "See allowed_tables"}. `;
+      const protectedTables = agentProfile.scope_boundaries.protected_tables_via_rpc || [];
+      if (protectedTables.length > 0) {
+        systemPrompt += `Protected tables (use state_write RPC): ${protectedTables.join(", ")}.\n`;
+      } else {
+        systemPrompt += `\n`;
+      }
+    }
+
+    if (agentProfile.escalation_rules) {
+      const escalationTarget = agentProfile.escalation_rules.escalation_target || "ops";
+      const escalateOn = agentProfile.escalation_rules.escalate_on || [];
+      if (escalateOn.length > 0) {
+        systemPrompt += `**Escalation**: Escalate to ${escalationTarget} on: ${escalateOn.join(", ")}.\n`;
+      }
+    }
+    systemPrompt += `\n`;
+  }
 
   // WO-0166: Dynamic tool list based on agent role
   const { getToolsForWO } = await import("./tools.ts");
