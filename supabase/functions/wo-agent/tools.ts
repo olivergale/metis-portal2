@@ -8,7 +8,7 @@
 
 import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr } from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
 import { handleWebFetch } from "./tool-handlers/web.ts";
 import {
@@ -194,6 +194,45 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["path", "old_string", "new_string"],
+    },
+  },
+  {
+    name: "github_patch_file",
+    description:
+      "Apply multiple search-and-replace patches to a file in GitHub. Reads the FULL file server-side (no size limit), applies patches sequentially, commits result. Use this for editing large files where github_edit_file old_string would be too large to output, or when multiple edits are needed in one commit.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        path: {
+          type: "string",
+          description: "File path within the repo, e.g. supabase/functions/wo-agent/tools.ts",
+        },
+        patches: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              search: { type: "string", description: "Exact string to find (must exist in file)" },
+              replace: { type: "string", description: "Replacement string" },
+            },
+            required: ["search", "replace"],
+          },
+          description: "Array of {search, replace} patches applied in order. Each search must be found in the file.",
+        },
+        message: {
+          type: "string",
+          description: "Commit message",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["path", "patches"],
     },
   },
   {
@@ -574,7 +613,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file", "github_list_files", "github_create_branch", "github_create_pr"];
+const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file", "github_patch_file", "github_list_files", "github_create_branch", "github_create_pr"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 const WEB_TOOLS = ["web_fetch"];
 
@@ -654,6 +693,8 @@ export async function dispatchTool(
       return handleGithubWriteFile(toolInput, ctx);
     case "github_edit_file":
       return handleGithubEditFile(toolInput, ctx);
+    case "github_patch_file":
+      return handleGithubPatchFile(toolInput, ctx);
     case "deploy_edge_function":
       return handleDeployEdgeFunction(toolInput, ctx);
     case "log_progress":

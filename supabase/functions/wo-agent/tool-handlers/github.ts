@@ -213,6 +213,90 @@ export async function handleGithubEditFile(
   }
 }
 
+export async function handleGithubPatchFile(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, patches, message, branch } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!path || !patches || !Array.isArray(patches) || patches.length === 0) {
+    return { success: false, error: "Missing required parameters: path, patches (array of {search, replace})" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = branch || "main";
+
+    // 1. Read full file (no size limit — this runs server-side)
+    const readResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (readResp.status === 404) {
+      return { success: false, error: `File not found: ${repo}/${path} (branch: ${ref})` };
+    }
+    if (!readResp.ok) {
+      const errText = await readResp.text();
+      return { success: false, error: `Cannot read ${path}: ${readResp.status} ${errText}` };
+    }
+
+    const fileData = await readResp.json();
+    const currentContent = atob(fileData.content.replace(/\n/g, ""));
+    const sha = fileData.sha;
+
+    // 2. Apply patches sequentially
+    let content = currentContent;
+    const applied: string[] = [];
+    for (let i = 0; i < patches.length; i++) {
+      const patch = patches[i];
+      if (!patch.search || patch.replace === undefined) {
+        return { success: false, error: `Patch ${i}: missing 'search' or 'replace' field` };
+      }
+      const idx = content.indexOf(patch.search);
+      if (idx === -1) {
+        return { success: false, error: `Patch ${i}: search string not found in ${path}. First 80 chars: "${patch.search.slice(0, 80)}"` };
+      }
+      content = content.replace(patch.search, patch.replace);
+      applied.push(`Patch ${i}: replaced ${patch.search.length} chars with ${patch.replace.length} chars`);
+    }
+
+    // 3. Write back
+    const encodedContent = btoa(unescape(encodeURIComponent(content)));
+    const commitMsg = message || `Patch ${path} via github_patch_file (${patches.length} patches)`;
+
+    const writeResp = await fetch(`${GITHUB_API}/repos/${repo}/contents/${path}`, {
+      method: "PUT",
+      headers: githubHeaders(token),
+      body: JSON.stringify({ message: commitMsg, content: encodedContent, sha, branch: ref }),
+    });
+
+    if (!writeResp.ok) {
+      const errText = await writeResp.text();
+      return { success: false, error: `GitHub write error ${writeResp.status}: ${errText}` };
+    }
+
+    const result = await writeResp.json();
+    return {
+      success: true,
+      data: {
+        commit_sha: result.commit?.sha,
+        html_url: result.content?.html_url,
+        patches_applied: applied.length,
+        details: applied,
+        message: `Patched ${path} in ${repo} (${applied.length} patches)`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_patch_file exception: ${e.message}` };
+  }
+}
+
 export async function handleGithubListFiles(
   input: Record<string, any>,
   ctx: ToolContext
