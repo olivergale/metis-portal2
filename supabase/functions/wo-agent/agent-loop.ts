@@ -18,7 +18,7 @@ const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
 const TIMEOUT_MS = 125_000; // 125s — leave 25s buffer for 150s edge function limit
 const CHECKPOINT_MS = 100_000; // 100s — save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
-const MODEL = "claude-sonnet-4-5-20250929";
+const MODEL = "claude-opus-4-6";
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
