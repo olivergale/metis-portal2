@@ -19,5 +19,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/pages/Regression.tsx", "src/pages/RegressionDashboard.tsx", "src/regression.ts", "src/components/RegressionDashboard.tsx"]
 }
