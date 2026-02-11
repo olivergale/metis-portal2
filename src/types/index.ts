@@ -7,11 +7,33 @@ export interface WorkOrder {
   complexity?: string;
   summary?: string;
   objective?: string;
+  acceptance_criteria?: string;
   assigned_to?: string;
   created_at?: string;
   updated_at?: string;
   started_at?: string;
   completed_at?: string;
+  qa_checklist: any[];
+  parent_id: string | null;
+  depends_on: string[] | null;
+}
+
+export interface ExecutionLogEntry {
+  id: string;
+  work_order_id: string;
+  phase: string;
+  agent_name: string;
+  detail: any;
+  created_at: string;
+}
+
+export interface QAFinding {
+  id: string;
+  finding_type: string;
+  category: string;
+  description: string;
+  evidence: any;
+  created_at: string;
 }
 
 export interface Project {
