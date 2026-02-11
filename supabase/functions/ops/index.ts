@@ -352,6 +352,34 @@ serve(async (req: Request) => {
             failureArchetype = 'exploration_spiral';
           }
           
+          // Circuit breaker: Check if we've already tried to mark this WO as failed
+          const failureAttemptKey = `ops_failure_attempt_${wo.id}`;
+          const existingFailureAttempts = clientInfo[failureAttemptKey] || 0;
+          const maxFailureAttempts = 3;
+
+          if (existingFailureAttempts >= maxFailureAttempts) {
+            // Already tried to fail this WO 3 times - log permanent alert and skip
+            await supabase.from("work_order_execution_log").insert({
+              work_order_id: wo.id,
+              phase: "stream",
+              agent_name: "ops",
+              detail: {
+                event_type: "circuit_breaker_tripped",
+                reason: "max_failure_attempts_reached",
+                failure_attempts: existingFailureAttempts,
+                max_attempts: maxFailureAttempts,
+                minutes_idle: Math.round(minutesIdle * 10) / 10,
+                message: `Circuit breaker: stopped attempting to mark ${wo.slug} as failed after ${existingFailureAttempts} attempts. Manual intervention required.`,
+              },
+            });
+            
+            response.errors.push(
+              `${wo.slug}: Circuit breaker tripped (${existingFailureAttempts} failure attempts). Manual intervention required.`
+            );
+            continue; // Skip this WO
+          }
+
+          // Attempt to transition to failed status
           const { error: failError } = await supabase.rpc(
             "update_work_order_state",
             {
@@ -363,20 +391,65 @@ serve(async (req: Request) => {
             }
           );
 
+          // Log RPC result (success or failure)
           if (failError) {
+            // RPC failed - increment failure attempt counter
+            const newFailureAttempts = existingFailureAttempts + 1;
+            await supabase
+              .from("work_orders")
+              .update({
+                client_info: {
+                  ...clientInfo,
+                  [failureAttemptKey]: newFailureAttempts,
+                  last_failure_attempt_at: new Date().toISOString(),
+                },
+              })
+              .eq("id", wo.id);
+
+            await supabase.from("work_order_execution_log").insert({
+              work_order_id: wo.id,
+              phase: "stream",
+              agent_name: "ops",
+              detail: {
+                event_type: "transition_failed",
+                action: "marked_failed",
+                target_status: "failed",
+                error: failError.message,
+                error_code: failError.code,
+                failure_attempt: newFailureAttempts,
+                max_attempts: maxFailureAttempts,
+                minutes_idle: Math.round(minutesIdle * 10) / 10,
+              },
+            });
+
             response.errors.push(
-              `Error marking ${wo.slug} as failed: ${failError.message}`
+              `Error transitioning ${wo.slug} to failed (attempt ${newFailureAttempts}/${maxFailureAttempts}): ${failError.message}`
             );
           } else {
+            // RPC succeeded - reset failure counter and log success
+            await supabase
+              .from("work_orders")
+              .update({
+                client_info: {
+                  ...clientInfo,
+                  [failureAttemptKey]: 0, // Reset on success
+                  last_failure_transition_at: new Date().toISOString(),
+                },
+              })
+              .eq("id", wo.id);
+
             response.marked_failed.push(wo.slug);
 
-            // Log the failure with enhanced diagnostics
+            // Log the successful transition with enhanced diagnostics
             await supabase.from("work_order_execution_log").insert({
               work_order_id: wo.id,
               phase: "failed",
               agent_name: "ops",
               detail: {
                 event_type: "health_check_failure",
+                action: "marked_failed",
+                target_status: "failed",
+                transition_success: true,
                 reason: "stuck_detection",
                 minutes_idle: Math.round(minutesIdle * 10) / 10,
                 last_activity: lastActivity.toISOString(),
