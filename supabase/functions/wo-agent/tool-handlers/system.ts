@@ -160,7 +160,7 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to review ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER = new Set(["ilmarinen"]);
     if (MASTER.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -182,7 +182,7 @@ export async function handleMarkComplete(
       }
     }
 
-    // Check if this is a remediation WO ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ propagate evidence to parent
+    // Check if this is a remediation WO ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ propagate evidence to parent
     const { data: wo } = await ctx.supabase
       .from("work_orders")
       .select("tags")
@@ -243,7 +243,7 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
+    // Transition to failed ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ non-master agents use enforcement RPC, master uses bypass
     const MASTER_FAIL = new Set(["ilmarinen"]);
     if (MASTER_FAIL.has(ctx.agentName)) {
       await ctx.supabase.rpc("run_sql_void", {
@@ -345,7 +345,7 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
-    return { success: true, data: `Checklist item ${checklist_item_id} ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ${status}` };
+    return { success: true, data: `Checklist item ${checklist_item_id} ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
   }
@@ -353,7 +353,7 @@ export async function handleUpdateQaChecklist(
 
 /**
  * WO-0186: Transition a WO status via the enforcement layer (no bypass).
- * Safe for all agents ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ goes through update_work_order_state() RPC.
+ * Safe for all agents ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ goes through update_work_order_state() RPC.
  */
 export async function handleTransitionState(
   input: Record<string, any>,
@@ -512,6 +512,67 @@ export async function handleTransitionState(
     );
 
     return { success: false, error: `transition_state exception: ${e.message}` };
+  }
+}
+
+export async function handleSearchLessons(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { category, tags, agent_name, limit } = input;
+  const maxLimit = Math.min(limit || 5, 20);
+
+  try {
+    let query = ctx.supabase
+      .from("lessons")
+      .select("id, pattern, rule, context, category, severity, example_good, example_bad, created_at")
+      .eq("review_status", "promoted")
+      .order("created_at", { ascending: false });
+
+    // Filter by category if provided
+    if (category) {
+      query = query.eq("category", category);
+    }
+
+    // Filter by agent relevance if provided
+    if (agent_name) {
+      query = query.or(`reported_by.ilike.%${agent_name}%,context.ilike.%${agent_name}%`);
+    }
+
+    query = query.limit(maxLimit);
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { success: false, error: `search_lessons error: ${error.message}` };
+    }
+
+    // Post-filter by tag overlap if tags provided
+    let results = data || [];
+    if (tags && Array.isArray(tags) && tags.length > 0) {
+      results = results.filter((lesson: any) => {
+        const lessonContext = (lesson.context || "").toLowerCase();
+        return tags.some(tag => lessonContext.includes(tag.toLowerCase()));
+      });
+    }
+
+    // Sort by severity (critical > high > medium > low) and recency
+    const severityWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+    results.sort((a: any, b: any) => {
+      const severityDiff = (severityWeight[b.severity] || 0) - (severityWeight[a.severity] || 0);
+      if (severityDiff !== 0) return severityDiff;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    return { 
+      success: true, 
+      data: {
+        count: results.length,
+        lessons: results.slice(0, maxLimit)
+      }
+    };
+  } catch (e: any) {
+    return { success: false, error: `search_lessons exception: ${e.message}` };
   }
 }
 
