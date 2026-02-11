@@ -526,7 +526,7 @@ export async function handleSearchLessons(
     let query = ctx.supabase
       .from("lessons")
       .select("id, pattern, rule, context, category, severity, example_good, example_bad, created_at")
-      .eq("review_status", "promoted")
+      .eq("review_status", "approved")
       .order("created_at", { ascending: false });
 
     // Filter by category if provided

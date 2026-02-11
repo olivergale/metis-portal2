@@ -1,4 +1,5 @@
-// wo-agent/context.ts v7
+// wo-agent/context.ts v8
+// v8: WO-0405 — per-agent lesson filtering, ROLE_LESSON_CATEGORIES
 // v7: WO-0245 â delegate_subtask + github_edit_file tool descriptions, restored v6 features
 // v6: WO-0253 â use parent_id for remediation context (fallback to parent: tag)
 // v5: WO-0252 â per-agent model selection from agents.model column
@@ -94,6 +95,38 @@ export async function buildAgentContext(
   const knowledgeBase = await loadKnowledgeBase(supabase, agentName, woTags);
   if (knowledgeBase) {
     systemPrompt += `\n\n${knowledgeBase}`;
+  }
+
+  // WO-0405: Load promoted lessons filtered by agent role
+  const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
+    builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
+    "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
+    ops: ["operational", "monitoring", "failure_archetype", "execution"],
+    security: ["security", "enforcement", "approval_flow"],
+    frontend: ["execution", "deployment", "scope_creep"],
+    ilmarinen: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "operational", "scope_creep", "hallucination"],
+    "user-portal": ["approval_flow", "scope_creep"],
+  };
+  try {
+    const roleCategories = ROLE_LESSON_CATEGORIES[agentName] || ROLE_LESSON_CATEGORIES["builder"];
+    const { data: promotedLessons } = await supabase
+      .from("lessons")
+      .select("id, pattern, rule, category, severity")
+      .eq("review_status", "approved")
+      .not("promoted_at", "is", null)
+      .in("category", roleCategories)
+      .order("promoted_at", { ascending: false })
+      .limit(10);
+
+    if (promotedLessons && promotedLessons.length > 0) {
+      systemPrompt += `\n\n## Lessons From Past Failures\n`;
+      for (const lesson of promotedLessons) {
+        const ruleSnippet = (lesson.rule || "").slice(0, 200);
+        systemPrompt += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
+      }
+    }
+  } catch {
+    // Lesson loading failed, non-critical
   }
 
   // Load agent execution profile (WO-0380, WO-0401: model from profile)

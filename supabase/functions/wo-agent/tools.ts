@@ -686,6 +686,8 @@ export async function dispatchTool(
       return handleGithubCreatePr(toolInput, ctx);
     case "search_knowledge_base":
       return handleSearchKnowledgeBase(toolInput, ctx);
+    case "search_lessons":
+      return handleSearchLessons(toolInput, ctx);
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }
