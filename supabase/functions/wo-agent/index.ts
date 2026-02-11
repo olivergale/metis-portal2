@@ -448,11 +448,24 @@ async function handleExecute(req: Request): Promise<Response> {
         childStatusContext += `\n`;
       }
     }
+    // WO-0387: Build accomplishments context from checkpoint detail
+    let accomplishmentsContext = "";
+    if (cp.accomplishments && Array.isArray(cp.accomplishments) && cp.accomplishments.length > 0) {
+      accomplishmentsContext = `## What Was Already Done\n`;
+      for (const acc of cp.accomplishments) {
+        accomplishmentsContext += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
+      }
+      accomplishmentsContext += `\n**Do NOT call read_execution_log** — your progress is listed above.\n\n`;
+    }
+
     finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
     finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
     finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
     finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 5.\n\n`;
+    if (accomplishmentsContext) {
+      finalUserMessage += accomplishmentsContext;
+    }
     finalUserMessage += `## Original Objective\n${wo.objective}\n\n`;
     if (wo.acceptance_criteria) {
       finalUserMessage += `## Acceptance Criteria\n${wo.acceptance_criteria}\n\n`;
