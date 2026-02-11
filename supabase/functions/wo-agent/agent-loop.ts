@@ -1,5 +1,5 @@
 // wo-agent/agent-loop.ts v6
-// WO-0187: Continuation pattern â checkpoint at ~100s, self-reinvoke via pg_net
+// WO-0187: Continuation pattern Ã¢ÂÂ checkpoint at ~100s, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -11,10 +11,10 @@ import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type 
 
 const INITIAL_BUDGET = 15; // Start with 15 turns, extend based on velocity
 const REMEDIATION_INITIAL_BUDGET = 20; // Remediation gets more room to investigate
-const HARD_CEILING = 50; // Absolute max â never exceed regardless of velocity
+const HARD_CEILING = 50; // Absolute max Ã¢ÂÂ never exceed regardless of velocity
 const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
-const TIMEOUT_MS = 125_000; // 125s â leave 25s buffer for 150s edge function limit
-const CHECKPOINT_MS = 100_000; // 100s â save checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 125_000; // 125s Ã¢ÂÂ leave 25s buffer for 150s edge function limit
+const CHECKPOINT_MS = 100_000; // 100s Ã¢ÂÂ save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
 const MODEL = "claude-sonnet-4-5-20250929";
 
@@ -230,10 +230,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
 
   while (turn < Math.min(currentBudget, HARD_CEILING)) {
-    // Check checkpoint / timeout â checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout Ã¢ÂÂ checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ â both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ Ã¢ÂÂ both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -286,6 +286,38 @@ export async function runAgentLoop(
         const reason = lifecycleVerdict.reason || "No reason provided";
 
         console.log(`[AGENT-LOOP] Checkpoint verdict: ${verdict} - ${reason}`);
+        
+        // Log the verdict
+        await ctx.supabase.from("work_order_execution_log").insert({
+          work_order_id: ctx.workOrderId,
+          phase: "stream",
+          agent_name: ctx.agentName,
+          detail: {
+            event_type: "lifecycle_verdict",
+            verdict,
+            reason,
+            context: lifecycleVerdict,
+          },
+        });
+
+        // Act on the verdict
+        if (verdict === "complete") {
+          return { status: "completed", turns: turn, summary: reason, toolCalls };
+        } else if (verdict === "cancel") {
+          return { status: "completed", turns: turn, summary: `Cancelled: ${reason}`, toolCalls };
+        } else if (verdict === "escalate_master" || verdict === "fail") {
+          return { status: "failed", turns: turn, summary: reason, toolCalls };
+        } else if (verdict === "retry_same") {
+          // Inject hint from lifecycle into the agent context
+          const hint = lifecycleVerdict.hint || "Review your approach and try a different strategy.";
+          messages.push({
+            role: "user",
+            content: `CHECKPOINT FEEDBACK: ${reason}\n\nSuggestion: ${hint}\n\nYou have ${Math.min(currentBudget - turn, HARD_CEILING - turn)} turns remaining. Continue working on the objective.`,
+          });
+          console.log(`[AGENT-LOOP] retry_same verdict - injecting hint: ${hint}`);
+          continue; // Skip checkpoint save, continue agent loop
+        }
+        // verdict === "continue" -> fall through to normal checkpoint save
     }
 
     turn++;
@@ -296,7 +328,7 @@ export async function runAgentLoop(
     if (messages.length > maxMessages) {
       const trimCount = messages.length - maxMessages;
 
-      // Summarize before discarding â extract tool calls, mutations, errors
+      // Summarize before discarding Ã¢ÂÂ extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -445,7 +477,7 @@ export async function runAgentLoop(
             wrapUpInjected = true;
             messages.push({
               role: "user",
-              content: `VELOCITY CHECK â ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
+              content: `VELOCITY CHECK Ã¢ÂÂ ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
             });
             console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity WRAP_UP: ${velocity.reason}`);
           } else {
@@ -567,7 +599,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical â don't fail the loop
+    // Non-critical Ã¢ÂÂ don't fail the loop
   }
 }
 
