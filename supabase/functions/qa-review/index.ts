@@ -332,6 +332,40 @@ Respond with a JSON array of findings. If no issues, return empty array.`;
       }
     }
 
+    // BUG FIX: Update qa_checklist based on findings to close the auto-QA loop.
+    // Without this, checklist items stay 'pending' and trg_auto_close_review_on_qa_pass never fires.
+    const checklist = wo.qa_checklist || [];
+    if (Array.isArray(checklist) && checklist.length > 0) {
+      const updatedChecklist = checklist.map((item: any) => {
+        // Only error/fail findings linked to this item cause failure
+        const blockingFindings = insertedFindings.filter((f: any) =>
+          f.checklist_item_id === item.id &&
+          (f.finding_type === 'error' || f.finding_type === 'fail')
+        );
+        return {
+          ...item,
+          status: blockingFindings.length > 0 ? 'fail' : 'pass',
+          finding_id: blockingFindings[0]?.id || null,
+        };
+      });
+
+      // Use bypass: trg_auto_close_review_on_qa_pass changes status to 'done',
+      // which enforce_wo_state_changes blocks without bypass set first.
+      try {
+        const checklistJson = JSON.stringify(updatedChecklist).replace(/'/g, "''");
+        await supabase.rpc('run_sql_void', {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET qa_checklist = '${checklistJson}'::jsonb WHERE id = '${work_order_id}';`,
+        });
+      } catch (e) {
+        console.error('Failed to update qa_checklist:', e);
+        // Fallback: try direct update (works if enforce only blocks status changes)
+        await supabase
+          .from('work_orders')
+          .update({ qa_checklist: updatedChecklist })
+          .eq('id', work_order_id);
+      }
+    }
+
     // Update work order last_qa_run_at
     await supabase
       .from('work_orders')

@@ -1,4 +1,5 @@
-// wo-agent/index.ts v5
+// wo-agent/index.ts v6
+// WO-0387: Smart circuit breaker — evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -44,8 +45,6 @@ Deno.serve(async (req: Request) => {
       case "status":
         return await handleStatus(req);
       case "health-check":
-        // DEPRECATED WO-0381: Health-check functionality moved to sentinel edge function
-        // This endpoint is kept for backward compatibility but will be removed in a future version
         return await handleHealthCheck(req);
       default:
         return jsonResponse({ error: `Unknown action: ${action}` }, 404);
@@ -356,81 +355,46 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("work_order_id", work_order_id)
       .eq("phase", "checkpoint");
 
-    // WO-0371: Replaced fixed 5-checkpoint circuit breaker with productive-delta evaluation
-    // Call evaluate_wo_lifecycle at continuation start
-    const { data: lifecycleVerdict, error: lifecycleErr } = await supabase.rpc(
-      "evaluate_wo_lifecycle",
-      {
+    if ((checkpointCount || 0) >= 5) {
+      // WO-0387: Smart circuit breaker — call evaluate_wo_lifecycle for review-vs-fail decision
+      const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
-        p_event_type: "continuation",
-        p_event_context: {
-          checkpoint_count: checkpointCount || 0,
-          previous_checkpoint: checkpoint.detail,
-        },
-      }
-    );
-
-    if (lifecycleErr) {
-      console.error(`[WO-AGENT] evaluate_wo_lifecycle error:`, lifecycleErr.message);
-      // Fall through to continue execution on lifecycle error
-    } else if (lifecycleVerdict?.verdict) {
-      const verdict = lifecycleVerdict.verdict;
-      const reason = lifecycleVerdict.reason || "No reason provided";
-
-      console.log(`[WO-AGENT] ${wo.slug} continuation verdict: ${verdict} - ${reason}`);
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "stream",
-        agent_name: agentContext.agentName,
-        detail: {
-          event_type: "lifecycle_verdict",
-          verdict,
-          reason,
-          context: lifecycleVerdict,
-        },
+        p_event_type: "checkpoint",
+        p_event_context: { checkpoint_count: checkpointCount },
       });
 
-      if (verdict === "complete") {
-        await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
-        });
-        return jsonResponse({
-          work_order_id: wo.id,
-          slug: wo.slug,
-          status: "completed",
-          turns: 0,
-          summary: reason,
-          tool_calls: 0,
-        });
-      } else if (verdict === "cancel") {
-        await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = 'Cancelled: ${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
-        });
-        return jsonResponse({
-          work_order_id: wo.id,
-          slug: wo.slug,
-          status: "completed",
-          turns: 0,
-          summary: `Cancelled: ${reason}`,
-          tool_calls: 0,
-        });
-      } else if (verdict === "escalate_master" || verdict === "fail") {
-        await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
-        });
-        if (verdict === "escalate_master") {
-          await createFailureRemediation(supabase, wo, reason);
-        }
-        return jsonResponse({
-          work_order_id: wo.id,
-          slug: wo.slug,
-          status: "failed",
-          turns: 0,
-          summary: reason,
-          tool_calls: 0,
-        });
+      if (lifecycleErr) {
+        console.error(`[WO-AGENT] evaluate_wo_lifecycle error:`, lifecycleErr.message);
       }
-      // verdict === "continue" or "retry_same" -> proceed with continuation
+
+      const verdict = lifecycle?.verdict || "fail";
+      const reason = lifecycle?.reason || `Circuit breaker (${checkpointCount} checkpoints)`;
+      const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
+
+      if (verdict === "review") {
+        // SMART PATH: Agent made real mutations → send to review for auto-QA
+        const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
+          detail: { event_type: "circuit_breaker_review", content: summary, verdict, delta: lifecycle?.delta },
+        });
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review', summary = '${summary.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+        });
+        return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
+      } else {
+        // DUMB PATH: No mutations or fail verdict → mark failed + remediation
+        const msg = `${reason}. Marking failed.`;
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
+          detail: { event_type: "circuit_breaker", content: msg, verdict, delta: lifecycle?.delta },
+        });
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+        });
+        await createFailureRemediation(supabase, wo, msg);
+        return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
+      }
     }
 
     // Build continuation context
@@ -448,34 +412,23 @@ async function handleExecute(req: Request): Promise<Response> {
         childStatusContext += `\n`;
       }
     }
-    // WO-0387: Build accomplishments context from checkpoint detail
-    let accomplishmentsContext = "";
-    if (cp.accomplishments && Array.isArray(cp.accomplishments) && cp.accomplishments.length > 0) {
-      accomplishmentsContext = `## What Was Already Done\n`;
-      for (const acc of cp.accomplishments) {
-        accomplishmentsContext += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
-      }
-      accomplishmentsContext += `\n**Do NOT call read_execution_log** Ã¢ÂÂ your progress is listed above.\n\n`;
-    }
-
     finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
-    // WO-0387 AC#3: Display accomplishments instead of generic progress
-    let accomplishmentsSection = "";
-    if (cp.accomplishments && Array.isArray(cp.accomplishments) && cp.accomplishments.length > 0) {
-      accomplishmentsSection = `## What Was Already Done\n`;
-      for (const acc of cp.accomplishments) {
-        accomplishmentsSection += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
-      }
-      accomplishmentsSection += `\n`;
-    } else {
-      accomplishmentsSection = `## Previous Progress\n- ${cp.turns_completed} turns, ${cp.mutations || 0} mutations\n- Last actions: ${cp.last_actions || 'unknown'}\n\n`;
-    }
     finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 5.\n\n`;
-    finalUserMessage += accomplishmentsSection;
-    if (accomplishmentsContext) {
-      finalUserMessage += accomplishmentsContext;
+
+    // WO-0387: Include accomplishments so agent doesn't waste turns rediscovering progress
+    const accomplishments: string[] = cp.accomplishments || [];
+    if (accomplishments.length > 0) {
+      finalUserMessage += `## What Was Already Done\n`;
+      for (const acc of accomplishments) {
+        finalUserMessage += `- ${acc}\n`;
+      }
+      finalUserMessage += `\n**Do NOT call read_execution_log to check progress. The above is your accomplishment list. Continue from where you left off.**\n\n`;
+    } else {
+      finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
+      finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n\n`;
     }
+
     finalUserMessage += `## Original Objective\n${wo.objective}\n\n`;
     if (wo.acceptance_criteria) {
       finalUserMessage += `## Acceptance Criteria\n${wo.acceptance_criteria}\n\n`;
@@ -483,7 +436,7 @@ async function handleExecute(req: Request): Promise<Response> {
     if (childStatusContext) {
       finalUserMessage += childStatusContext;
     }
-    finalUserMessage += `**IMPORTANT**: Do NOT redo work already done. Verify what was completed, then finish the remaining items. Call mark_complete when done.\n`;
+    finalUserMessage += `**IMPORTANT**: Do NOT redo work already done. Continue from where you left off. Call mark_complete when done.\n`;
 
     await supabase.from("work_order_execution_log").insert({
       work_order_id: wo.id, phase: "continuation", agent_name: agentContext.agentName,

@@ -1,5 +1,7 @@
-// wo-agent/agent-loop.ts v6
-// WO-0187: Continuation pattern ÃÂ¢ÃÂÃÂ checkpoint at ~100s, self-reinvoke via pg_net
+// wo-agent/agent-loop.ts v8
+// WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
+// WO-0378: Message corruption fix — repairMessages, dispatchTool try/catch, pair-safe trimming
+// WO-0187: Continuation pattern — checkpoint at ~100s, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -11,10 +13,10 @@ import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type 
 
 const INITIAL_BUDGET = 15; // Start with 15 turns, extend based on velocity
 const REMEDIATION_INITIAL_BUDGET = 20; // Remediation gets more room to investigate
-const HARD_CEILING = 50; // Absolute max ÃÂ¢ÃÂÃÂ never exceed regardless of velocity
+const HARD_CEILING = 50; // Absolute max — never exceed regardless of velocity
 const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
-const TIMEOUT_MS = 125_000; // 125s ÃÂ¢ÃÂÃÂ leave 25s buffer for 150s edge function limit
-const CHECKPOINT_MS = 100_000; // 100s ÃÂ¢ÃÂÃÂ save checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 125_000; // 125s — leave 25s buffer for 150s edge function limit
+const CHECKPOINT_MS = 100_000; // 100s — save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
 const MODEL = "claude-sonnet-4-5-20250929";
 
@@ -163,11 +165,67 @@ function summarizeTrimmedMessages(
   return summary.slice(0, 4000);
 }
 
+/**
+ * WO-0378: Repair corrupted message history where tool_use blocks lack matching tool_result.
+ * This happens when dispatchTool throws an unhandled exception after assistant message is pushed
+ * but before tool_results are pushed. Also handles trimming that splits pairs.
+ * Returns the number of repairs made.
+ */
+function repairMessages(messages: Array<{ role: string; content: any }>): number {
+  let repairs = 0;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+
+    const toolUseBlocks = (msg.content as any[]).filter((b: any) => b.type === 'tool_use');
+    if (toolUseBlocks.length === 0) continue;
+
+    // Check if next message has matching tool_results
+    const nextMsg = messages[i + 1];
+    if (!nextMsg || nextMsg.role !== 'user' || !Array.isArray(nextMsg.content)) {
+      // No matching user message with tool_results — inject one
+      const dummyResults = toolUseBlocks.map((tb: any) => ({
+        type: 'tool_result' as const,
+        tool_use_id: tb.id,
+        content: 'Error: Tool execution was interrupted (message repair)',
+        is_error: true,
+      }));
+      messages.splice(i + 1, 0, { role: 'user', content: dummyResults });
+      repairs += toolUseBlocks.length;
+      continue;
+    }
+
+    // Check for missing tool_results in the next message
+    const existingResultIds = new Set(
+      (nextMsg.content as any[])
+        .filter((b: any) => b.type === 'tool_result')
+        .map((b: any) => b.tool_use_id)
+    );
+
+    const missingResults = toolUseBlocks.filter((tb: any) => !existingResultIds.has(tb.id));
+    if (missingResults.length > 0) {
+      // Add missing tool_results to existing user message
+      for (const tb of missingResults) {
+        (nextMsg.content as any[]).push({
+          type: 'tool_result',
+          tool_use_id: tb.id,
+          content: 'Error: Tool execution was interrupted (message repair)',
+          is_error: true,
+        });
+        repairs++;
+      }
+    }
+  }
+
+  return repairs;
+}
+
 export interface AgentLoopResult {
   status: "completed" | "failed" | "timeout" | "max_turns" | "checkpoint";
   turns: number;
   summary: string;
-  toolCalls: Array<{ turn: number; tool: string; success: boolean }>;
+  toolCalls: Array<{ turn: number; tool: string; success: boolean; migrationName?: string; filePath?: string; progressNote?: string }>;
 }
 
 export async function runAgentLoop(
@@ -230,10 +288,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
 
   while (turn < Math.min(currentBudget, HARD_CEILING)) {
-    // Check checkpoint / timeout ÃÂ¢ÃÂÃÂ checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout — checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ ÃÂ¢ÃÂÃÂ both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ — both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -259,102 +317,34 @@ export async function runAgentLoop(
         }
       } catch { /* non-critical */ }
 
-      // WO-0387: Build accomplishments array with tool results for continuation context
-      const accomplishments: Array<{ tool: string; turn: number; summary: string }> = [];
-      for (const tc of toolCalls.filter(tc => MUTATION_TOOLS.has(tc.tool) && tc.success)) {
-        // Get the tool result from execution log for this turn
-        try {
-          const { data: logEntry } = await ctx.supabase
-            .from("work_order_execution_log")
-            .select("detail")
-            .eq("work_order_id", ctx.workOrderId)
-            .eq("phase", "stream")
-            .contains("detail", { tool_name: tc.tool })
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .single();
-          
-          if (logEntry?.detail?.content) {
-            const content = typeof logEntry.detail.content === 'string' 
-              ? logEntry.detail.content 
-              : JSON.stringify(logEntry.detail.content);
-            accomplishments.push({
-              tool: tc.tool,
-              turn: tc.turn,
-              summary: content.slice(0, 100),
-            });
-          } else {
-            accomplishments.push({
-              tool: tc.tool,
-              turn: tc.turn,
-              summary: `${tc.tool} completed successfully`,
-            });
-          }
-        } catch {
-          accomplishments.push({
-            tool: tc.tool,
-            turn: tc.turn,
-            summary: `${tc.tool} completed successfully`,
-          });
-        }
-      }
-
-      // WO-0371: Call evaluate_wo_lifecycle before saving checkpoint
-      const { data: lifecycleVerdict, error: lifecycleErr } = await ctx.supabase.rpc(
-        "evaluate_wo_lifecycle",
-        {
-          p_wo_id: ctx.workOrderId,
-          p_event_type: "checkpoint",
-          p_event_context: {
-            checkpoint_number: turn,
-            mutations: velocityWindow.mutations,
-            turns_completed: turn,
-            tools_used: Array.from(velocityWindow.uniqueTools),
-            accomplishments: accomplishments.map(a => `${a.tool} at turn ${a.turn}`),
-          },
-        }
-      );
-
-      if (lifecycleErr) {
-        console.error(`[AGENT-LOOP] evaluate_wo_lifecycle error:`, lifecycleErr.message);
-        // Fall through to checkpoint on error
-      } else if (lifecycleVerdict?.verdict) {
-        const verdict = lifecycleVerdict.verdict;
-        const reason = lifecycleVerdict.reason || "No reason provided";
-
-        console.log(`[AGENT-LOOP] Checkpoint verdict: ${verdict} - ${reason}`);
-        
-        // Log the verdict
-        await ctx.supabase.from("work_order_execution_log").insert({
-          work_order_id: ctx.workOrderId,
-          phase: "stream",
-          agent_name: ctx.agentName,
-          detail: {
-            event_type: "lifecycle_verdict",
-            verdict,
-            reason,
-            context: lifecycleVerdict,
-          },
+      // WO-0387: Build accomplishments for continuation context
+      const accomplishments = toolCalls
+        .filter(tc => tc.success && (tc.migrationName || tc.filePath || tc.progressNote))
+        .map(tc => {
+          if (tc.migrationName) return `Applied migration: ${tc.migrationName}`;
+          if (tc.filePath) return `Wrote: ${tc.filePath}`;
+          if (tc.progressNote) return tc.progressNote;
+          return `${tc.tool} (ok)`;
         });
 
-        // Act on the verdict
-        if (verdict === "complete") {
-          return { status: "completed", turns: turn, summary: reason, toolCalls };
-        } else if (verdict === "cancel") {
-          return { status: "completed", turns: turn, summary: `Cancelled: ${reason}`, toolCalls };
-        } else if (verdict === "escalate_master" || verdict === "fail") {
-          return { status: "failed", turns: turn, summary: reason, toolCalls };
-        } else if (verdict === "retry_same") {
-          // Inject hint from lifecycle into the agent context
-          const hint = lifecycleVerdict.hint || "Review your approach and try a different strategy.";
-          messages.push({
-            role: "user",
-            content: `CHECKPOINT FEEDBACK: ${reason}\n\nSuggestion: ${hint}\n\nYou have ${Math.min(currentBudget - turn, HARD_CEILING - turn)} turns remaining. Continue working on the objective.`,
-          });
-          console.log(`[AGENT-LOOP] retry_same verdict - injecting hint: ${hint}`);
-          continue; // Skip checkpoint save, continue agent loop
-        }
-        // verdict === "continue" -> fall through to normal checkpoint save
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: ctx.workOrderId,
+        phase: "checkpoint",
+        agent_name: ctx.agentName,
+        detail: {
+          event_type: "checkpoint",
+          turns_completed: turn,
+          tools_used: Array.from(velocityWindow.uniqueTools),
+          mutations: velocityWindow.mutations,
+          last_actions: lastActions,
+          elapsed_ms: elapsed,
+          budget_remaining: Math.min(currentBudget, HARD_CEILING) - turn,
+          delegated_children: childWOs.length > 0 ? childWOs : undefined,
+          accomplishments: accomplishments.length > 0 ? accomplishments : undefined,
+        },
+      });
+
+      return { status: "checkpoint", turns: turn, summary, toolCalls };
     }
 
     turn++;
@@ -363,9 +353,23 @@ export async function runAgentLoop(
     // Keep: first user message (index 0) + summary (index 1) + last MAX_HISTORY_PAIRS*2 messages
     const maxMessages = 1 + MAX_HISTORY_PAIRS * 2; // first msg + pairs
     if (messages.length > maxMessages) {
-      const trimCount = messages.length - maxMessages;
+      let trimCount = messages.length - maxMessages;
 
-      // Summarize before discarding ÃÂ¢ÃÂÃÂ extract tool calls, mutations, errors
+      // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair.
+      // If the message at (1 + trimCount) is a user message with tool_results,
+      // its preceding assistant message has tool_use blocks — keep the pair together.
+      const cutIdx = 1 + trimCount;
+      if (cutIdx < messages.length) {
+        const msgAtCut = messages[cutIdx];
+        if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
+            (msgAtCut.content as any[]).some((b: any) => b.type === 'tool_result')) {
+          // This is a tool_result message — its assistant pair is at cutIdx-1
+          // Include it in the trim to keep pairs intact
+          trimCount += 1;
+        }
+      }
+
+      // Summarize before discarding — extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -383,6 +387,12 @@ export async function runAgentLoop(
       } else {
         messages.splice(1, 0, { role: 'user', content: historySummary });
       }
+    }
+
+    // WO-0378: Repair any corrupted tool_use/tool_result pairs before API call
+    const repairs = repairMessages(messages);
+    if (repairs > 0) {
+      console.log(`[WO-AGENT] Repaired ${repairs} corrupted tool_use/tool_result pairs for ${ctx.workOrderSlug}`);
     }
 
     console.log(`[WO-AGENT] Turn ${turn}/${currentBudget} for ${ctx.workOrderSlug} (msgs: ${messages.length}, ceiling: ${HARD_CEILING})`);
@@ -440,16 +450,27 @@ export async function runAgentLoop(
         let terminalReached = false;
 
         for (const toolBlock of toolBlocks) {
-          const result = await dispatchTool(
-            toolBlock.name,
-            toolBlock.input as Record<string, any>,
-            ctx
-          );
+          // WO-0378: Wrap dispatchTool so exceptions never corrupt message history
+          let result;
+          try {
+            result = await dispatchTool(
+              toolBlock.name,
+              toolBlock.input as Record<string, any>,
+              ctx
+            );
+          } catch (dispatchErr: any) {
+            console.error(`[WO-AGENT] dispatchTool exception for ${toolBlock.name}:`, dispatchErr.message);
+            result = { success: false, error: `Tool dispatch exception: ${dispatchErr.message}`, terminal: false, data: null };
+          }
 
           toolCalls.push({
             turn,
             tool: toolBlock.name,
             success: result.success,
+            // WO-0387: Capture metadata for checkpoint accomplishments
+            migrationName: toolBlock.name === 'apply_migration' && result.success ? (toolBlock.input as any)?.name : undefined,
+            filePath: (toolBlock.name === 'github_write_file' || toolBlock.name === 'github_edit_file') && result.success ? (toolBlock.input as any)?.path : undefined,
+            progressNote: toolBlock.name === 'log_progress' && result.success ? String((toolBlock.input as any)?.content || '').slice(0, 100) : undefined,
           });
 
           // Log tool result
@@ -514,7 +535,7 @@ export async function runAgentLoop(
             wrapUpInjected = true;
             messages.push({
               role: "user",
-              content: `VELOCITY CHECK ÃÂ¢ÃÂÃÂ ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
+              content: `VELOCITY CHECK — ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
             });
             console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity WRAP_UP: ${velocity.reason}`);
           } else {
@@ -636,7 +657,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical ÃÂ¢ÃÂÃÂ don't fail the loop
+    // Non-critical — don't fail the loop
   }
 }
 
