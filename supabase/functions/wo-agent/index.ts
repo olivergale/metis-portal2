@@ -71,6 +71,27 @@ async function createFailureRemediation(
       return;
     }
 
+    // WO-0363: REMEDIATION BIRTH CHECK - Check if parent is already done
+    const { data: parentStatus } = await supabase
+      .from("work_orders")
+      .select("id, slug, status")
+      .eq("id", wo.id)
+      .single();
+
+    if (parentStatus && parentStatus.status === "done") {
+      console.log(`[WO-AGENT] Skip remediation for ${wo.slug} - parent already done`);
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id,
+        phase: "stream",
+        agent_name: "wo-agent",
+        detail: {
+          event_type: "remediation_skipped_parent_done",
+          content: `Remediation creation skipped because parent ${wo.slug} is already done`,
+        },
+      }).then(null, () => {});
+      return;
+    }
+
     const { data: existing } = await supabase
       .from("work_orders")
       .select("id, slug, status")
@@ -86,6 +107,26 @@ async function createFailureRemediation(
     }
 
     const attempts = (existing || []).length;
+    
+    // WO-0363: REMEDIATION DEPTH LIMIT - Stop at 2 attempts instead of 3
+    if (attempts >= 2) {
+      console.log(`[WO-AGENT] Remediation depth limit: ${attempts}/2 for ${wo.slug} - tagging for human review`);
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id,
+        phase: "stream",
+        agent_name: "wo-agent",
+        detail: {
+          event_type: "remediation_depth_exceeded",
+          content: `Remediation depth limit reached (${attempts} existing). Parent ${wo.slug} tagged for human review.`,
+        },
+      }).then(null, () => {});
+      
+      await supabase.rpc("run_sql_void", {
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'needs-human-review') WHERE id = '${wo.id}' AND NOT ('needs-human-review' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
+      });
+      return;
+    }
+    
     if (attempts >= 3) {
       console.log(`[WO-AGENT] Remediation circuit breaker: ${attempts}/3 for ${wo.slug}`);
       await supabase.rpc("run_sql_void", {
