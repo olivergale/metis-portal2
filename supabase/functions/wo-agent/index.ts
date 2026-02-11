@@ -71,25 +71,71 @@ async function createFailureRemediation(
       return;
     }
 
-    // WO-0363: REMEDIATION BIRTH CHECK - Check if parent is already done
-    const { data: parentStatus } = await supabase
-      .from("work_orders")
-      .select("id, slug, status")
-      .eq("id", wo.id)
-      .single();
+    // WO-0367: Use evaluate_wo_context for comprehensive checks
+    const { data: contextCheck, error: contextErr } = await supabase.rpc(
+      "evaluate_wo_context",
+      { p_wo_id: wo.id, p_proposed_action: "create_remediation" }
+    );
 
-    if (parentStatus && parentStatus.status === "done") {
-      console.log(`[WO-AGENT] Skip remediation for ${wo.slug} - parent already done`);
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id,
-        phase: "stream",
-        agent_name: "wo-agent",
-        detail: {
-          event_type: "remediation_skipped_parent_done",
-          content: `Remediation creation skipped because parent ${wo.slug} is already done`,
-        },
-      }).then(null, () => {});
-      return;
+    if (contextErr) {
+      console.error(`[WO-AGENT] evaluate_wo_context failed:`, contextErr.message);
+      // Fall back to direct check
+      const { data: parentStatus } = await supabase
+        .from("work_orders")
+        .select("id, slug, status")
+        .eq("id", wo.id)
+        .single();
+
+      if (parentStatus && parentStatus.status === "done") {
+        console.log(`[WO-AGENT] Skip remediation for ${wo.slug} - parent already done`);
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id,
+          phase: "stream",
+          agent_name: "wo-agent",
+          detail: {
+            event_type: "remediation_skipped_parent_done",
+            content: `Remediation creation skipped because parent ${wo.slug} is already done`,
+          },
+        }).then(null, () => {});
+        return;
+      }
+    } else {
+      // Check verdict from evaluate_wo_context
+      const verdict = contextCheck?.verdict;
+      if (verdict === "skip" || verdict === "cancel") {
+        console.log(`[WO-AGENT] evaluate_wo_context ${verdict}: ${contextCheck?.reason}`);
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id,
+          phase: "stream",
+          agent_name: "wo-agent",
+          detail: {
+            event_type: "remediation_skipped_context",
+            content: `Remediation skipped: ${contextCheck?.reason}`,
+            context: contextCheck,
+          },
+        }).then(null, () => {});
+        return;
+      }
+      
+      if (verdict === "escalate") {
+        console.log(`[WO-AGENT] Remediation escalate: ${contextCheck?.reason}`);
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id,
+          phase: "stream",
+          agent_name: "wo-agent",
+          detail: {
+            event_type: "remediation_escalate",
+            content: contextCheck?.reason,
+            remediation_depth: contextCheck?.remediation_depth,
+          },
+        }).then(null, () => {});
+        
+        // Tag for human review
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET tags = array_append(COALESCE(tags, ARRAY[]::TEXT[]), 'needs-human-review') WHERE id = '${wo.id}' AND NOT ('needs-human-review' = ANY(COALESCE(tags, ARRAY[]::TEXT[])));`,
+        });
+        return;
+      }
     }
 
     const { data: existing } = await supabase
