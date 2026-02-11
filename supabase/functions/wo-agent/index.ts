@@ -455,12 +455,23 @@ async function handleExecute(req: Request): Promise<Response> {
       for (const acc of cp.accomplishments) {
         accomplishmentsContext += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
       }
-      accomplishmentsContext += `\n**Do NOT call read_execution_log** — your progress is listed above.\n\n`;
+      accomplishmentsContext += `\n**Do NOT call read_execution_log** â your progress is listed above.\n\n`;
     }
 
     finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
-    finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
+    // WO-0387 AC#3: Display accomplishments instead of generic progress
+    let accomplishmentsSection = "";
+    if (cp.accomplishments && Array.isArray(cp.accomplishments) && cp.accomplishments.length > 0) {
+      accomplishmentsSection = `## What Was Already Done\n`;
+      for (const acc of cp.accomplishments) {
+        accomplishmentsSection += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
+      }
+      accomplishmentsSection += `\n`;
+    } else {
+      accomplishmentsSection = `## Previous Progress\n- ${cp.turns_completed} turns, ${cp.mutations || 0} mutations\n- Last actions: ${cp.last_actions || 'unknown'}\n\n`;
+    }
+    finalUserMessage += accomplishmentsSection;
     finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
     finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 5.\n\n`;
     if (accomplishmentsContext) {
