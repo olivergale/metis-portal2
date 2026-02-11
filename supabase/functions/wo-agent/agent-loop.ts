@@ -1,5 +1,5 @@
 // wo-agent/agent-loop.ts v6
-// WO-0187: Continuation pattern — checkpoint at ~100s, self-reinvoke via pg_net
+// WO-0187: Continuation pattern â checkpoint at ~100s, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -11,10 +11,10 @@ import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type 
 
 const INITIAL_BUDGET = 15; // Start with 15 turns, extend based on velocity
 const REMEDIATION_INITIAL_BUDGET = 20; // Remediation gets more room to investigate
-const HARD_CEILING = 50; // Absolute max — never exceed regardless of velocity
+const HARD_CEILING = 50; // Absolute max â never exceed regardless of velocity
 const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
-const TIMEOUT_MS = 125_000; // 125s — leave 25s buffer for 150s edge function limit
-const CHECKPOINT_MS = 100_000; // 100s — save checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 125_000; // 125s â leave 25s buffer for 150s edge function limit
+const CHECKPOINT_MS = 100_000; // 100s â save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
 const MODEL = "claude-sonnet-4-5-20250929";
 
@@ -230,10 +230,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
 
   while (turn < Math.min(currentBudget, HARD_CEILING)) {
-    // Check checkpoint / timeout — checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout â checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ — both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ â both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -259,23 +259,33 @@ export async function runAgentLoop(
         }
       } catch { /* non-critical */ }
 
-      await ctx.supabase.from("work_order_execution_log").insert({
-        work_order_id: ctx.workOrderId,
-        phase: "checkpoint",
-        agent_name: ctx.agentName,
-        detail: {
-          event_type: "checkpoint",
-          turns_completed: turn,
-          tools_used: Array.from(velocityWindow.uniqueTools),
-          mutations: velocityWindow.mutations,
-          last_actions: lastActions,
-          elapsed_ms: elapsed,
-          budget_remaining: Math.min(currentBudget, HARD_CEILING) - turn,
-          delegated_children: childWOs.length > 0 ? childWOs : undefined,
-        },
-      });
+      // WO-0371: Call evaluate_wo_lifecycle before saving checkpoint
+      const { data: lifecycleVerdict, error: lifecycleErr } = await ctx.supabase.rpc(
+        "evaluate_wo_lifecycle",
+        {
+          p_wo_id: ctx.workOrderId,
+          p_event_type: "checkpoint",
+          p_event_context: {
+            checkpoint_number: turn,
+            mutations: velocityWindow.mutations,
+            turns_completed: turn,
+            tools_used: Array.from(velocityWindow.uniqueTools),
+            accomplishments: toolCalls
+              .filter(tc => MUTATION_TOOLS.has(tc.tool) && tc.success)
+              .slice(-10)
+              .map(tc => `${tc.tool} at turn ${tc.turn}`),
+          },
+        }
+      );
 
-      return { status: "checkpoint", turns: turn, summary, toolCalls };
+      if (lifecycleErr) {
+        console.error(`[AGENT-LOOP] evaluate_wo_lifecycle error:`, lifecycleErr.message);
+        // Fall through to checkpoint on error
+      } else if (lifecycleVerdict?.verdict) {
+        const verdict = lifecycleVerdict.verdict;
+        const reason = lifecycleVerdict.reason || "No reason provided";
+
+        console.log(`[AGENT-LOOP] Checkpoint verdict: ${verdict} - ${reason}`);
     }
 
     turn++;
@@ -286,7 +296,7 @@ export async function runAgentLoop(
     if (messages.length > maxMessages) {
       const trimCount = messages.length - maxMessages;
 
-      // Summarize before discarding — extract tool calls, mutations, errors
+      // Summarize before discarding â extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -435,7 +445,7 @@ export async function runAgentLoop(
             wrapUpInjected = true;
             messages.push({
               role: "user",
-              content: `VELOCITY CHECK — ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
+              content: `VELOCITY CHECK â ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
             });
             console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity WRAP_UP: ${velocity.reason}`);
           } else {
@@ -557,7 +567,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical — don't fail the loop
+    // Non-critical â don't fail the loop
   }
 }
 
