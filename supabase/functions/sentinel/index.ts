@@ -137,6 +137,37 @@ Deno.serve(async (req: Request) => {
           }))
         );
       if (triageErr) console.error("[SENTINEL] Triage insert error:", triageErr);
+
+      // AUTO-INVOKE DIAGNOSTICIAN for critical items or large correlations (WO-0382 AC#5)
+      const criticalItems = triageEntries.filter((t) => t.severity === "critical");
+      const shouldInvokeDiagnostician = criticalItems.length > 0 || correlations.some(c => c.affected_wo_ids.length >= 3);
+
+      if (shouldInvokeDiagnostician) {
+        // Update critical items to escalate_to = "diagnostician"
+        const criticalWoIds = criticalItems.map(t => t.wo_id);
+        if (criticalWoIds.length > 0) {
+          await supabase
+            .from("monitor_triage_queue")
+            .update({ escalate_to: "diagnostician" })
+            .in("wo_id", criticalWoIds)
+            .is("resolved_at", null);
+        }
+
+        // Invoke diagnostician edge function via pg_net
+        try {
+          await supabase.rpc("http_post", {
+            url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/diagnostician`,
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({ trigger: "sentinel_escalation" }),
+          });
+          console.log("[SENTINEL] Invoked diagnostician for critical items");
+        } catch (invokeErr) {
+          console.error("[SENTINEL] Failed to invoke diagnostician:", invokeErr);
+        }
+      }
     }
     
     // AUTO-INVOKE DIAGNOSTICIAN (AC #5)
