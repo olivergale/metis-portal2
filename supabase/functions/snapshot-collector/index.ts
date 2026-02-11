@@ -125,7 +125,8 @@ Deno.serve(async (req) => {
       e.config?.jwt_enabled === true
     ).length || 0;
     
-    const deadTablesCount = typeof deadTablesResult.data === 'number' ? deadTablesResult.data : 0;
+    const tokenData = tokenStats.data?.[0] || {};
+    const deadTablesData = deadTables.data?.[0] || {};
 
     // Calculate percentages
     const woCancelRate = woTotal > 0 
