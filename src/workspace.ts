@@ -1,10 +1,12 @@
 import { createHeader } from './components/Header';
 import { createScorecardWidget } from './components/ScorecardWidget';
+import { openWODetail } from './components/WODetailPanel';
 import { apiFetch, escapeHtml } from './utils/api';
 import type { WorkOrder, ContextData } from './types';
 import './styles/tokens.css';
 import './styles/reset.css';
 import './styles/workspace.css';
+import './styles/wo-detail.css';
 
 interface Column {
   id: string;
@@ -143,7 +145,7 @@ class WorkspaceApp {
     projectList.innerHTML = this.projects.map(p => `
       <div class="project-item">
         <div class="project-name">${escapeHtml(p.name)}</div>
-        <div class="project-meta">${p.code} ÃÂ· ${p.completion_pct || 0}%</div>
+        <div class="project-meta">${p.code} ÃÂÃÂ· ${p.completion_pct || 0}%</div>
       </div>
     `).join('');
   }
