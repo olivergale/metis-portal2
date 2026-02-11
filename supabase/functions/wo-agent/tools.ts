@@ -520,7 +520,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -572,7 +572,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 
 // Tool categories for filtering
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
-const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base"];
+const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
 const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file", "github_list_files", "github_create_branch", "github_create_pr"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
