@@ -455,7 +455,7 @@ async function handleExecute(req: Request): Promise<Response> {
       for (const acc of cp.accomplishments) {
         accomplishmentsContext += `- **${acc.tool}** (turn ${acc.turn}): ${acc.summary}\n`;
       }
-      accomplishmentsContext += `\n**Do NOT call read_execution_log** â your progress is listed above.\n\n`;
+      accomplishmentsContext += `\n**Do NOT call read_execution_log** Ã¢ÂÂ your progress is listed above.\n\n`;
     }
 
     finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
@@ -471,9 +471,8 @@ async function handleExecute(req: Request): Promise<Response> {
     } else {
       accomplishmentsSection = `## Previous Progress\n- ${cp.turns_completed} turns, ${cp.mutations || 0} mutations\n- Last actions: ${cp.last_actions || 'unknown'}\n\n`;
     }
-    finalUserMessage += accomplishmentsSection;
-    finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n`;
     finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 5.\n\n`;
+    finalUserMessage += accomplishmentsSection;
     if (accomplishmentsContext) {
       finalUserMessage += accomplishmentsContext;
     }
