@@ -99,6 +99,30 @@ Deno.serve(async (req: Request) => {
     const correlationGroups = await detectCorrelations(supabase, triageEntries);
     correlations.push(...correlationGroups);
 
+    // AC #5: Escalate critical items and large correlations to diagnostician
+    let shouldInvokeDiagnostician = false;
+    
+    // Check for critical severity items
+    const criticalItems = triageEntries.filter((t) => t.severity === "critical");
+    for (const item of criticalItems) {
+      item.escalate_to = "diagnostician";
+      shouldInvokeDiagnostician = true;
+    }
+    
+    // Check for large correlations (3+ WOs)
+    for (const corr of correlations) {
+      if (corr.affected_wo_ids.length >= 3) {
+        // Escalate all WOs in the correlation
+        for (const woId of corr.affected_wo_ids) {
+          const entry = triageEntries.find((t) => t.wo_id === woId);
+          if (entry) {
+            entry.escalate_to = "diagnostician";
+          }
+        }
+        shouldInvokeDiagnostician = true;
+      }
+    }
+
     // WRITE TRIAGE ENTRIES
     if (triageEntries.length > 0) {
       const { error: triageErr } = await supabase
@@ -113,6 +137,29 @@ Deno.serve(async (req: Request) => {
           }))
         );
       if (triageErr) console.error("[SENTINEL] Triage insert error:", triageErr);
+    }
+    
+    // AUTO-INVOKE DIAGNOSTICIAN (AC #5)
+    if (shouldInvokeDiagnostician) {
+      try {
+        const diagnosticianUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/diagnostician`;
+        const response = await fetch(diagnosticianUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+          },
+          body: JSON.stringify({}),
+        });
+        
+        if (!response.ok) {
+          console.error("[SENTINEL] Diagnostician invocation failed:", response.status);
+        } else {
+          console.log("[SENTINEL] Diagnostician invoked successfully");
+        }
+      } catch (diagErr: any) {
+        console.error("[SENTINEL] Error invoking diagnostician:", diagErr.message);
+      }
     }
 
     // WRITE CORRELATIONS
