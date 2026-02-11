@@ -96,7 +96,7 @@ export async function buildAgentContext(
     systemPrompt += `\n\n${knowledgeBase}`;
   }
 
-  // Load agent execution profile (WO-0380)
+  // Load agent execution profile (WO-0380, WO-0401: model from profile)
   let agentProfile: any = null;
   try {
     const { data } = await supabase
@@ -105,6 +105,10 @@ export async function buildAgentContext(
       .eq("agent_name", agentName)
       .single();
     agentProfile = data;
+    // WO-0401: Config-driven model selection from profile
+    if (agentProfile?.model) {
+      agentModel = agentProfile.model;
+    }
   } catch {
     // Profile not found, continue with defaults
   }

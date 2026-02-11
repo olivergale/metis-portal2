@@ -18,7 +18,7 @@ const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
 const TIMEOUT_MS = 125_000; // 125s — leave 25s buffer for 150s edge function limit
 const CHECKPOINT_MS = 100_000; // 100s — save checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
-const MODEL = "claude-opus-4-6";
+const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only — prefer agent_execution_profiles.model
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
@@ -232,7 +232,8 @@ export async function runAgentLoop(
   systemPrompt: string,
   userMessage: string,
   ctx: ToolContext,
-  tags?: string[]
+  tags?: string[],
+  model?: string
 ): Promise<AgentLoopResult> {
   const isRemediation = (tags || []).some((t: string) =>
     t === 'remediation' || t === 'auto-qa-loop' || t.startsWith('parent:')
@@ -256,6 +257,8 @@ export async function runAgentLoop(
   const client = new Anthropic({ apiKey });
   const startTime = Date.now();
   const toolCalls: AgentLoopResult["toolCalls"] = [];
+  // WO-0401: Config-driven model — profile > WO override > default
+  const resolvedModel = model || DEFAULT_MODEL;
 
   // WO-0166: Filter tools based on WO tags AND agent role (tools_allowed)
   const tools = await getToolsForWO(tags || [], ctx.supabase, ctx.agentName);
@@ -268,7 +271,7 @@ export async function runAgentLoop(
     detail: {
       event_type: "execution_start",
       content: `Starting agentic loop for ${ctx.workOrderSlug}`,
-      model: MODEL,
+      model: resolvedModel,
       initial_budget: currentBudget,
       hard_ceiling: HARD_CEILING,
       velocity_interval: VELOCITY_CHECK_INTERVAL,
@@ -399,7 +402,7 @@ export async function runAgentLoop(
 
     try {
       const response = await client.messages.create({
-        model: MODEL,
+        model: resolvedModel,
         max_tokens: 4096,
         system: [
           {

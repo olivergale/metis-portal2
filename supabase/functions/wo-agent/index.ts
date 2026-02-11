@@ -445,11 +445,13 @@ async function handleExecute(req: Request): Promise<Response> {
   }
 
   // Run the agentic loop
+  // WO-0401: Pass config-driven model from agent profile
   const result = await runAgentLoop(
     agentContext.systemPrompt,
     finalUserMessage,
     toolCtx,
-    wo.tags || []
+    wo.tags || [],
+    agentContext.model
   );
 
   console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
