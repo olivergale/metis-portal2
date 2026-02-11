@@ -36,7 +36,8 @@ serve(async (req: Request) => {
   const url = new URL(req.url);
   const pathname = url.pathname;
 
-  // Health check endpoint
+  // DEPRECATED WO-0381: Health check endpoint - stuck WO detection moved to sentinel edge function
+  // This endpoint remains for other ops duties (reprioritize, etc) but health-check path will be removed
   if (pathname === "/health-check" && req.method === "POST") {
     try {
       const response: HealthCheckResponse = {
