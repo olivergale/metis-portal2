@@ -236,7 +236,7 @@ async function handleExecute(req: Request): Promise<Response> {
     );
   }
 
-  // WO-0155: Guard against orphaned remediation WOs
+  // WO-0155 + WO-0363: MOOT DETECTION ON START - Guard against orphaned remediation WOs
   const tags: string[] = wo.tags || [];
   if (tags.includes("remediation")) {
     const parentTag = tags.find((t: string) => t.startsWith("parent:"));
@@ -248,8 +248,9 @@ async function handleExecute(req: Request): Promise<Response> {
         .eq("slug", parentSlug)
         .single();
 
-      if (parentWo && parentWo.status === "done") {
-        const msg = `Parent ${parentSlug} already completed -- remediation unnecessary`;
+      // WO-0363: Check for both 'done' and 'cancelled' parent status
+      if (parentWo && (parentWo.status === "done" || parentWo.status === "cancelled")) {
+        const msg = `Parent ${parentSlug} already resolved (${parentWo.status}) -- remediation unnecessary`;
         console.log(`[WO-AGENT] ${wo.slug}: ${msg}`);
 
         await supabase.from("work_order_execution_log").insert({
@@ -259,12 +260,12 @@ async function handleExecute(req: Request): Promise<Response> {
           detail: { event_type: "result", content: msg },
         });
         await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = 'Parent already resolved' WHERE id = '${wo.id}';`,
         });
 
         return jsonResponse({
           work_order_id: wo.id, slug: wo.slug, status: "completed",
-          turns: 0, summary: msg, tool_calls: 0,
+          turns: 0, summary: "Parent already resolved", tool_calls: 0,
         });
       }
     }
