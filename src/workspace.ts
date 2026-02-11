@@ -118,7 +118,7 @@ class WorkspaceApp {
     try {
       const [contextData, woData] = await Promise.all([
         apiFetch<ContextData>('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
-        apiFetch<{ data: WorkOrder[] }>('/rest/v1/work_orders?select=*&order=updated_at.desc&limit=50')
+        apiFetch<{ data: WorkOrder[] }>('/rest/v1/work_orders?select=*,qa_checklist,parent_id,depends_on,acceptance_criteria,objective,summary&order=updated_at.desc&limit=50')
       ]);
 
       this.workOrders = woData.data || contextData.work_orders || [];
@@ -145,7 +145,7 @@ class WorkspaceApp {
     projectList.innerHTML = this.projects.map(p => `
       <div class="project-item">
         <div class="project-name">${escapeHtml(p.name)}</div>
-        <div class="project-meta">${p.code} ÃÂÃÂ· ${p.completion_pct || 0}%</div>
+        <div class="project-meta">${p.code} ÃÂÃÂÃÂÃÂ· ${p.completion_pct || 0}%</div>
       </div>
     `).join('');
   }
