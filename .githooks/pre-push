@@ -1,0 +1,83 @@
+#!/bin/bash
+# Pre-push hook to prevent CLI-vs-API race condition
+# This hook prevents pushing a stale local branch that would overwrite
+# commits made via GitHub API (e.g., by builder agent)
+#
+# Installation:
+#   git config core.hooksPath .githooks
+#
+# Bypass:
+#   git push --force-with-lease  (safer - checks remote ref)
+#   git push --force             (dangerous - overwrites everything)
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Read stdin to get the refs being pushed
+# Format: <local ref> <local sha> <remote ref> <remote sha>
+while read local_ref local_sha remote_ref remote_sha
+do
+    # Skip if deleting a branch
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+    
+    # Extract branch name from ref
+    if [[ "$remote_ref" =~ refs/heads/(.+)$ ]]; then
+        branch="${BASH_REMATCH[1]}"
+    else
+        continue
+    fi
+    
+    echo -e "${YELLOW}[pre-push] Checking for divergence on branch: $branch${NC}"
+    
+    # Fetch the latest remote refs (quietly)
+    echo -e "${YELLOW}[pre-push] Fetching remote refs...${NC}"
+    if ! git fetch origin "$branch" --quiet 2>/dev/null; then
+        echo -e "${YELLOW}[pre-push] Warning: Could not fetch remote branch $branch${NC}"
+        echo -e "${YELLOW}[pre-push] This might be a new branch. Proceeding...${NC}"
+        continue
+    fi
+    
+    # Check if remote has commits not in local
+    remote_commits=$(git rev-list "$local_sha..origin/$branch" 2>/dev/null | wc -l)
+    
+    if [ "$remote_commits" -gt 0 ]; then
+        echo -e "${RED}╔════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}║  ⚠️  PUSH BLOCKED: Remote has commits not in your local copy  ║${NC}"
+        echo -e "${RED}╚════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}Remote branch '$branch' has $remote_commits commit(s) not in your local branch.${NC}"
+        echo ""
+        echo -e "This typically happens when:"
+        echo -e "  • Builder agent made commits via GitHub API"
+        echo -e "  • Another developer pushed changes"
+        echo -e "  • You're working from a stale local copy"
+        echo ""
+        echo -e "${GREEN}To fix this:${NC}"
+        echo -e "  1. Save your local changes: ${GREEN}git stash${NC}"
+        echo -e "  2. Pull with rebase:        ${GREEN}git pull --rebase origin $branch${NC}"
+        echo -e "  3. Restore your changes:    ${GREEN}git stash pop${NC}"
+        echo -e "  4. Resolve any conflicts"
+        echo -e "  5. Try pushing again:       ${GREEN}git push${NC}"
+        echo ""
+        echo -e "${YELLOW}To bypass this check (DANGEROUS - will overwrite remote commits):${NC}"
+        echo -e "  ${YELLOW}git push --force-with-lease${NC}  (safer - checks remote ref)"
+        echo -e "  ${RED}git push --force${NC}             (dangerous - overwrites everything)"
+        echo ""
+        echo -e "${RED}Recent remote commits you would overwrite:${NC}"
+        git log --oneline "$local_sha..origin/$branch" --max-count=5 2>/dev/null || echo "(Could not fetch commit log)"
+        echo ""
+        
+        exit 1
+    else
+        echo -e "${GREEN}[pre-push] ✓ No divergence detected. Safe to push.${NC}"
+    fi
+done
+
+exit 0
