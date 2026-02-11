@@ -118,10 +118,10 @@ class WorkspaceApp {
     try {
       const [contextData, woData] = await Promise.all([
         apiFetch<ContextData>('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
-        apiFetch<{ data: WorkOrder[] }>('/rest/v1/work_orders?select=*,qa_checklist,parent_id,depends_on,acceptance_criteria,objective,summary&order=updated_at.desc&limit=50')
+        apiFetch<WorkOrder[]>('/rest/v1/work_orders?select=*&order=updated_at.desc&limit=50')
       ]);
 
-      this.workOrders = woData.data || contextData.work_orders || [];
+      this.workOrders = (Array.isArray(woData) ? woData : []) || contextData.work_orders || [];
       this.projects = contextData.projects || [];
 
       this.renderProjects();
@@ -150,23 +150,13 @@ class WorkspaceApp {
     `).join('');
   }
 
-  private renderBoard_PLACEHOLDER() {
-    // PLACEHOLDER - remove after edit
-  }
-
-  /* END_FIX */
-  private renderBoard_ORIGINAL_BELOW() { ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ· ${p.completion_pct || 0}%</div>
-      </div>
-    `).join('');
-  }
-
   private renderBoard() {
     const board = document.getElementById('kanban-board');
     if (!board) return;
 
     board.innerHTML = columns.map(col => this.renderColumn(col)).join('');
 
-    // Click handler on WO cards â delegate from board
+    // Click handler on WO cards - delegate from board
     board.addEventListener('click', (e) => {
       const card = (e.target as HTMLElement).closest('[data-wo-id]') as HTMLElement | null;
       if (card) {
