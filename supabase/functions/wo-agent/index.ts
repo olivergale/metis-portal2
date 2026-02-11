@@ -44,6 +44,8 @@ Deno.serve(async (req: Request) => {
       case "status":
         return await handleStatus(req);
       case "health-check":
+        // DEPRECATED WO-0381: Health-check functionality moved to sentinel edge function
+        // This endpoint is kept for backward compatibility but will be removed in a future version
         return await handleHealthCheck(req);
       default:
         return jsonResponse({ error: `Unknown action: ${action}` }, 404);
