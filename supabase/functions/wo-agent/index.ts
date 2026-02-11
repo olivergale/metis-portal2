@@ -354,18 +354,81 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("work_order_id", work_order_id)
       .eq("phase", "checkpoint");
 
-    if ((checkpointCount || 0) >= 5) {
-      const msg = `Exceeded continuation budget (${checkpointCount} checkpoints). Marking failed.`;
+    // WO-0371: Replaced fixed 5-checkpoint circuit breaker with productive-delta evaluation
+    // Call evaluate_wo_lifecycle at continuation start
+    const { data: lifecycleVerdict, error: lifecycleErr } = await supabase.rpc(
+      "evaluate_wo_lifecycle",
+      {
+        p_wo_id: wo.id,
+        p_event_type: "continuation",
+        p_event_context: {
+          checkpoint_count: checkpointCount || 0,
+          previous_checkpoint: checkpoint.detail,
+        },
+      }
+    );
+
+    if (lifecycleErr) {
+      console.error(`[WO-AGENT] evaluate_wo_lifecycle error:`, lifecycleErr.message);
+      // Fall through to continue execution on lifecycle error
+    } else if (lifecycleVerdict?.verdict) {
+      const verdict = lifecycleVerdict.verdict;
+      const reason = lifecycleVerdict.reason || "No reason provided";
+
+      console.log(`[WO-AGENT] ${wo.slug} continuation verdict: ${verdict} - ${reason}`);
       await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
-        detail: { event_type: "circuit_breaker", content: msg },
-      });
-      await supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+        work_order_id: wo.id,
+        phase: "stream",
+        agent_name: agentContext.agentName,
+        detail: {
+          event_type: "lifecycle_verdict",
+          verdict,
+          reason,
+          context: lifecycleVerdict,
+        },
       });
 
-      await createFailureRemediation(supabase, wo, msg);
-      return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
+      if (verdict === "complete") {
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = '${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
+        });
+        return jsonResponse({
+          work_order_id: wo.id,
+          slug: wo.slug,
+          status: "completed",
+          turns: 0,
+          summary: reason,
+          tool_calls: 0,
+        });
+      } else if (verdict === "cancel") {
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'done', completed_at = NOW(), summary = 'Cancelled: ${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
+        });
+        return jsonResponse({
+          work_order_id: wo.id,
+          slug: wo.slug,
+          status: "completed",
+          turns: 0,
+          summary: `Cancelled: ${reason}`,
+          tool_calls: 0,
+        });
+      } else if (verdict === "escalate_master" || verdict === "fail") {
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${reason.replace(/'/g, "''").slice(0, 500)}' WHERE id = '${wo.id}';`,
+        });
+        if (verdict === "escalate_master") {
+          await createFailureRemediation(supabase, wo, reason);
+        }
+        return jsonResponse({
+          work_order_id: wo.id,
+          slug: wo.slug,
+          status: "failed",
+          turns: 0,
+          summary: reason,
+          tool_calls: 0,
+        });
+      }
+      // verdict === "continue" or "retry_same" -> proceed with continuation
     }
 
     // Build continuation context
