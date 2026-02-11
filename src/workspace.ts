@@ -145,7 +145,17 @@ class WorkspaceApp {
     projectList.innerHTML = this.projects.map(p => `
       <div class="project-item">
         <div class="project-name">${escapeHtml(p.name)}</div>
-        <div class="project-meta">${p.code} ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ· ${p.completion_pct || 0}%</div>
+        <div class="project-meta">${p.code} &middot; ${p.completion_pct || 0}%</div>
+      </div>
+    `).join('');
+  }
+
+  private renderBoard_PLACEHOLDER() {
+    // PLACEHOLDER - remove after edit
+  }
+
+  /* END_FIX */
+  private renderBoard_ORIGINAL_BELOW() { ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ· ${p.completion_pct || 0}%</div>
       </div>
     `).join('');
   }
@@ -156,7 +166,7 @@ class WorkspaceApp {
 
     board.innerHTML = columns.map(col => this.renderColumn(col)).join('');
 
-    // Click handler on WO cards — delegate from board
+    // Click handler on WO cards â delegate from board
     board.addEventListener('click', (e) => {
       const card = (e.target as HTMLElement).closest('[data-wo-id]') as HTMLElement | null;
       if (card) {
