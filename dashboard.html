@@ -209,6 +209,27 @@
                     <h3>Edge Function JWT Coverage</h3>
                     <div class="chart-container"><canvas id="chart-jwt"></canvas></div>
                 </div>
+
+                <div class="chart-card full">
+                    <h3>Document Staleness</h3>
+                    <div class="doc-summary" id="docSummary">
+                        <div class="stat">
+                            <span class="staleness-dot" style="background: var(--status-active)"></span>
+                            <span>Fresh (<30d): <span class="stat-value" id="freshCount">-</span></span>
+                        </div>
+                        <div class="stat">
+                            <span class="staleness-dot" style="background: var(--status-warning)"></span>
+                            <span>Aging (30-90d): <span class="stat-value" id="agingCount">-</span></span>
+                        </div>
+                        <div class="stat">
+                            <span class="staleness-dot" style="background: var(--status-error)"></span>
+                            <span>Stale (>90d): <span class="stat-value" id="staleCount">-</span></span>
+                        </div>
+                    </div>
+                    <div class="doc-list" id="docList">
+                        <div class="chart-empty">Loading documents...</div>
+                    </div>
+                </div>
             </div>
         </div>
 
