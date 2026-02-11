@@ -344,6 +344,34 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "search_lessons",
+    description:
+      "Search promoted lessons filtered by category, tags, and agent role. Returns lessons ranked by relevance, recency, and severity. Use during failure triage to find past solutions to similar problems.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        category: {
+          type: "string",
+          description: "Lesson category to filter by (e.g. state_machine, schema, deployment, qa)",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Tags to match (lessons with overlapping tags score higher)",
+        },
+        agent_name: {
+          type: "string",
+          description: "Agent name to filter lessons relevant to this agent role (optional)",
+        },
+        limit: {
+          type: "number",
+          description: "Max results to return (default 10, max 20)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "log_progress",
     description:
       "Log a progress message to the work order execution log. Use to record what you're doing.",
@@ -492,7 +520,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂ¢ÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
