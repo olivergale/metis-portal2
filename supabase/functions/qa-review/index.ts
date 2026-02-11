@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
         findings_count: result.inserted.length,
         fail_count: result.inserted.filter((f: any) => f.finding_type === 'fail').length,
         warning_count: result.inserted.filter((f: any) => f.finding_type === 'warning').length,
-        has_warnings: hasAnyWarning },
+        has_warnings: result.inserted.some((f: any) => f.finding_type === 'warning') },
       work_order_id: work_order_id
     });
 
