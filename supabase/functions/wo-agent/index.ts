@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker â evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker Ã¢ÂÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -155,9 +155,11 @@ async function createFailureRemediation(
 
     const attempts = (existing || []).length;
     
-    // WO-0363: REMEDIATION DEPTH LIMIT - Stop at 2 attempts instead of 3
-    if (attempts >= 2) {
-      console.log(`[WO-AGENT] Remediation depth limit: ${attempts}/2 for ${wo.slug} - tagging for human review`);
+    // WO-0455: REMEDIATION DEPTH LIMIT - Max 3 attempts per root WO
+    const MAX_REMEDIATION_DEPTH = 3;
+    
+    if (attempts >= MAX_REMEDIATION_DEPTH) {
+      console.log(`[WO-AGENT] Remediation depth limit: ${attempts}/${MAX_REMEDIATION_DEPTH} for ${wo.slug} - tagging for human review`);
       await supabase.from("work_order_execution_log").insert({
         work_order_id: wo.id,
         phase: "stream",
@@ -196,11 +198,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent — this is the root
+        // No parent â this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) — if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) â if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -208,7 +210,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal — current WO is the effective root
+        // Parent is terminal â current WO is the effective root
         break;
       }
       
@@ -394,7 +396,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 5) {
-      // WO-0387: Smart circuit breaker â call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0387: Smart circuit breaker Ã¢ÂÂ call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
         p_event_type: "checkpoint",
@@ -410,7 +412,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations â send to review for auto-QA
+        // SMART PATH: Agent made real mutations Ã¢ÂÂ send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -421,7 +423,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict â mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict Ã¢ÂÂ mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
