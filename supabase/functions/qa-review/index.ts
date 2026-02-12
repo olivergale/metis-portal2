@@ -55,10 +55,14 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
 
   try {
     // Extract potential entity names from ACs and summary
-    // Functions/triggers: word_word_word pattern or quoted identifiers
+    // Functions/triggers: must contain underscore (PG functions are snake_case)
     const funcNames = [...new Set(
-      (combined.match(/\b([a-z_]{3,50})\s*\(/g) || []).map(m => m.replace(/\s*\($/, ''))
-        .filter(n => !['select', 'insert', 'update', 'delete', 'create', 'drop', 'from', 'where', 'values', 'into', 'format', 'count', 'coalesce', 'array', 'exists', 'returns', 'function', 'trigger'].includes(n))
+      (combined.match(/\b([a-z][a-z0-9_]{2,50})\s*\(/g) || []).map(m => m.replace(/\s*\($/, ''))
+        .filter(n => n.includes('_')) // Must have underscore — filters "fail(", "has(", "set(" etc
+        .filter(n => !['select_', 'insert_', 'update_', 'delete_', 'create_', 'drop_', 'order_by',
+          'group_by', 'is_not', 'is_null', 'not_null', 'left_join', 'inner_join', 'cross_join',
+          'string_agg', 'json_build', 'jsonb_build', 'array_agg', 'row_number', 'old_string',
+          'new_string'].some(prefix => n.startsWith(prefix) || n === prefix))
     )];
 
     // Table names: common patterns like "X table", "from X", "into X"
