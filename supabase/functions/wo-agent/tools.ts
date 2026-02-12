@@ -633,10 +633,10 @@ export async function getToolsForWO(
   const tagSet = new Set(tags || []);
 
   // Step 1: Tag-based filtering -- 2 tiers
-  // Tier 1 (restricted): remediation/sql-only -> system + supabase only
-  // Tier 2 (default): everything else -> all tools
+  // Tier 1 (restricted): sql-only -> system + supabase only
+  // Tier 2 (default): everything else (including remediation) -> all tools
   let tagFiltered: Tool[];
-  if (tagSet.has("remediation") || tagSet.has("sql-only")) {
+  if (tagSet.has("sql-only")) {
     const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS]);
     tagFiltered = TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
   } else {
@@ -667,7 +667,7 @@ export async function getToolsForWO(
 /** Sync version for backwards compatibility (no agent filtering) */
 export function getToolsForWOSync(tags: string[]): Tool[] {
   const tagSet = new Set(tags || []);
-  if (tagSet.has("remediation") || tagSet.has("sql-only")) {
+  if (tagSet.has("sql-only")) {
     const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS]);
     return TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
   }
