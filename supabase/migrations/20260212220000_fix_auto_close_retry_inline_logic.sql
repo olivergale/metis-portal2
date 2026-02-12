@@ -69,31 +69,27 @@ BEGIN
   
   -- All conditions met: auto-close the WO using update_work_order_state RPC
   -- (The RPC handles bypass and enforcement checks internally)
-  DECLARE
-    v_transition_result jsonb;
-  BEGIN
-    SELECT update_work_order_state(
-      p_work_order_id := v_wo.id,
-      p_status := 'done',
-      p_completed_at := NOW(),
-      p_summary := COALESCE(NULLIF(v_wo.summary, ''), 'Auto-closed: all QA checklist items passed after findings resolved')
-    ) INTO v_transition_result;
-    
-    -- Log the auto-close
-    INSERT INTO work_order_execution_log (work_order_id, phase, agent_name, detail)
-    VALUES (
-      v_wo.id,
-      'execution_complete',
-      'qa-gate',
-      jsonb_build_object(
-        'event_type', 'auto_close_qa_pass',
-        'message', format('Auto-closed %s: all %s checklist items passed, last fail finding resolved', v_wo.slug, jsonb_array_length(v_wo.qa_checklist)),
-        'trigger', 'recheck_auto_close_on_findings_resolved',
-        'checklist_items', jsonb_array_length(v_wo.qa_checklist),
-        'rpc_result', v_transition_result
-      )
-    );
-  END;
+  SELECT update_work_order_state(
+    p_work_order_id := v_wo.id,
+    p_status := 'done',
+    p_completed_at := NOW(),
+    p_summary := COALESCE(NULLIF(v_wo.summary, ''), 'Auto-closed: all QA checklist items passed after findings resolved')
+  ) INTO v_transition_result;
+  
+  -- Log the auto-close
+  INSERT INTO work_order_execution_log (work_order_id, phase, agent_name, detail)
+  VALUES (
+    v_wo.id,
+    'execution_complete',
+    'qa-gate',
+    jsonb_build_object(
+      'event_type', 'auto_close_qa_pass',
+      'message', format('Auto-closed %s: all %s checklist items passed, last fail finding resolved', v_wo.slug, jsonb_array_length(v_wo.qa_checklist)),
+      'trigger', 'recheck_auto_close_on_findings_resolved',
+      'checklist_items', jsonb_array_length(v_wo.qa_checklist),
+      'rpc_result', v_transition_result
+    )
+  );
   
   RETURN NEW;
 END;
