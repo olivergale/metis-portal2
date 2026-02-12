@@ -61,12 +61,10 @@ export async function handleGithubReadFile(
     const data = await resp.json();
     // Decode base64 content
     const content = atob(data.content.replace(/\n/g, ""));
-    // Limit output size
-    const limited = content.length > 10000 ? content.slice(0, 10000) + "\n...(limited to 10000 chars)" : content;
 
     return {
       success: true,
-      data: { content: limited, sha: data.sha, size: data.size, path: data.path },
+      data: { content, sha: data.sha, size: data.size, path: data.path },
     };
   } catch (e: any) {
     return { success: false, error: `github_read_file exception: ${e.message}` };
@@ -232,7 +230,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit — this runs server-side)
+    // 1. Read full file (no size limit â this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
