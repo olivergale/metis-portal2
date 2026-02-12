@@ -29,6 +29,63 @@ function githubHeaders(token: string): Record<string, string> {
   };
 }
 
+/**
+ * Check if a file was recently modified by another completed WO (anti-clobber guard).
+ * WO-0400: Prevent silent overwrites when multiple WOs edit the same file.
+ */
+async function checkFileOverlap(
+  supabase: any,
+  workOrderId: string,
+  filePath: string
+): Promise<{ overlap: boolean; conflicting_wos: Array<{ slug: string; commit_sha: string }> }> {
+  try {
+    // Query execution_log for other done WOs that successfully modified this file
+    const { data, error } = await supabase
+      .from("work_order_execution_log")
+      .select("work_order_id, detail")
+      .in("detail->>tool_name", ["github_edit_file", "github_write_file"])
+      .eq("detail->>success", "true")
+      .neq("work_order_id", workOrderId)
+      .ilike("detail->>content", `%${filePath}%`);
+
+    if (error) {
+      console.error("checkFileOverlap query error:", error);
+      return { overlap: false, conflicting_wos: [] };
+    }
+
+    if (!data || data.length === 0) {
+      return { overlap: false, conflicting_wos: [] };
+    }
+
+    // Filter to only WOs that are done, and extract slug + commit_sha
+    const woIds = [...new Set(data.map((row: any) => row.work_order_id))];
+    const { data: wos, error: woError } = await supabase
+      .from("work_orders")
+      .select("id, slug")
+      .in("id", woIds)
+      .eq("status", "done");
+
+    if (woError || !wos || wos.length === 0) {
+      return { overlap: false, conflicting_wos: [] };
+    }
+
+    // Extract commit_sha from detail for each matching WO
+    const conflicting_wos = wos.map((wo: any) => {
+      const logEntry = data.find((row: any) => row.work_order_id === wo.id);
+      const commit_sha = logEntry?.detail?.data?.commit_sha || "unknown";
+      return { slug: wo.slug, commit_sha };
+    });
+
+    return {
+      overlap: conflicting_wos.length > 0,
+      conflicting_wos,
+    };
+  } catch (e: any) {
+    console.error("checkFileOverlap exception:", e);
+    return { overlap: false, conflicting_wos: [] };
+  }
+}
+
 export async function handleGithubReadFile(
   input: Record<string, any>,
   ctx: ToolContext
@@ -230,7 +287,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit â this runs server-side)
+    // 1. Read full file (no size limit Ã¢ÂÂ this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
