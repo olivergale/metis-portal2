@@ -49,7 +49,98 @@ async function insertFindings(supabase: any, findings: QAFinding[], woId: string
   return { inserted, errors };
 }
 
-function buildLieDetectorPrompt(wo: any, execLog: any[], acList: string) {
+async function gatherSystemStateEvidence(supabase: any, acText: string, summary: string): Promise<string> {
+  const combined = `${acText}\n${summary || ''}`;
+  const evidence: string[] = [];
+
+  try {
+    // Extract potential entity names from ACs and summary
+    // Functions/triggers: word_word_word pattern or quoted identifiers
+    const funcNames = [...new Set(
+      (combined.match(/\b([a-z_]{3,50})\s*\(/g) || []).map(m => m.replace(/\s*\($/, ''))
+        .filter(n => !['select', 'insert', 'update', 'delete', 'create', 'drop', 'from', 'where', 'values', 'into', 'format', 'count', 'coalesce', 'array', 'exists', 'returns', 'function', 'trigger'].includes(n))
+    )];
+
+    // Table names: common patterns like "X table", "from X", "into X"
+    const tablePatterns = combined.match(/(?:table|from|into|on)\s+([a-z_]{3,40})/gi) || [];
+    const tableNames = [...new Set(
+      tablePatterns.map(m => m.replace(/^(?:table|from|into|on)\s+/i, '').toLowerCase())
+        .filter(n => !['the', 'this', 'that', 'each', 'all', 'any', 'work'].includes(n))
+    )];
+
+    // Migration names: snake_case patterns near "migration"
+    const migrationPatterns = combined.match(/migration[:\s]+([a-z_]{5,80})/gi) || [];
+    const migNames = migrationPatterns.map(m => m.replace(/^migration[:\s]+/i, ''));
+
+    // Check functions exist in pg_proc
+    if (funcNames.length > 0) {
+      const funcList = funcNames.slice(0, 10);
+      const { data: funcs } = await supabase.rpc('run_sql', {
+        sql_query: `SELECT proname FROM pg_proc WHERE proname IN (${funcList.map(f => `'${f}'`).join(',')})`,
+      });
+      const foundFuncs = (funcs || []).map((r: any) => r.proname);
+      for (const f of funcList) {
+        evidence.push(`Function ${f}: ${foundFuncs.includes(f) ? 'EXISTS in pg_proc' : 'NOT FOUND'}`);
+      }
+    }
+
+    // Check triggers on work_orders and qa_findings
+    if (funcNames.length > 0 || tableNames.length > 0) {
+      const { data: triggers } = await supabase.rpc('run_sql', {
+        sql_query: `SELECT t.tgname, c.relname as table_name, p.proname as func_name
+                    FROM pg_trigger t
+                    JOIN pg_class c ON t.tgrelid = c.oid
+                    JOIN pg_proc p ON t.tgfoid = p.oid
+                    WHERE NOT t.tgisinternal
+                    AND (c.relname IN ('work_orders','qa_findings','work_order_execution_log')
+                         OR p.proname IN (${funcNames.slice(0, 10).map(f => `'${f}'`).join(',') || "'__none__'"}))
+                    ORDER BY t.tgname`,
+      });
+      if (triggers?.length > 0) {
+        evidence.push(`Active triggers found: ${triggers.map((t: any) => `${t.tgname} on ${t.table_name} -> ${t.func_name}`).join('; ')}`);
+      }
+    }
+
+    // Check tables/columns exist
+    if (tableNames.length > 0) {
+      const tblList = tableNames.slice(0, 5);
+      const { data: cols } = await supabase.rpc('run_sql', {
+        sql_query: `SELECT table_name, column_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name IN (${tblList.map(t => `'${t}'`).join(',')})
+                    ORDER BY table_name, ordinal_position`,
+      });
+      if (cols?.length > 0) {
+        const byTable: Record<string, string[]> = {};
+        for (const c of cols) {
+          if (!byTable[c.table_name]) byTable[c.table_name] = [];
+          byTable[c.table_name].push(c.column_name);
+        }
+        for (const [tbl, columns] of Object.entries(byTable)) {
+          evidence.push(`Table ${tbl}: EXISTS (columns: ${columns.slice(0, 10).join(', ')}${columns.length > 10 ? '...' : ''})`);
+        }
+        for (const t of tblList) {
+          if (!byTable[t]) evidence.push(`Table ${t}: NOT FOUND`);
+        }
+      }
+    }
+
+    // Check recent migrations
+    if (migNames.length > 0) {
+      const { data: migs } = await supabase.rpc('run_sql', {
+        sql_query: `SELECT name FROM supabase_migrations.schema_migrations WHERE name LIKE '%${migNames[0]}%' LIMIT 5`,
+      });
+      if (migs?.length > 0) {
+        evidence.push(`Migrations matching: ${migs.map((m: any) => m.name).join(', ')}`);
+      }
+    }
+  } catch (e: any) {
+    evidence.push(`E2E evidence gathering error: ${e.message}`);
+  }
+
+  return evidence.length > 0 ? evidence.join('\n') : 'No system state evidence gathered';
+}
+
+function buildLieDetectorPrompt(wo: any, execLog: any[], acList: string, systemStateEvidence?: string) {
   const logSummary = (execLog || []).map((e: any) => {
     const d = e.detail || {};
     const toolInfo = d.tool_name ? ` [tool:${d.tool_name}]` : d.tool_names ? ` [tools:${d.tool_names.join(',')}]` : '';
@@ -68,17 +159,20 @@ ${acList}
 Summary: ${wo.summary || 'NO SUMMARY PROVIDED'}
 Status: ${wo.status}
 
-## EXECUTION LOG (ground truth - ${(execLog || []).length} entries)
+## EXECUTION LOG (process evidence - ${(execLog || []).length} entries)
 ${logSummary || 'NO EXECUTION LOG ENTRIES'}
 
-## YOUR TASK: FORENSIC VERIFICATION
-For EACH claim in the summary, cross-reference against the execution log. Apply these checks:
+## SYSTEM STATE EVIDENCE (outcome evidence - live DB verification)
+${systemStateEvidence || 'No system state evidence available'}
 
-### CHECK 1: Claims vs Execution Log Evidence
-Every factual claim in the summary (file created, query run, migration applied, function deployed) MUST have a corresponding execution_log entry. If a claim has NO matching log entry, it is FABRICATED.
+## YOUR TASK: FORENSIC VERIFICATION
+For EACH claim in the summary, cross-reference against the execution log AND system state evidence. Apply these checks:
+
+### CHECK 1: Claims vs Evidence (Execution Log OR System State)
+Every factual claim in the summary (file created, query run, migration applied, function deployed) MUST have EITHER a matching execution_log entry OR matching system state evidence (function EXISTS, trigger EXISTS, table EXISTS, migration found). If a claim has NEITHER, it is FABRICATED.
 
 ### CHECK 2: Mutation Claims vs Actual Mutations
-If the summary says "created table X", "applied migration Y", "inserted Z rows" — there MUST be a matching tool call (apply_migration, execute_sql with INSERT/CREATE) in the log. No matching tool call = FABRICATED.
+If the summary says "created table X", "applied migration Y", "inserted Z rows" — there MUST be EITHER a matching tool call in the execution log OR the entity must exist in system state evidence. Example: claim "created function foo()" is SUPPORTED if system state shows "Function foo: EXISTS in pg_proc", even without an execution_log entry.
 
 ### CHECK 3: "Deployed" / "Verified" Statements
 If the summary says "deployed function X" or "verified endpoint Y" — there MUST be a deploy_edge_function call or a verification query in the log. Unsubstantiated deploy/verify claims = FABRICATED.
@@ -99,13 +193,15 @@ Return a JSON array of findings. Each finding:
 }
 
 CRITICAL RULES:
-- Unsupported claims (no log evidence) -> finding_type = "fail", NOT warning
-- Partial evidence (vague match) -> finding_type = "warning"
+- Unsupported claims (no log evidence AND no system state evidence) -> finding_type = "fail", NOT warning
+- Claims with system state evidence but no execution log -> finding_type = "pass" (outcome verified)
+- Partial evidence (vague match in either source) -> finding_type = "warning"
 - Scope drift -> finding_type = "warning", category = "acceptance_criteria"
 - Missing AC coverage -> finding_type = "fail", category = "acceptance_criteria"
 - If summary is empty/null -> finding_type = "fail", category = "completion_summary"
-- If execution log is empty -> finding_type = "fail", category = "execution_trail"
-- Be SKEPTICAL. Assume claims are false until proven by log evidence.
+- If execution log is empty AND system state has no matching evidence -> finding_type = "fail", category = "execution_trail"
+- If execution log is empty BUT system state confirms outcomes -> finding_type = "pass" (CLI work with verifiable results)
+- Be SKEPTICAL. Assume claims are false until proven by log evidence OR system state.
 - Return ONLY the JSON array, no markdown.`;
 }
 
@@ -176,7 +272,8 @@ Deno.serve(async (req) => {
 
     // Default: Run LIE DETECTOR QA evaluation
     const acText = wo.acceptance_criteria || 'No acceptance criteria defined';
-    const prompt = buildLieDetectorPrompt(wo, execLog || [], acText);
+    const systemEvidence = await gatherSystemStateEvidence(supabase, acText, wo.summary);
+    const prompt = buildLieDetectorPrompt(wo, execLog || [], acText, systemEvidence);
 
     const message = await anthropic.messages.create({
       model: 'claude-opus-4-6', max_tokens: 4000,
