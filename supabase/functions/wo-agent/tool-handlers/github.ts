@@ -72,7 +72,16 @@ async function checkFileOverlap(
     // Extract commit_sha from detail for each matching WO
     const conflicting_wos = wos.map((wo: any) => {
       const logEntry = data.find((row: any) => row.work_order_id === wo.id);
-      const commit_sha = logEntry?.detail?.data?.commit_sha || "unknown";
+      let commit_sha = "unknown";
+      try {
+        // Content field is stringified JSON containing commit_sha
+        if (logEntry?.detail?.content) {
+          const parsed = JSON.parse(logEntry.detail.content);
+          commit_sha = parsed.commit_sha || "unknown";
+        }
+      } catch {
+        commit_sha = "unknown";
+      }
       return { slug: wo.slug, commit_sha };
     });
 
@@ -335,7 +344,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
+    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
