@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker — evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker â evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -182,6 +182,44 @@ async function createFailureRemediation(
       return;
     }
 
+    // WO-0455: Walk parent_id chain to root for flat remediation tree
+    let rootWoId = wo.id;
+    let rootWoSlug = wo.slug;
+    let walkDepth = 0;
+    const maxWalkDepth = 10; // prevent infinite loops
+    
+    while (walkDepth < maxWalkDepth) {
+      const { data: parentCheck } = await supabase
+        .from("work_orders")
+        .select("id, slug, parent_id, status")
+        .eq("id", rootWoId)
+        .single();
+      
+      if (!parentCheck || !parentCheck.parent_id) {
+        // No parent — this is the root
+        break;
+      }
+      
+      // Check if parent is terminal (done/cancelled) — if so, current WO is the effective root
+      const { data: parentWo } = await supabase
+        .from("work_orders")
+        .select("id, slug, status")
+        .eq("id", parentCheck.parent_id)
+        .single();
+      
+      if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
+        // Parent is terminal — current WO is the effective root
+        break;
+      }
+      
+      // Walk up to parent
+      rootWoId = parentWo.id;
+      rootWoSlug = parentWo.slug;
+      walkDepth++;
+    }
+    
+    console.log(`[WO-AGENT] Remediation root: ${rootWoSlug} (walked ${walkDepth} levels from ${wo.slug})`);
+
     const attemptNum = attempts + 1;
     const objectiveText =
       `Fix and complete ${wo.slug} (${wo.name}) which failed due to: ${failureReason}\n\n` +
@@ -202,7 +240,7 @@ async function createFailureRemediation(
         `2. Complete all remaining acceptance criteria from parent WO\n` +
         `3. Verify changes are correct using read_table or execute_sql\n` +
         `4. Mark complete with summary of what was fixed`,
-      p_parent_id: wo.id,
+      p_parent_id: rootWoId,
     });
 
     if (createErr) {
@@ -356,7 +394,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 5) {
-      // WO-0387: Smart circuit breaker — call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0387: Smart circuit breaker â call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
         p_event_type: "checkpoint",
@@ -372,7 +410,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations → send to review for auto-QA
+        // SMART PATH: Agent made real mutations â send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -383,7 +421,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict → mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict â mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
