@@ -2,6 +2,7 @@
  * Test file for anti-clobber detection system
  * Created by: WO-TEST-CLOBBER
  * Purpose: Verify that the scope guard prevents concurrent modifications to the same files
+ * Modified by: WO-0463 (clobber detection test)
  */
 
 export interface ClobberCheckResult {
