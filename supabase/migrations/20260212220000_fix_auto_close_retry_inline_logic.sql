@@ -15,6 +15,7 @@ DECLARE
   v_all_pass boolean := true;
   v_has_items boolean := false;
   v_unresolved_fail_count int;
+  v_transition_result jsonb;
 BEGIN
   -- Only proceed if finding was just resolved (resolved_at changed from NULL to non-NULL)
   IF OLD.resolved_at IS NOT NULL OR NEW.resolved_at IS NULL THEN
