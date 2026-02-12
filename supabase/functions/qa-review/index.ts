@@ -49,6 +49,111 @@ async function insertFindings(supabase: any, findings: QAFinding[], woId: string
   return { inserted, errors };
 }
 
+// --- GitHub file verification functions ---
+
+function extractFilePathsFromACs(acText: string, objective: string): string[] {
+  const combined = `${acText}\n${objective || ''}`;
+  // Match paths containing a slash and ending in .ts, .tsx, .js, or .sql
+  const pathRegex = /(?:^|[\s"'`(,])([a-zA-Z0-9_\-./]+\/[a-zA-Z0-9_\-./]*\.(?:ts|tsx|js|sql))(?:[\s"'`),]|$)/gm;
+  const paths: string[] = [];
+  let match;
+  while ((match = pathRegex.exec(combined)) !== null) {
+    const p = match[1].trim();
+    if (p && !paths.includes(p)) paths.push(p);
+  }
+  return paths;
+}
+
+interface GitHubFileEvidence {
+  path: string;
+  exists: boolean;
+  size: number;
+  content_snippet: string;
+  error?: string;
+  matched_patterns?: string[];
+  unmatched_patterns?: string[];
+}
+
+async function fetchGitHubFileEvidence(paths: string[], supabase: any): Promise<GitHubFileEvidence[]> {
+  const results: GitHubFileEvidence[] = [];
+
+  // Try to get GITHUB_TOKEN from vault secrets, then fall back to env var
+  let token: string | null = null;
+  try {
+    const { data: secretRow } = await supabase
+      .from('vault.decrypted_secrets' as any)
+      .select('decrypted_secret')
+      .eq('name', 'GITHUB_TOKEN')
+      .single();
+    if (secretRow?.decrypted_secret) token = secretRow.decrypted_secret;
+  } catch (_e) {
+    // vault query failed, try env
+  }
+  if (!token) token = Deno.env.get('GITHUB_TOKEN') || null;
+
+  if (!token) {
+    return paths.slice(0, 3).map(p => ({
+      path: p, exists: false, size: 0, content_snippet: '',
+      error: 'GITHUB_TOKEN not found in vault secrets or environment variables'
+    }));
+  }
+
+  for (const p of paths.slice(0, 3)) {
+    try {
+      const resp = await fetch(
+        `https://api.github.com/repos/olivergale/metis-portal2/contents/${encodeURIComponent(p)}?ref=main`,
+        { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'qa-review-lie-detector' } }
+      );
+      if (!resp.ok) {
+        results.push({ path: p, exists: false, size: 0, content_snippet: '', error: `GitHub API ${resp.status}: ${resp.statusText}` });
+        continue;
+      }
+      const data = await resp.json();
+      if (data.type !== 'file' || !data.content) {
+        results.push({ path: p, exists: false, size: data.size || 0, content_snippet: '', error: 'Not a file or no content returned' });
+        continue;
+      }
+      // Decode base64 content
+      const decoded = atob(data.content.replace(/\n/g, ''));
+      results.push({
+        path: p,
+        exists: true,
+        size: data.size || decoded.length,
+        content_snippet: decoded.slice(0, 500),
+      });
+    } catch (e: any) {
+      results.push({ path: p, exists: false, size: 0, content_snippet: '', error: `Fetch error: ${e.message}` });
+    }
+  }
+  return results;
+}
+
+function checkCodePatternsInFile(fileContent: string, acText: string): { matched_patterns: string[]; unmatched_patterns: string[] } {
+  // Extract identifiers: words_with_underscores (snake_case function/variable names)
+  const identifierRegex = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g;
+  const identifiers = new Set<string>();
+  let m;
+  while ((m = identifierRegex.exec(acText)) !== null) {
+    const id = m[1];
+    // Filter out common SQL/English phrases
+    if (!['the_same', 'work_order', 'work_orders', 'edge_function', 'each_path',
+      'max_iterations', 'created_at', 'updated_at', 'content_type', 'status_code',
+      'error_code', 'finding_type', 'first_500'].includes(id)) {
+      identifiers.add(id);
+    }
+  }
+
+  const matched: string[] = [];
+  const unmatched: string[] = [];
+  for (const id of identifiers) {
+    if (fileContent.includes(id)) matched.push(id);
+    else unmatched.push(id);
+  }
+  return { matched_patterns: matched, unmatched_patterns: unmatched };
+}
+
+// --- End GitHub file verification functions ---
+
 async function gatherSystemStateEvidence(supabase: any, acText: string, summary: string): Promise<string> {
   const combined = `${acText}\n${summary || ''}`;
   const evidence: string[] = [];
@@ -58,7 +163,7 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
     // Functions/triggers: must contain underscore (PG functions are snake_case)
     const funcNames = [...new Set(
       (combined.match(/\b([a-z][a-z0-9_]{2,50})\s*\(/g) || []).map(m => m.replace(/\s*\($/, ''))
-        .filter(n => n.includes('_')) // Must have underscore — filters "fail(", "has(", "set(" etc
+        .filter(n => n.includes('_')) // Must have underscore â filters "fail(", "has(", "set(" etc
         .filter(n => !['select_', 'insert_', 'update_', 'delete_', 'create_', 'drop_', 'order_by',
           'group_by', 'is_not', 'is_null', 'not_null', 'left_join', 'inner_join', 'cross_join',
           'string_agg', 'json_build', 'jsonb_build', 'array_agg', 'row_number', 'old_string',
@@ -176,10 +281,10 @@ For EACH claim in the summary, cross-reference against the execution log AND sys
 Every factual claim in the summary (file created, query run, migration applied, function deployed) MUST have EITHER a matching execution_log entry OR matching system state evidence (function EXISTS, trigger EXISTS, table EXISTS, migration found). If a claim has NEITHER, it is FABRICATED.
 
 ### CHECK 2: Mutation Claims vs Actual Mutations
-If the summary says "created table X", "applied migration Y", "inserted Z rows" — there MUST be EITHER a matching tool call in the execution log OR the entity must exist in system state evidence. Example: claim "created function foo()" is SUPPORTED if system state shows "Function foo: EXISTS in pg_proc", even without an execution_log entry.
+If the summary says "created table X", "applied migration Y", "inserted Z rows" â there MUST be EITHER a matching tool call in the execution log OR the entity must exist in system state evidence. Example: claim "created function foo()" is SUPPORTED if system state shows "Function foo: EXISTS in pg_proc", even without an execution_log entry.
 
 ### CHECK 3: "Deployed" / "Verified" Statements
-If the summary says "deployed function X" or "verified endpoint Y" — there MUST be a deploy_edge_function call or a verification query in the log. Unsubstantiated deploy/verify claims = FABRICATED.
+If the summary says "deployed function X" or "verified endpoint Y" â there MUST be a deploy_edge_function call or a verification query in the log. Unsubstantiated deploy/verify claims = FABRICATED.
 
 ### CHECK 4: Scope Drift Outside ACs
 Compare work done (per execution log) against acceptance criteria. Flag any claims about work NOT in the acceptance criteria. Also flag ACs that were NOT addressed.
