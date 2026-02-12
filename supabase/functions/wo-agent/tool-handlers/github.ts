@@ -195,12 +195,20 @@ export async function handleGithubWriteFile(
     }
 
     const result = await resp.json();
+    
+    // WO-0400: Prepend warning if overlap detected
+    let resultMessage = `Wrote ${path} to ${repo}`;
+    if (overlapCheck.overlap) {
+      const conflictingSlugs = overlapCheck.conflicting_wos.map((w: any) => w.slug).join(", ");
+      resultMessage = `WARNING: ${path} was last modified by ${conflictingSlugs}. Verify changes preserve prior work.\n\n${resultMessage}`;
+    }
+    
     return {
       success: true,
       data: {
         commit_sha: result.commit?.sha,
         html_url: result.content?.html_url,
-        message: `Wrote ${path} to ${repo}`,
+        message: resultMessage,
       },
     };
   } catch (e: any) {
@@ -327,7 +335,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
+    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
