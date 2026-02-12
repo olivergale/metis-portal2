@@ -211,6 +211,22 @@ export async function handleGithubEditFile(
   try {
     const ref = branch || "main";
 
+    // WO-0400: Check for file overlap before editing
+    const overlapCheck = await checkFileOverlap(ctx.supabase, ctx.workOrderId, path);
+    if (overlapCheck.overlap) {
+      // Log warning to execution_log
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: ctx.workOrderId,
+        phase: "stream",
+        agent_name: "builder",
+        detail: {
+          event_type: "destructive_overlap_warning",
+          file_path: path,
+          conflicting_wos: overlapCheck.conflicting_wos,
+        },
+      });
+    }
+
     // 1. Read current file
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
@@ -287,7 +303,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit Ã¢ÂÂ this runs server-side)
+    // 1. Read full file (no size limit ÃÂ¢ÃÂÃÂ this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
