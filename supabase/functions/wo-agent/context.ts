@@ -234,7 +234,8 @@ export async function buildAgentContext(
   systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
   systemPrompt += `7. Never make up data -- query first, then act\n`;
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
-  systemPrompt += `9. For file edits, prefer github_edit_file over github_write_file (saves tokens)\n`;
+  systemPrompt += `9. For file edits, prefer github_patch_file (multi-edit, one commit) over github_edit_file (single edit) over github_write_file (full rewrite)\n`;
+  systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
 
   // Build user message with WO details
   let userMessage = `# Work Order: ${workOrder.slug}\n\n`;

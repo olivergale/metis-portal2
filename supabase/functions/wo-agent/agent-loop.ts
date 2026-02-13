@@ -1,5 +1,6 @@
-// wo-agent/agent-loop.ts v9
-// WO-0474: Remove budget system, wall-clock only, non-productive recursion detection
+// wo-agent/agent-loop.ts v10
+// WO-0474: Fix catch block bypassing stall detection — API error counter + emergency trim + non-retryable fail-fast
+// WO-0477: Remove budget system, wall-clock only, non-productive recursion detection
 // WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
 // WO-0378: Message corruption fix — repairMessages, dispatchTool try/catch, pair-safe trimming
 // WO-0187: Continuation pattern — checkpoint before timeout, self-reinvoke via pg_net
@@ -169,6 +170,8 @@ export async function runAgentLoop(
 
   // Stall detection: track consecutive non-productive turns
   let consecutiveStallTurns = 0;
+  // API error tracking: catch block must also bail on repeated failures
+  let consecutiveApiErrors = 0;
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
@@ -337,6 +340,9 @@ export async function runAgentLoop(
         messages,
       });
 
+      // Successful API call — reset error counter
+      consecutiveApiErrors = 0;
+
       // Log the turn
       await logTurn(ctx, turn, response, turnsTrimmed, messages.length);
 
@@ -473,7 +479,48 @@ export async function runAgentLoop(
         },
       });
 
-      // If API error, wait briefly and retry (up to wall-clock timeout)
+      // Non-retryable: prompt too long — trim aggressively or fail immediately
+      if (e.message?.includes('prompt is too long') || e.status === 400) {
+        // Try emergency trim: keep only first message + last 4 pairs
+        const emergencyMax = 1 + 4 * 2;
+        if (messages.length > emergencyMax) {
+          const trimCount = messages.length - emergencyMax;
+          const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
+          messages.splice(1, trimCount);
+          const hasSummary = messages.length > 1 &&
+            messages[1].role === 'user' &&
+            typeof messages[1].content === 'string' &&
+            (messages[1].content as string).startsWith('## Execution History');
+          if (hasSummary) {
+            messages[1] = { role: 'user', content: historySummary };
+          } else {
+            messages.splice(1, 0, { role: 'user', content: historySummary });
+          }
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} emergency trim: ${trimCount} messages removed, ${messages.length} remaining`);
+          consecutiveApiErrors++;
+        } else {
+          // Already minimal — context is fundamentally too large, fail immediately
+          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further — system prompt + initial context exceeds model limit.`;
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} FATAL: ${reason}`);
+          await logFailed(ctx, reason);
+          return { status: "failed", turns: turn, summary: reason, toolCalls };
+        }
+
+        if (consecutiveApiErrors >= 3) {
+          const reason = `Fatal: ${consecutiveApiErrors} consecutive API errors after emergency trim. Last: ${e.message}`;
+          await logFailed(ctx, reason);
+          return { status: "failed", turns: turn, summary: reason, toolCalls };
+        }
+        continue;
+      }
+
+      // Retryable errors (rate limit, 500, network): count and bail after 5
+      consecutiveApiErrors++;
+      if (consecutiveApiErrors >= 5) {
+        const reason = `Fatal: ${consecutiveApiErrors} consecutive API errors. Last: ${e.message}`;
+        await logFailed(ctx, reason);
+        return { status: "failed", turns: turn, summary: reason, toolCalls };
+      }
       await new Promise((r) => setTimeout(r, 2000));
       continue;
     }
