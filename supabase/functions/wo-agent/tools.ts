@@ -839,8 +839,11 @@ export async function dispatchTool(
 
     if (toolName === "execute_sql") {
       objectType = "sql_query";
-      objectId = toolInput.query?.substring(0, 100) || "unknown";
-      action = toolInput.query?.trim().split(/\s+/)[0]?.toUpperCase() || "UNKNOWN";
+      // Strip SQL comments before extracting action keyword and object_id
+      const rawSql = toolInput.query || "";
+      const strippedSql = rawSql.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").trim();
+      objectId = strippedSql.substring(0, 100) || "unknown";
+      action = strippedSql.split(/\s+/)[0]?.toUpperCase() || "UNKNOWN";
     } else if (toolName === "apply_migration") {
       objectType = "migration";
       objectId = toolInput.name || "unknown";
