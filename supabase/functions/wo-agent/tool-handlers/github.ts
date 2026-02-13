@@ -344,7 +344,7 @@ export async function handleGithubPatchFile(
   try {
     const ref = branch || "main";
 
-    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
+    // 1. Read full file (no size limit ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this runs server-side)
     const readResp = await fetch(
       `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: githubHeaders(token) }
@@ -549,5 +549,64 @@ export async function handleGithubCreatePr(
     };
   } catch (e: any) {
     return { success: false, error: `github_create_pr exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubSearchCode(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { query, path_filter } = input;
+  if (!query) {
+    return { success: false, error: "Missing required parameter: query" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    // Build search query: always scope to olivergale/metis-portal2 repo
+    let searchQuery = `${query} repo:olivergale/metis-portal2`;
+    if (path_filter) {
+      searchQuery += ` path:${path_filter}`;
+    }
+
+    const resp = await fetch(
+      `${GITHUB_API}/search/code?q=${encodeURIComponent(searchQuery)}&per_page=10`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub search error ${resp.status}: ${errText}` };
+    }
+
+    const data = await resp.json();
+    
+    // Extract top 10 results with file path and text matches
+    const results = data.items?.slice(0, 10).map((item: any) => ({
+      path: item.path,
+      repository: item.repository?.full_name,
+      html_url: item.html_url,
+      // GitHub Code Search API returns text_matches when available
+      matches: item.text_matches?.map((match: any) => ({
+        fragment: match.fragment, // 3 lines of context around match
+        line_start: match.object_url, // Contains line number info
+      })) || [],
+    })) || [];
+
+    return {
+      success: true,
+      data: {
+        query: searchQuery,
+        total_count: data.total_count,
+        results,
+        message: `Found ${data.total_count} results for "${query}" (showing top ${results.length})`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_search_code exception: ${e.message}` };
   }
 }
