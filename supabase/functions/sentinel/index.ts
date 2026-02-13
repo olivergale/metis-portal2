@@ -229,6 +229,7 @@ Deno.serve(async (req: Request) => {
         elapsed_ms: elapsed,
         triage_count: triageEntries.length,
         correlation_count: correlations.length,
+        archive_count: archive_count,
         breakdown: {
           stuck: triageEntries.filter((t) => t.triage_type === "stuck").length,
           orphan: triageEntries.filter((t) => t.triage_type === "orphan").length,
