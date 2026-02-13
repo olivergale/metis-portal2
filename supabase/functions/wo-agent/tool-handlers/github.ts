@@ -32,7 +32,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -209,7 +209,7 @@ export async function handleGithubWriteFile(
     if (detectUtf8Corruption(content)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content ÃÂ¢ÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -317,7 +317,7 @@ export async function handleGithubEditFile(
     if (detectUtf8Corruption(updatedContent)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content Ã¢ÂÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content ÃÂ¢ÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -352,7 +352,7 @@ export async function handleGithubEditFile(
           file_path: path,
           size_before: originalSize,
           size_after: newSize,
-          message: `CRITICAL: File size tripled after edit â possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
+          message: `CRITICAL: File size tripled after edit Ã¢ÂÂ possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
         },
       });
     }
@@ -366,7 +366,7 @@ export async function handleGithubEditFile(
     
     // WO-0501: Add size warning to result message if detected
     if (newSize > originalSize * 3) {
-      resultMessage = `â ï¸  CRITICAL: File size tripled (${originalSize}B â ${newSize}B) â possible UTF-8 corruption!\n\n${resultMessage}`;
+      resultMessage = `Ã¢ÂÂ Ã¯Â¸Â  CRITICAL: File size tripled (${originalSize}B Ã¢ÂÂ ${newSize}B) Ã¢ÂÂ possible UTF-8 corruption!\n\n${resultMessage}`;
     }
     
     return {
@@ -814,5 +814,91 @@ export async function handleGithubReadFileRange(
     };
   } catch (e: any) {
     return { success: false, error: `github_read_file_range exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubTree(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path_filter, branch, show_sizes } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = branch || "main";
+    
+    // Get the SHA for the branch
+    const refResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/ref/heads/${ref}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!refResp.ok) {
+      const errText = await refResp.text();
+      return { success: false, error: `Cannot find branch '${ref}': ${refResp.status} ${errText}` };
+    }
+
+    const refData = await refResp.json();
+    const sha = refData.object.sha;
+
+    // Get the tree recursively
+    const treeResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/trees/${sha}?recursive=true`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!treeResp.ok) {
+      const errText = await treeResp.text();
+      return { success: false, error: `GitHub tree API error ${treeResp.status}: ${errText}` };
+    }
+
+    const treeData = await treeResp.json();
+    let items = treeData.tree || [];
+
+    // Filter by path_filter if provided
+    if (path_filter) {
+      items = items.filter((item: any) => item.path.startsWith(path_filter));
+    }
+
+    // Limit to 500 entries
+    const totalCount = items.length;
+    const omittedCount = Math.max(0, totalCount - 500);
+    items = items.slice(0, 500);
+
+    // Build tree structure with indentation
+    const tree: string[] = [];
+    items.forEach((item: any) => {
+      const depth = item.path.split("/").length - 1;
+      const indent = "  ".repeat(depth);
+      const name = item.path.split("/").pop();
+      const type = item.type === "tree" ? "📁" : "📄";
+      const sizeInfo = show_sizes && item.size ? ` (${item.size} bytes)` : "";
+      tree.push(`${indent}${type} ${name}${sizeInfo}`);
+    });
+
+    const treeString = tree.join("\n");
+
+    return {
+      success: true,
+      data: {
+        repo,
+        branch: ref,
+        path_filter: path_filter || "(all paths)",
+        total_count: totalCount,
+        showing_count: items.length,
+        omitted_count: omittedCount,
+        tree: treeString,
+        message: omittedCount > 0
+          ? `Showing ${items.length} of ${totalCount} entries (${omittedCount} omitted)`
+          : `Showing all ${items.length} entries`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_tree exception: ${e.message}` };
   }
 }
