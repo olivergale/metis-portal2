@@ -1,6 +1,6 @@
 // context-load/index.ts - v17
 // v17: Added design_doc_required flag to work_orders (WO-PRD-GATE)
-// v16: Fix doc_status Ã¢ÂÂ use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
+// v16: Fix doc_status ÃÂ¢ÃÂÃÂ use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
 // v15: Added verification_requirements to response (E2E verification gate)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -271,7 +271,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(10),
 
-      // 6. Directives (system rules) Ã¢ÂÂ exclude portal_only directives (v13)
+      // 6. Directives (system rules) ÃÂ¢ÃÂÃÂ exclude portal_only directives (v13)
       supabase.from("system_directives")
         .select("name, content, enforcement, priority")
         .eq("active", true)
@@ -415,11 +415,32 @@ Deno.serve(async (req) => {
     const verificationRequirements = {
       gate_enabled: true,
       required_for_tags: ['requires_verification'],
-      enforcement_transition: 'in_progress Ã¢ÂÂ review',
+      enforcement_transition: 'in_progress ÃÂ¢ÃÂÃÂ review',
       verification_coverage_pct: verificationCoveragePct,
       verified_last_30d: verifiedCount,
       completed_last_30d: totalCompleted,
     };
+
+    // v18: Build workspace snapshot (WO-0526)
+    let workspaceSnapshot: WorkspaceSnapshot | null = null;
+    
+    if (workOrderId) {
+      // Fetch WO objective for context filtering
+      const { data: wo } = await supabase
+        .from('work_orders')
+        .select('objective')
+        .eq('id', workOrderId)
+        .single()
+        .catch(() => ({ data: null }));
+      
+      const currentWoObjective = wo?.objective;
+      
+      workspaceSnapshot = await buildWorkspaceSnapshot(
+        supabase,
+        workOrderId,
+        currentWoObjective
+      );
+    }
 
     // Build response
     const response = {
