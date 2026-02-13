@@ -30,6 +30,18 @@ function githubHeaders(token: string): Record<string, string> {
 }
 
 /**
+ * Check if content contains UTF-8 corruption signature.
+ * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
+ * Pattern: 4+ consecutive corrupted bytes (em-dash → ÃÂÃÂÃÂÃÂ...)
+ */
+function detectUtf8Corruption(content: string): boolean {
+  // Match 4+ consecutive occurrences of the corruption pattern
+  // \xC3\x82 or \xC3\x83 are the byte sequences for corrupted multi-byte UTF-8
+  const corruptionPattern = /(\xC3[\x82-\x83]){4,}/;
+  return corruptionPattern.test(content);
+}
+
+/**
  * Check if a file was recently modified by another completed WO (anti-clobber guard).
  * WO-0400: Prevent silent overwrites when multiple WOs edit the same file.
  */
