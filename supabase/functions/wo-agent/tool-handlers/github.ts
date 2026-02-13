@@ -32,7 +32,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash → ÃÂÃÂÃÂÃÂ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash â ÃÃÃÃÃÃÃÃ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -203,6 +203,14 @@ export async function handleGithubWriteFile(
       }
     } catch {
       // File doesn't exist, that's fine
+    }
+
+    // WO-0501: Check for UTF-8 corruption before committing
+    if (detectUtf8Corruption(content)) {
+      return {
+        success: false,
+        error: "UTF-8 corruption detected in file content — aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂ...) that indicate encoding errors.",
+      };
     }
 
     const encodedContent = btoa(unescape(encodeURIComponent(content)));
