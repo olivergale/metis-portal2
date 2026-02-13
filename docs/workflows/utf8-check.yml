@@ -1,0 +1,92 @@
+# WO-0501: UTF-8 Corruption Check Workflow
+# 
+# MANUAL INSTALLATION REQUIRED:
+# Copy this file to .github/workflows/utf8-check.yml
+# 
+# GitHub API restrictions prevent automated workflow file creation
+# (requires 'workflow' scope on Personal Access Token)
+
+name: UTF-8 Corruption Check
+
+# WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat
+# Runs on push to main to catch corrupted commits before deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.ts'
+      - '**.tsx'
+      - '**.js'
+      - '**.jsx'
+
+jobs:
+  check-utf8-corruption:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need current + previous commit to detect changes
+
+      - name: Get changed TypeScript files
+        id: changed-files
+        run: |
+          # Get list of changed .ts files in this push
+          git diff --name-only HEAD^ HEAD | grep -E '\.(ts|tsx|js|jsx)$' > changed_files.txt || true
+          if [ -s changed_files.txt ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "Changed files:"
+            cat changed_files.txt
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "No TypeScript/JavaScript files changed"
+          fi
+
+      - name: Check for UTF-8 corruption pattern
+        if: steps.changed-files.outputs.found == 'true'
+        run: |
+          CORRUPTED_FILES=()
+          
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              # Check for the corruption pattern: 4+ consecutive corrupted UTF-8 byte sequences
+              # Pattern: \xC3\x82 or \xC3\x83 (em-dash → ÃÂÃÂÃÂÃÂ...)
+              if grep -P '(\xC3[\x82-\x83]){4,}' "$file" > /dev/null 2>&1; then
+                CORRUPTED_FILES+=("$file")
+                echo "❌ CORRUPTION DETECTED: $file"
+                
+                # Show first occurrence for debugging
+                echo "  First corrupted sequence:"
+                grep -P -o '(\xC3[\x82-\x83]){4,}' "$file" | head -1 | od -A x -t x1z -v | head -3
+              fi
+            fi
+          done < changed_files.txt
+          
+          if [ ${#CORRUPTED_FILES[@]} -gt 0 ]; then
+            echo ""
+            echo "================================================"
+            echo "UTF-8 CORRUPTION DETECTED IN ${#CORRUPTED_FILES[@]} FILE(S)"
+            echo "================================================"
+            for f in "${CORRUPTED_FILES[@]}"; do
+              SIZE=$(wc -c < "$f")
+              echo "  - $f (${SIZE} bytes)"
+            done
+            echo ""
+            echo "These files contain multiply-encoded UTF-8 sequences (ÃÂÃÂ...)"
+            echo "that indicate github_edit_file corruption."
+            echo ""
+            echo "Action required:"
+            echo "1. Revert this commit"
+            echo "2. Use github_write_file (not github_edit_file) to fix the corruption"
+            echo "3. Verify file size is normal before committing"
+            exit 1
+          else
+            echo "✅ No UTF-8 corruption detected in changed files"
+          fi
+
+      - name: Report success
+        if: steps.changed-files.outputs.found == 'false' || success()
+        run: |
+          echo "UTF-8 corruption check passed"
