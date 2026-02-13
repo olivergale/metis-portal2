@@ -32,7 +32,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash Ã¢ÂÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂ¢ÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -209,7 +209,7 @@ export async function handleGithubWriteFile(
     if (detectUtf8Corruption(content)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content â aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÃÃÃ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content Ã¢ÂÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -317,7 +317,7 @@ export async function handleGithubEditFile(
     if (detectUtf8Corruption(updatedContent)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content — aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content â aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÃÃÃ...) that indicate encoding errors.",
       };
     }
 
@@ -339,11 +339,34 @@ export async function handleGithubEditFile(
 
     const result = await writeResp.json();
     
+    // WO-0501: Post-commit size check for potential corruption
+    const newSize = result.content?.size || 0;
+    if (newSize > originalSize * 3) {
+      // Log critical warning to execution_log
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: ctx.workOrderId,
+        phase: "failed",
+        agent_name: "builder",
+        detail: {
+          event_type: "utf8_corruption_size_anomaly",
+          file_path: path,
+          size_before: originalSize,
+          size_after: newSize,
+          message: `CRITICAL: File size tripled after edit — possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
+        },
+      });
+    }
+    
     // WO-0400: Prepend warning if overlap detected
     let resultMessage = `Edited ${path} in ${repo} (replaced ${old_string.length} chars with ${new_string.length} chars)`;
     if (overlapCheck.overlap) {
       const conflictingSlugs = overlapCheck.conflicting_wos.map((w: any) => w.slug).join(", ");
       resultMessage = `WARNING: ${path} was last modified by ${conflictingSlugs}. Verify changes preserve prior work.\n\n${resultMessage}`;
+    }
+    
+    // WO-0501: Add size warning to result message if detected
+    if (newSize > originalSize * 3) {
+      resultMessage = `⚠️  CRITICAL: File size tripled (${originalSize}B → ${newSize}B) — possible UTF-8 corruption!\n\n${resultMessage}`;
     }
     
     return {
