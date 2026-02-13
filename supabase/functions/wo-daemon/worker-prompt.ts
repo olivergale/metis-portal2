@@ -137,8 +137,10 @@ export async function loadSystemContext(supabase: any): Promise<string> {
 }
 
 /**
- * Build comprehensive worker prompt from template + dynamic data
- * WO-0164: Accepts optional woTags for tag-filtered directive loading
+ * Build worker prompt from template + schema context.
+ * WO-0480: Pull architecture — KB, directives, lessons, system_context REMOVED.
+ * Agents discover context on-demand via search_knowledge_base, search_lessons, get_schema tools.
+ * Only structural rules (identity, harness, deployment, escalation) remain pre-loaded.
  */
 export async function buildWorkerPrompt(
   supabase: any,
@@ -161,64 +163,15 @@ export async function buildWorkerPrompt(
   sections.push(template.sections.deployment_rules);
   sections.push('');
 
-  // 4. Schema Gotchas (static template — supplemented by knowledge base)
-  sections.push(template.sections.schema_gotchas);
-  sections.push('');
-
-  // 4b. Institutional Knowledge Base (dynamic, role/tag-filtered)
-  const kb = await loadKnowledgeBase(supabase, workerAgentName, woTags);
-  if (kb) {
-    sections.push(kb);
-    sections.push('');
-  }
-
-  // 5. Database Schema Context (already formatted)
+  // 4. Database Schema Context (kept — get_schema returns same blob, no per-table support yet)
   sections.push(schemaContext);
   sections.push('');
 
-  // 6. Active Directives (filtered by WO tags if provided)
-  const directives = await loadActiveDirectives(supabase, woTags);
-  if (directives.length > 0) {
-    sections.push('# ACTIVE SYSTEM DIRECTIVES');
-    sections.push('');
-    sections.push('The following directives are currently active and must be followed:');
-    sections.push('');
-    for (const dir of directives) {
-      sections.push(`## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})`);
-      sections.push(dir.content);
-      sections.push('');
-    }
-  }
-
-  // 7. Critical Lessons
-  const lessons = await loadCriticalLessons(supabase);
-  if (lessons.length > 0) {
-    sections.push('# CRITICAL LESSONS LEARNED');
-    sections.push('');
-    sections.push('The following lessons were learned from past failures and MUST be applied:');
-    sections.push('');
-    for (const lesson of lessons) {
-      sections.push(`## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}`);
-      sections.push(`**Rule**: ${lesson.rule}`);
-      if (lesson.example_good) {
-        sections.push(`**Example**: ${lesson.example_good}`);
-      }
-      sections.push('');
-    }
-  }
-
-  // 8. Recent System Context
-  const systemContext = await loadSystemContext(supabase);
-  sections.push('# SYSTEM CONTEXT (RECENT STATUS)');
-  sections.push('');
-  sections.push(systemContext);
-  sections.push('');
-
-  // 9. Escalation Instructions
+  // 5. Escalation Instructions
   sections.push(template.sections.escalation_instructions);
   sections.push('');
 
-  // 10. Footer
+  // 6. Footer
   sections.push('---');
   sections.push(`Worker Agent: ${workerAgentName}`);
   sections.push(`Prompt Template Version: ${template.version}`);

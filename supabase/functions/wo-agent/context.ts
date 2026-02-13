@@ -1,4 +1,5 @@
-// wo-agent/context.ts v8
+// wo-agent/context.ts v9
+// v9: WO-0480 — pull architecture: strip pre-loaded KB, lessons from system prompt
 // v8: WO-0405 — per-agent lesson filtering, ROLE_LESSON_CATEGORIES
 // v7: WO-0245 â delegate_subtask + github_edit_file tool descriptions, restored v6 features
 // v6: WO-0253 â use parent_id for remediation context (fallback to parent: tag)
@@ -9,12 +10,7 @@
 
 import {
   loadWorkerPromptTemplate,
-  loadActiveDirectives,
-  loadCriticalLessons,
-  loadSystemContext,
   buildWorkerPrompt,
-  generateWorkerAgentName,
-  loadKnowledgeBase,
 } from "../wo-daemon/worker-prompt.ts";
 
 export interface WorkOrderContext {
@@ -91,43 +87,8 @@ export async function buildAgentContext(
     systemPrompt = await buildFallbackPrompt(supabase, agentName, schemaContext, woTags);
   }
 
-  // Inject institutional knowledge base (filtered by agent role + WO tags)
-  const knowledgeBase = await loadKnowledgeBase(supabase, agentName, woTags);
-  if (knowledgeBase) {
-    systemPrompt += `\n\n${knowledgeBase}`;
-  }
-
-  // WO-0405: Load promoted lessons filtered by agent role
-  const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
-    builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
-    "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
-    ops: ["operational", "monitoring", "failure_archetype", "execution"],
-    security: ["security", "enforcement", "approval_flow"],
-    frontend: ["execution", "deployment", "scope_creep"],
-    ilmarinen: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "operational", "scope_creep", "hallucination"],
-    "user-portal": ["approval_flow", "scope_creep"],
-  };
-  try {
-    const roleCategories = ROLE_LESSON_CATEGORIES[agentName] || ROLE_LESSON_CATEGORIES["builder"];
-    const { data: promotedLessons } = await supabase
-      .from("lessons")
-      .select("id, pattern, rule, category, severity")
-      .eq("review_status", "approved")
-      .not("promoted_at", "is", null)
-      .in("category", roleCategories)
-      .order("promoted_at", { ascending: false })
-      .limit(10);
-
-    if (promotedLessons && promotedLessons.length > 0) {
-      systemPrompt += `\n\n## Lessons From Past Failures\n`;
-      for (const lesson of promotedLessons) {
-        const ruleSnippet = (lesson.rule || "").slice(0, 200);
-        systemPrompt += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
-      }
-    }
-  } catch {
-    // Lesson loading failed, non-critical
-  }
+  // WO-0480: KB and lessons REMOVED from system prompt (pull architecture).
+  // Agents discover context on-demand via search_knowledge_base and search_lessons tools.
 
   // Load agent execution profile (WO-0380, WO-0401: model from profile)
   let agentProfile: any = null;
@@ -236,6 +197,7 @@ export async function buildAgentContext(
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
   systemPrompt += `9. For file edits, prefer github_patch_file (multi-edit, one commit) over github_edit_file (single edit) over github_write_file (full rewrite)\n`;
   systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
+  systemPrompt += `11. CONTEXT DISCOVERY: Before starting work, call search_knowledge_base with relevant keywords to load institutional knowledge for this task. Call search_lessons to check for past failure patterns on similar work. Call get_schema if you need database schema reference. Do NOT skip this step.\n`;
 
   // Build user message with WO details
   let userMessage = `# Work Order: ${workOrder.slug}\n\n`;
@@ -347,7 +309,7 @@ async function buildRemediationContext(
     .eq("finding_type", "fail")
     .is("resolution_status", null)
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(5);
 
   if (findings && findings.length > 0) {
     ctx += `### Unresolved QA Failures (FIX THESE)\n`;
@@ -366,11 +328,11 @@ async function buildRemediationContext(
     .select("phase, agent_name, detail, created_at")
     .eq("work_order_id", parentWo.id)
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(10);
 
   if (execLogs && execLogs.length > 0) {
     ctx += `### Parent Execution History (most recent first)\n`;
-    for (const log of execLogs.slice(0, 15)) {
+    for (const log of execLogs.slice(0, 8)) {
       const detail = log.detail || {};
       const toolName = detail.tool_name || detail.event_type || log.phase;
       const content = (detail.content || "").slice(0, 300);
@@ -512,27 +474,11 @@ async function buildFallbackPrompt(
   prompt += `- Call mark_complete or mark_failed when done\n\n`;
   prompt += schemaContext + `\n\n`;
 
-  // Inject knowledge base
-  const kb = await loadKnowledgeBase(supabase, agentName, woTags);
-  if (kb) prompt += kb + '\n';
-
-  // Still load directives and lessons (filtered by WO tags)
-  const directives = await loadActiveDirectives(supabase, woTags);
-  if (directives.length > 0) {
-    prompt += `# ACTIVE DIRECTIVES\n`;
-    for (const dir of directives) {
-      prompt += `## ${dir.name}\n${dir.content}\n\n`;
-    }
-  }
-
-  const lessons = await loadCriticalLessons(supabase);
-  if (lessons.length > 0) {
-    prompt += `# CRITICAL LESSONS\n`;
-    for (const l of lessons) {
-      prompt += `- [${l.severity}] ${l.pattern.slice(0, 80)}: ${l.rule}\n`;
-    }
-    prompt += `\n`;
-  }
+  // WO-0480: KB, directives, lessons REMOVED (pull architecture).
+  // Agents discover context on-demand via search_knowledge_base, search_lessons tools.
+  prompt += `## Context Discovery\n`;
+  prompt += `Before starting work, call search_knowledge_base with relevant keywords to load institutional knowledge.\n`;
+  prompt += `Call search_lessons to check for past failure patterns. Call get_schema if you need schema reference.\n\n`;
 
   return prompt;
 }
