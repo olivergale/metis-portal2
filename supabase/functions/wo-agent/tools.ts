@@ -618,7 +618,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -854,15 +854,20 @@ export async function dispatchTool(
       action = toolName === "github_write_file" ? "WRITE" : toolName === "github_edit_file" ? "EDIT" : "PATCH";
     }
 
-    await recordMutation(
-      ctx,
-      toolName,
-      objectType,
-      objectId,
-      action,
-      result.success,
-      result.error
-    );
+    // Skip recording SELECT queries (reads, not mutations)
+    const shouldRecord = !(toolName === "execute_sql" && action === "SELECT");
+    
+    if (shouldRecord) {
+      await recordMutation(
+        ctx,
+        toolName,
+        objectType,
+        objectId,
+        action,
+        result.success,
+        result.error
+      );
+    }
   }
 
   return result;
