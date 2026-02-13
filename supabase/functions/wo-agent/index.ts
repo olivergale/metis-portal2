@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -56,9 +56,50 @@ Deno.serve(async (req: Request) => {
 });
 
 /**
+ * WO-0487: Suggest alternative approaches based on error class
+ */
+function getAlternativeApproaches(toolName: string, errorClass: string): string | null {
+  // GitHub edit failures -> use write instead
+  if (toolName === "github_edit_file" && errorClass === "github_match_failure") {
+    return "Use github_write_file to replace the entire file instead of github_edit_file";
+  }
+  
+  // SQL syntax errors -> review schema context
+  if (errorClass === "sql_syntax") {
+    return "Review get_schema() output for correct column names and table structure";
+  }
+  
+  // RLS violations -> use enforcement bypass RPC
+  if (errorClass === "rls_violation") {
+    return "Use state_write() RPC for protected tables or run_sql_void with bypass";
+  }
+  
+  // Schema mismatches -> verify table/column existence first
+  if (errorClass === "schema_mismatch") {
+    return "Query information_schema or use read_table to verify object exists before mutation";
+  }
+  
+  // Encoding errors -> avoid special characters or use bytea
+  if (errorClass === "encoding_error") {
+    return "Check for UTF-8 corruption from github_edit_file; use github_write_file for clean rewrite";
+  }
+  
+  // Enforcement blocked -> use proper RPC with bypass
+  if (errorClass === "enforcement_blocked") {
+    return "Use update_work_order_state() RPC instead of direct UPDATE on work_orders table";
+  }
+  
+  return null;
+}
+
+/**
  * WO-0258: Create a remediation WO when builder fails from circuit breaker or timeout.
  * Routes to builder (fresh execution budget).
  * Skips remediation WOs to avoid loops.
+ * 
+ * WO-0487: Enhanced with mutation diagnosis - queries wo_mutations for parent to build
+ * structured diagnosis including completed mutations, failed mutations, DO NOT RETRY guidance,
+ * and QA checklist status. Handles remediation chains up to depth 3.
  */
 async function createFailureRemediation(
   supabase: any,
@@ -198,11 +239,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent ÃÂ¢ÃÂÃÂ this is the root
+        // No parent ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) ÃÂ¢ÃÂÃÂ if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -210,7 +251,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal ÃÂ¢ÃÂÃÂ current WO is the effective root
+        // Parent is terminal ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ current WO is the effective root
         break;
       }
       
@@ -552,7 +593,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0387: Smart circuit breaker ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
         p_event_type: "checkpoint",
@@ -568,7 +609,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ send to review for auto-QA
+        // SMART PATH: Agent made real mutations ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -579,7 +620,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
