@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -239,11 +239,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this is the root
+        // No parent ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -251,7 +251,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ current WO is the effective root
+        // Parent is terminal ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ current WO is the effective root
         break;
       }
       
@@ -592,8 +592,34 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("work_order_id", work_order_id)
       .eq("phase", "checkpoint");
 
+    // AC4: Hard safety cap - if checkpointCount >= 8, unconditionally fail
+    if ((checkpointCount || 0) >= 8) {
+      const msg = `Hard circuit breaker cap: 8 checkpoints reached. Marking failed.`;
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "loop_breaker", agent_name: agentContext.agentName,
+        detail: {
+          event_type: "circuit_breaker_decision",
+          decision: "hard_cap",
+          reason: msg,
+          mutation_count_current: 0,
+          mutation_count_previous: 0,
+          delta: 0,
+          checkpoint_count: checkpointCount,
+        },
+      });
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
+        detail: { event_type: "circuit_breaker", content: msg, decision: "hard_cap" },
+      });
+      await supabase.rpc("run_sql_void", {
+        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+      });
+      await createFailureRemediation(supabase, wo, msg);
+      return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
+    }
+
     if ((checkpointCount || 0) >= 3) {
-      // WO-0499: Progress-based circuit breaker — mutation-delta decides continue vs stuck
+      // WO-0499: Progress-based circuit breaker â mutation-delta decides continue vs stuck
       const previousMutations = checkpoint?.detail?.mutation_digest?.total || null;
       const { data: cbResult, error: cbErr } = await supabase.rpc("evaluate_circuit_breaker_progress", {
         p_wo_id: wo.id,
@@ -622,10 +648,10 @@ async function handleExecute(req: Request): Promise<Response> {
       });
 
       if (decision === "continue") {
-        // AC3: New mutations detected — allow continuation regardless of checkpoint count
+        // AC3: New mutations detected â allow continuation regardless of checkpoint count
         // Fall through to continuation logic below
       } else {
-        // stuck or hard_cap — fail + remediation
+        // stuck or hard_cap â fail + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
