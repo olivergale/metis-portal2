@@ -1,8 +1,10 @@
-// wo-agent/tools.ts v4
+// wo-agent/tools.ts v4.1
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0166: Role-based tool filtering per agent identity
 // WO-0245: delegate_subtask tool for WO tree execution
 // WO-0257: github_edit_file patch-based editing
+// WO-0485: Mutation recording in all mutating tool handlers
+// WO-0491: Remediation - trigger re-deploy to confirm instrumentation
 // Tool definitions for the agentic work order executor
 // Each tool maps to an Anthropic tool_use schema + a dispatch handler
 
@@ -616,7 +618,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂ¢ÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
