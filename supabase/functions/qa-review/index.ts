@@ -171,6 +171,85 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
   const evidence: string[] = [];
 
   try {
+    // META-OPERATIONAL AC VERIFICATION (WO-0508 Fix #1)
+    // Extract WO slugs/UUIDs for meta-operational checks
+    const woSlugs = [...new Set(
+      (combined.match(/\bWO-\d{4}\b/g) || [])
+    )];
+    const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+    const uuids = [...new Set(
+      (combined.match(uuidPattern) || [])
+    )];
+
+    // Check for meta-operational AC patterns
+    const hasResolveQAFindings = /resolve_qa_findings|resolve.*findings/i.test(combined);
+    const hasTransitionState = /transition.*(?:to|state|status)|update.*status/i.test(combined);
+    const hasUpdateChecklist = /update_qa_checklist|update.*checklist/i.test(combined);
+
+    // Verify referenced WO states if meta-operational ACs detected
+    if (woSlugs.length > 0 || uuids.length > 0) {
+      const woIds = [...woSlugs, ...uuids];
+      if (woIds.length > 0) {
+        const { data: wos } = await supabase
+          .from('work_orders')
+          .select('id, slug, status, qa_checklist')
+          .or(woIds.map(id => id.startsWith('WO-') ? `slug.eq.${id}` : `id.eq.${id}`).join(','))
+          .limit(10);
+        
+        if (wos && wos.length > 0) {
+          for (const wo of wos) {
+            evidence.push(`Referenced WO ${wo.slug}: status=${wo.status}, qa_checklist_items=${Array.isArray(wo.qa_checklist) ? wo.qa_checklist.length : 0}`);
+            
+            // If AC claims transition to specific status, verify it
+            const targetStatus = combined.match(new RegExp(`${wo.slug}.*(?:to|→|->)\\s*(\\w+)`, 'i'));
+            if (targetStatus && targetStatus[1]) {
+              const matches = wo.status === targetStatus[1].toLowerCase();
+              evidence.push(`  Status transition claim: ${matches ? 'VERIFIED' : `MISMATCH (expected ${targetStatus[1]}, got ${wo.status})`}`);
+            }
+          }
+        }
+      }
+    }
+
+    // Verify QA findings resolution if AC mentions it
+    if (hasResolveQAFindings && (woSlugs.length > 0 || uuids.length > 0)) {
+      const woIds = [...woSlugs, ...uuids];
+      for (const woId of woIds.slice(0, 5)) {
+        const { data: findings } = await supabase
+          .from('qa_findings')
+          .select('id, finding_type, resolved_at')
+          .or(woId.startsWith('WO-') ? `work_order_id.eq.(SELECT id FROM work_orders WHERE slug = '${woId}')` : `work_order_id.eq.${woId}`)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        
+        if (findings && findings.length > 0) {
+          const unresolvedCount = findings.filter(f => !f.resolved_at).length;
+          const resolvedCount = findings.filter(f => f.resolved_at).length;
+          evidence.push(`QA findings for ${woId}: ${resolvedCount} resolved, ${unresolvedCount} unresolved`);
+        }
+      }
+    }
+
+    // Verify checklist updates if AC mentions it
+    if (hasUpdateChecklist && (woSlugs.length > 0 || uuids.length > 0)) {
+      const woIds = [...woSlugs, ...uuids];
+      for (const woId of woIds.slice(0, 5)) {
+        const { data: wo } = await supabase
+          .from('work_orders')
+          .select('qa_checklist')
+          .or(woId.startsWith('WO-') ? `slug.eq.${woId}` : `id.eq.${woId}`)
+          .single();
+        
+        if (wo && wo.qa_checklist && Array.isArray(wo.qa_checklist)) {
+          const statusCounts = wo.qa_checklist.reduce((acc: any, item: any) => {
+            acc[item.status || 'pending'] = (acc[item.status || 'pending'] || 0) + 1;
+            return acc;
+          }, {});
+          evidence.push(`QA checklist for ${woId}: ${JSON.stringify(statusCounts)}`);
+        }
+      }
+    }
+
     // Extract potential entity names from ACs and summary
     // Functions/triggers: must contain underscore (PG functions are snake_case)
     const funcNames = [...new Set(
