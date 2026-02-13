@@ -208,6 +208,20 @@ Deno.serve(async (req: Request) => {
       if (corrErr) console.error("[SENTINEL] Correlation insert error:", corrErr);
     }
 
+    // ARCHIVE OLD EXECUTION LOGS (WO-0522)
+    let archive_count = 0;
+    try {
+      const { data: archiveResult, error: archiveErr } = await supabase.rpc('archive_execution_logs');
+      if (archiveErr) {
+        console.error("[SENTINEL] Archive execution logs error:", archiveErr);
+      } else {
+        archive_count = archiveResult || 0;
+        console.log(`[SENTINEL] Archived ${archive_count} execution log entries`);
+      }
+    } catch (archiveEx: any) {
+      console.error("[SENTINEL] Archive execution logs exception:", archiveEx.message);
+    }
+
     const elapsed = Date.now() - startTime;
     return new Response(
       JSON.stringify({
