@@ -395,7 +395,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("work_order_id", work_order_id)
       .eq("phase", "checkpoint");
 
-    if ((checkpointCount || 0) >= 5) {
+    if ((checkpointCount || 0) >= 3) {
       // WO-0387: Smart circuit breaker Ã¢ÂÂ call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
@@ -454,7 +454,7 @@ async function handleExecute(req: Request): Promise<Response> {
     }
     finalUserMessage = `# CONTINUATION -- Work Order: ${wo.slug}\n\n`;
     finalUserMessage += `**You are CONTINUING a previous execution that checkpointed.**\n`;
-    finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 5.\n\n`;
+    finalUserMessage += `Continuation #${(checkpointCount || 0) + 1} of max 3.\n\n`;
 
     // WO-0387: Include accomplishments so agent doesn't waste turns rediscovering progress
     const accomplishments: string[] = cp.accomplishments || [];

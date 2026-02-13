@@ -1,7 +1,8 @@
-// wo-agent/agent-loop.ts v8
+// wo-agent/agent-loop.ts v9
+// WO-0474: Remove budget system, wall-clock only, non-productive recursion detection
 // WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
 // WO-0378: Message corruption fix — repairMessages, dispatchTool try/catch, pair-safe trimming
-// WO-0187: Continuation pattern — checkpoint at ~100s, self-reinvoke via pg_net
+// WO-0187: Continuation pattern — checkpoint before timeout, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -11,13 +12,10 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
 
-const INITIAL_BUDGET = 15; // Start with 15 turns, extend based on velocity
-const REMEDIATION_INITIAL_BUDGET = 20; // Remediation gets more room to investigate
-const HARD_CEILING = 50; // Absolute max — never exceed regardless of velocity
-const VELOCITY_CHECK_INTERVAL = 5; // Evaluate every 5 turns
-const TIMEOUT_MS = 125_000; // 125s — leave 25s buffer for 150s edge function limit
-const CHECKPOINT_MS = 100_000; // 100s — save checkpoint before timeout to enable continuation
-const MAX_CONTINUATIONS = 5; // Circuit breaker: max 5 continuations per WO execution
+const TIMEOUT_MS = 350_000; // 350s — 50s buffer before 400s Supabase Pro wall clock limit
+const CHECKPOINT_MS = 300_000; // 300s — checkpoint before timeout to enable continuation
+const MAX_CONTINUATIONS = 3; // Circuit breaker: max 3 continuations per WO execution
+const STALL_WINDOW = 5; // Consecutive turns with zero mutations AND zero successful reads = fail
 const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only — prefer agent_execution_profiles.model
 
 // Tools that modify state vs read-only
@@ -27,77 +25,7 @@ const MUTATION_TOOLS = new Set([
   'delegate_subtask',
 ]);
 
-interface VelocityWindow {
-  startTurn: number;
-  successfulCalls: number;
-  failedCalls: number;
-  uniqueTools: Set<string>;
-  mutations: number;
-  readOps: number;
-}
-
-type VelocityDecision = 'extend' | 'continue' | 'wrap_up';
-
-interface VelocityResult {
-  decision: VelocityDecision;
-  reason: string;
-  extension: number;
-}
-
-function createVelocityWindow(startTurn: number): VelocityWindow {
-  return {
-    startTurn,
-    successfulCalls: 0,
-    failedCalls: 0,
-    uniqueTools: new Set(),
-    mutations: 0,
-    readOps: 0,
-  };
-}
-
-function evaluateVelocity(window: VelocityWindow): VelocityResult {
-  const totalCalls = window.successfulCalls + window.failedCalls;
-  if (totalCalls === 0) {
-    return { decision: 'continue', reason: 'No tool calls in window (text-only turns)', extension: 2 };
-  }
-
-  const successRate = window.successfulCalls / totalCalls;
-  const toolDiversity = window.uniqueTools.size;
-
-  // High velocity: mutations happening with reasonable success
-  if (window.mutations > 0 && successRate >= 0.5) {
-    return {
-      decision: 'extend',
-      reason: `Productive: ${window.mutations} mutations, ${Math.round(successRate * 100)}% success, ${toolDiversity} tools`,
-      extension: 10,
-    };
-  }
-
-  // Medium velocity: investigating (reads, diverse tools)
-  if (window.readOps > 0 && successRate >= 0.5 && toolDiversity >= 2) {
-    return {
-      decision: 'extend',
-      reason: `Investigating: ${window.readOps} reads, ${toolDiversity} unique tools, ${Math.round(successRate * 100)}% success`,
-      extension: 5,
-    };
-  }
-
-  // Low velocity: mostly errors or no meaningful work
-  if (successRate < 0.3 || (window.failedCalls > 3 && window.mutations === 0)) {
-    return {
-      decision: 'wrap_up',
-      reason: `Stalling: ${Math.round(successRate * 100)}% success, ${window.failedCalls} errors, ${window.mutations} mutations`,
-      extension: 0,
-    };
-  }
-
-  // Default: some progress, modest extension
-  return {
-    decision: 'continue',
-    reason: `Moderate: ${window.successfulCalls} ok, ${window.failedCalls} errors, ${toolDiversity} tools`,
-    extension: 3,
-  };
-}
+// v9: Budget/velocity system removed. Wall-clock timeout + stall detection only.
 
 /**
  * WO-0167: Summarize messages being trimmed instead of discarding them.
@@ -239,10 +167,8 @@ export async function runAgentLoop(
     t === 'remediation' || t === 'auto-qa-loop' || t.startsWith('parent:')
   );
 
-  // Velocity-based budget: start small, extend based on progress
-  let currentBudget = isRemediation ? REMEDIATION_INITIAL_BUDGET : INITIAL_BUDGET;
-  let velocityWindow = createVelocityWindow(1);
-  let wrapUpInjected = false;
+  // Stall detection: track consecutive non-productive turns
+  let consecutiveStallTurns = 0;
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
@@ -272,10 +198,9 @@ export async function runAgentLoop(
       event_type: "execution_start",
       content: `Starting agentic loop for ${ctx.workOrderSlug}`,
       model: resolvedModel,
-      initial_budget: currentBudget,
-      hard_ceiling: HARD_CEILING,
-      velocity_interval: VELOCITY_CHECK_INTERVAL,
       timeout_ms: TIMEOUT_MS,
+      checkpoint_ms: CHECKPOINT_MS,
+      stall_window: STALL_WINDOW,
       tool_count: tools.length,
       tools_available: tools.map((t) => t.name),
     },
@@ -288,9 +213,9 @@ export async function runAgentLoop(
 
   let turn = 0;
   let turnsTrimmed = 0;
-  const MAX_HISTORY_PAIRS = isRemediation ? 15 : 10;
+  const MAX_HISTORY_PAIRS = isRemediation ? 15 : 20;
 
-  while (turn < Math.min(currentBudget, HARD_CEILING)) {
+  while (true) {
     // Check checkpoint / timeout — checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
@@ -337,11 +262,8 @@ export async function runAgentLoop(
         detail: {
           event_type: "checkpoint",
           turns_completed: turn,
-          tools_used: Array.from(velocityWindow.uniqueTools),
-          mutations: velocityWindow.mutations,
           last_actions: lastActions,
           elapsed_ms: elapsed,
-          budget_remaining: Math.min(currentBudget, HARD_CEILING) - turn,
           delegated_children: childWOs.length > 0 ? childWOs : undefined,
           accomplishments: accomplishments.length > 0 ? accomplishments : undefined,
         },
@@ -398,7 +320,7 @@ export async function runAgentLoop(
       console.log(`[WO-AGENT] Repaired ${repairs} corrupted tool_use/tool_result pairs for ${ctx.workOrderSlug}`);
     }
 
-    console.log(`[WO-AGENT] Turn ${turn}/${currentBudget} for ${ctx.workOrderSlug} (msgs: ${messages.length}, ceiling: ${HARD_CEILING})`);
+    console.log(`[WO-AGENT] Turn ${turn} for ${ctx.workOrderSlug} (msgs: ${messages.length}, elapsed: ${Math.round((Date.now() - startTime) / 1000)}s/${Math.round(TIMEOUT_MS / 1000)}s)`);
 
     try {
       const response = await client.messages.create({
@@ -427,16 +349,14 @@ export async function runAgentLoop(
           .map((b) => b.text)
           .join("\n");
 
-        // If no terminal tool was called, nudge the model
-        if (turn < Math.min(currentBudget, HARD_CEILING)) {
-          messages.push({ role: "assistant", content: response.content });
-          messages.push({
-            role: "user",
-            content:
-              "You stopped without calling mark_complete or mark_failed. You MUST call one of these tools to finish. If the work is done, call mark_complete with a summary. If you cannot proceed, call mark_failed with a reason.",
-          });
-          continue;
-        }
+        // No terminal tool was called — nudge the model
+        messages.push({ role: "assistant", content: response.content });
+        messages.push({
+          role: "user",
+          content:
+            "You stopped without calling mark_complete or mark_failed. You MUST call one of these tools to finish. If the work is done, call mark_complete with a summary. If you cannot proceed, call mark_failed with a reason.",
+        });
+        continue;
       }
 
       if (response.stop_reason === "tool_use") {
@@ -496,21 +416,6 @@ export async function runAgentLoop(
         // Add tool results to conversation
         messages.push({ role: "user", content: toolResults });
 
-        // Update velocity window with this turn's tool calls
-        for (const toolBlock of toolBlocks) {
-          const tc = toolCalls[toolCalls.length - toolBlocks.length + toolBlocks.indexOf(toolBlock)];
-          if (tc) {
-            velocityWindow.uniqueTools.add(tc.tool);
-            if (tc.success) {
-              velocityWindow.successfulCalls++;
-              if (MUTATION_TOOLS.has(tc.tool)) velocityWindow.mutations++;
-              else velocityWindow.readOps++;
-            } else {
-              velocityWindow.failedCalls++;
-            }
-          }
-        }
-
         if (terminalReached) {
           const terminalTool = toolBlocks.find(
             (b) => b.name === "mark_complete" || b.name === "mark_failed" || b.name === "transition_state"
@@ -522,34 +427,26 @@ export async function runAgentLoop(
           return { status, turns: turn, summary, toolCalls };
         }
 
-        // Velocity check every N turns
-        if (turn > 0 && turn % VELOCITY_CHECK_INTERVAL === 0) {
-          const velocity = evaluateVelocity(velocityWindow);
+        // Stall detection: check if this turn was productive
+        const turnToolCalls = toolBlocks.map((_, idx) =>
+          toolCalls[toolCalls.length - toolBlocks.length + idx]
+        ).filter(Boolean);
+        const hadMutation = turnToolCalls.some(tc => tc.success && MUTATION_TOOLS.has(tc.tool));
+        const hadSuccessfulRead = turnToolCalls.some(tc => tc.success && !MUTATION_TOOLS.has(tc.tool));
+        const allFailed = turnToolCalls.every(tc => !tc.success);
 
-          // Log velocity check
-          await logVelocityCheck(ctx, turn, velocityWindow, velocity, currentBudget);
+        if (!hadMutation && !hadSuccessfulRead) {
+          consecutiveStallTurns++;
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} stall ${consecutiveStallTurns}/${STALL_WINDOW} (all failed: ${allFailed})`);
+        } else {
+          consecutiveStallTurns = 0;
+        }
 
-          if (velocity.decision === 'extend') {
-            currentBudget = Math.min(currentBudget + velocity.extension, HARD_CEILING);
-            console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity EXTEND: budget now ${currentBudget} (${velocity.reason})`);
-          } else if (velocity.decision === 'wrap_up' && !wrapUpInjected) {
-            // Give 2 more turns to finish gracefully
-            currentBudget = Math.min(turn + 2, HARD_CEILING);
-            wrapUpInjected = true;
-            messages.push({
-              role: "user",
-              content: `VELOCITY CHECK — ${velocity.reason}. You have ${Math.min(2, HARD_CEILING - turn)} turns remaining. Call mark_complete with a summary of progress so far, or mark_failed explaining what's blocking you.`,
-            });
-            console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity WRAP_UP: ${velocity.reason}`);
-          } else {
-            if (velocity.extension > 0) {
-              currentBudget = Math.min(currentBudget + velocity.extension, HARD_CEILING);
-            }
-            console.log(`[WO-AGENT] ${ctx.workOrderSlug} velocity CONTINUE: budget ${currentBudget} (${velocity.reason})`);
-          }
-
-          // Reset window for next interval
-          velocityWindow = createVelocityWindow(turn + 1);
+        if (consecutiveStallTurns >= STALL_WINDOW) {
+          const stallSummary = `Non-productive recursion: ${consecutiveStallTurns} consecutive turns with no successful operations. Last tools: ${turnToolCalls.map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ')}`;
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} STALL KILL: ${stallSummary}`);
+          await logFailed(ctx, stallSummary);
+          return { status: "failed", turns: turn, summary: stallSummary, toolCalls };
         }
 
         continue;
@@ -576,50 +473,16 @@ export async function runAgentLoop(
         },
       });
 
-      // If API error, wait briefly and retry (up to the turn limit)
-      if (turn < Math.min(currentBudget, HARD_CEILING)) {
-        await new Promise((r) => setTimeout(r, 2000));
-        continue;
-      }
+      // If API error, wait briefly and retry (up to wall-clock timeout)
+      await new Promise((r) => setTimeout(r, 2000));
+      continue;
     }
   }
 
-  // Exceeded budget (velocity-gated)
-  const summary = `Budget exhausted after ${turn} turns (budget: ${currentBudget}, ceiling: ${HARD_CEILING})`;
+  // Should not reach here — loop exits via checkpoint, terminal tool, or stall detection
+  const summary = `Loop exited unexpectedly after ${turn} turns`;
   await logFailed(ctx, summary);
-  return { status: "max_turns", turns: turn, summary, toolCalls };
-}
-
-async function logVelocityCheck(
-  ctx: ToolContext,
-  turn: number,
-  window: VelocityWindow,
-  result: VelocityResult,
-  currentBudget: number
-): Promise<void> {
-  try {
-    await ctx.supabase.from("work_order_execution_log").insert({
-      work_order_id: ctx.workOrderId,
-      phase: "velocity_check",
-      agent_name: ctx.agentName,
-      iteration: turn,
-      detail: {
-        event_type: "velocity_check",
-        decision: result.decision,
-        reason: result.reason,
-        extension: result.extension,
-        current_budget: currentBudget,
-        window_start: window.startTurn,
-        successful_calls: window.successfulCalls,
-        failed_calls: window.failedCalls,
-        unique_tools: Array.from(window.uniqueTools),
-        mutations: window.mutations,
-        read_ops: window.readOps,
-      },
-    });
-  } catch {
-    // Non-critical
-  }
+  return { status: "failed", turns: turn, summary, toolCalls };
 }
 
 async function logTurn(
