@@ -1,5 +1,5 @@
 // wo-agent/tool-handlers/supabase.ts
-// WO-0186: Bypass guard ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ non-master agents cannot use set_config to bypass enforcement
+// WO-0186: Bypass guard ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ non-master agents cannot use set_config to bypass enforcement
 // WO-0166: Read-only guard for non-executor agents
 // Supabase database tools: execute_sql, apply_migration, read_table
 
@@ -36,7 +36,7 @@ async function logError(
 /**
  * Execute SQL via the run_sql() RPC function (service_role only).
  * Returns query results as JSONB array.
- * NOTE: run_sql wraps query in SELECT jsonb_agg(...) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ DDL will fail silently.
+ * NOTE: run_sql wraps query in SELECT jsonb_agg(...) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ DDL will fail silently.
  * Use executeDdlViaRpc() for DDL operations.
  */
 async function executeSqlViaRpc(query: string, supabase: any): Promise<{ data: any; error: string | null }> {
@@ -57,7 +57,7 @@ async function executeSqlViaRpc(query: string, supabase: any): Promise<{ data: a
 
 /**
  * Execute DDL via run_sql_void() RPC (service_role only).
- * Uses EXECUTE directly ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ DDL persists correctly.
+ * Uses EXECUTE directly ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ DDL persists correctly.
  * Returns {success: true} or {error: "..."}.
  */
 async function executeDdlViaRpc(query: string, supabase: any): Promise<{ success: boolean; error: string | null }> {
@@ -144,12 +144,27 @@ export async function handleApplyMigration(
 
   try {
     // WO-0165: Advisory lock to serialize DDL across concurrent agents.
-    // Uses run_sql_void (EXECUTE directly) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ run_sql wraps in SELECT subquery which breaks DDL.
+    // Uses run_sql_void (EXECUTE directly) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ run_sql wraps in SELECT subquery which breaks DDL.
     const lockedQuery = `SET LOCAL lock_timeout = '10s'; SELECT pg_advisory_xact_lock(hashtext('${name.replace(/'/g, "''")}')); ${query}`;
     const { success: ddlOk, error } = await executeDdlViaRpc(lockedQuery, ctx.supabase);
     if (!ddlOk || error) {
+      // Log migration failure with explicit success: false and error_detail
+      await ctx.supabase.from("work_order_execution_log").insert({
+        work_order_id: ctx.workOrderId,
+        phase: "stream",
+        agent_name: ctx.agentName,
+        detail: {
+          event_type: "tool_result",
+          tool_name: "apply_migration",
+          content: `Migration failed: ${name}`,
+          migration_name: name,
+          success: false,
+          error_detail: error || "unknown DDL error",
+        },
+      });
+      
       if (error && (error.includes("lock timeout") || error.includes("could not obtain lock"))) {
-        return { success: false, error: `Migration blocked ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ another agent is running DDL. Try again in a few seconds.` };
+        return { success: false, error: `Migration blocked ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ another agent is running DDL. Try again in a few seconds.` };
       }
       return { success: false, error: `Migration failed: ${error || "unknown DDL error"}` };
     }
