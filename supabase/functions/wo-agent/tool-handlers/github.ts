@@ -32,7 +32,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂ¢ÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -209,7 +209,7 @@ export async function handleGithubWriteFile(
     if (detectUtf8Corruption(content)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content Ã¢ÂÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content ÃÂ¢ÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -317,7 +317,7 @@ export async function handleGithubEditFile(
     if (detectUtf8Corruption(updatedContent)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content â aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÃÃÃ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content Ã¢ÂÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -352,7 +352,7 @@ export async function handleGithubEditFile(
           file_path: path,
           size_before: originalSize,
           size_after: newSize,
-          message: `CRITICAL: File size tripled after edit — possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
+          message: `CRITICAL: File size tripled after edit â possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
         },
       });
     }
@@ -366,7 +366,7 @@ export async function handleGithubEditFile(
     
     // WO-0501: Add size warning to result message if detected
     if (newSize > originalSize * 3) {
-      resultMessage = `⚠️  CRITICAL: File size tripled (${originalSize}B → ${newSize}B) — possible UTF-8 corruption!\n\n${resultMessage}`;
+      resultMessage = `â ï¸  CRITICAL: File size tripled (${originalSize}B â ${newSize}B) â possible UTF-8 corruption!\n\n${resultMessage}`;
     }
     
     return {
@@ -665,5 +665,154 @@ export async function handleGithubSearchCode(
     };
   } catch (e: any) {
     return { success: false, error: `github_search_code exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubGrep(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { pattern, path, branch } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+  
+  if (!pattern) {
+    return { success: false, error: "Missing required parameter: pattern" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    // Build search query using GitHub Code Search API
+    let searchQuery = `${pattern} repo:${repo}`;
+    if (path) {
+      searchQuery += ` path:${path}`;
+    }
+
+    const headers = {
+      ...githubHeaders(token),
+      Accept: "application/vnd.github.text-match+json",
+    };
+
+    const resp = await fetch(
+      `${GITHUB_API}/search/code?q=${encodeURIComponent(searchQuery)}&per_page=10`,
+      { headers }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub Code Search error ${resp.status}: ${errText}` };
+    }
+
+    const data = await resp.json();
+    
+    // Extract matches with file_path and matched_line
+    const matches = data.items?.slice(0, 10).map((item: any) => {
+      // Extract matched lines from text_matches if available
+      const matchedLines: string[] = [];
+      if (item.text_matches && Array.isArray(item.text_matches)) {
+        item.text_matches.forEach((match: any) => {
+          if (match.fragment) {
+            matchedLines.push(match.fragment);
+          }
+        });
+      }
+      
+      return {
+        file_path: item.path,
+        matched_line: matchedLines.length > 0 ? matchedLines[0] : "(line content not available)",
+        html_url: item.html_url,
+      };
+    }) || [];
+
+    return {
+      success: true,
+      data: {
+        pattern,
+        repo,
+        path_filter: path || "(all paths)",
+        total_count: data.total_count,
+        matches,
+        message: `Found ${matches.length} matches for pattern "${pattern}" in ${repo}`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_grep exception: ${e.message}` };
+  }
+}
+
+export async function handleGithubReadFileRange(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, start_line, end_line, branch } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!path || start_line === undefined || end_line === undefined) {
+    return { success: false, error: "Missing required parameters: path, start_line, end_line" };
+  }
+
+  if (start_line < 1 || end_line < start_line) {
+    return { success: false, error: "Invalid line range: start_line must be >= 1 and end_line >= start_line" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = branch || "main";
+    const resp = await fetch(
+      `${GITHUB_API}/repos/${repo}/contents/${path}?ref=${ref}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (resp.status === 404) {
+      return { success: false, error: `File not found: ${repo}/${path} (branch: ${ref})` };
+    }
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub API error ${resp.status}: ${errText}` };
+    }
+
+    const data = await resp.json();
+    // Decode full base64 content (no truncation)
+    const fullContent = atob(data.content.replace(/\n/g, ""));
+    
+    // Split by newline and extract requested range (1-indexed)
+    const lines = fullContent.split("\n");
+    const totalLines = lines.length;
+    
+    // Validate range
+    if (start_line > totalLines) {
+      return { success: false, error: `start_line ${start_line} exceeds file length (${totalLines} lines)` };
+    }
+    
+    const actualEndLine = Math.min(end_line, totalLines);
+    const selectedLines = lines.slice(start_line - 1, actualEndLine);
+    
+    // Add line number prefix (1-indexed)
+    const numberedLines = selectedLines.map((line, idx) => 
+      `${start_line + idx}: ${line}`
+    ).join("\n");
+
+    return {
+      success: true,
+      data: {
+        path,
+        repo,
+        branch: ref,
+        start_line,
+        end_line: actualEndLine,
+        total_lines: totalLines,
+        content: numberedLines,
+        line_count: selectedLines.length,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_read_file_range exception: ${e.message}` };
   }
 }
