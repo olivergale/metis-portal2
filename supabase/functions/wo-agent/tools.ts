@@ -11,7 +11,7 @@
 import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree } from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
 import { handleWebFetch } from "./tool-handlers/web.ts";
 import {
@@ -171,108 +171,50 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
-    name: "github_write_file",
+    name: "github_push_files",
     description:
-      "Create or update a file in a GitHub repository. Automatically handles SHA for updates. For modifying existing files, prefer github_edit_file instead (sends only the diff).",
+      "Commit one or more files atomically to a GitHub repository using the Git Data API (UTF-8 blobs, no base64 round-trip). This is the ONLY tool for writing files to GitHub. Two modes per file: full content (provide 'content') or patch mode (provide 'patches' array of {search, replace} -- tool reads current file and applies patches). Atomic: all files committed in a single commit.",
     input_schema: {
       type: "object" as const,
       properties: {
         repo: {
           type: "string",
-          description: "Repository in owner/repo format",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
         },
-        path: {
+        branch: {
           type: "string",
-          description: "File path within the repo",
-        },
-        content: {
-          type: "string",
-          description: "File content to write",
+          description: "Branch name (default: main)",
         },
         message: {
           type: "string",
           description: "Commit message",
         },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
-        },
-      },
-      required: ["repo", "path", "content", "message"],
-    },
-  },
-  {
-    name: "github_edit_file",
-    description:
-      "Edit a file in a GitHub repository using patch-based replacement. Reads current file, replaces old_string with new_string, commits back. Much more efficient than github_write_file for modifications -- only send the diff, not the whole file. old_string must be unique in the file.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
-        },
-        path: {
-          type: "string",
-          description: "File path within the repo, e.g. src/App.tsx",
-        },
-        old_string: {
-          type: "string",
-          description: "The exact string to find and replace (must be unique in the file)",
-        },
-        new_string: {
-          type: "string",
-          description: "The replacement string",
-        },
-        message: {
-          type: "string",
-          description: "Commit message (default: 'Edit {path} via github_edit_file')",
-        },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
-        },
-      },
-      required: ["path", "old_string", "new_string"],
-    },
-  },
-  {
-    name: "github_patch_file",
-    description:
-      "Apply multiple search-and-replace patches to a file in GitHub. Reads the FULL file server-side (no size limit), applies patches sequentially, commits result. Use this for editing large files where github_edit_file old_string would be too large to output, or when multiple edits are needed in one commit.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
-        },
-        path: {
-          type: "string",
-          description: "File path within the repo, e.g. supabase/functions/wo-agent/tools.ts",
-        },
-        patches: {
+        files: {
           type: "array",
           items: {
             type: "object",
             properties: {
-              search: { type: "string", description: "Exact string to find (must exist in file)" },
-              replace: { type: "string", description: "Replacement string" },
+              path: { type: "string", description: "File path within the repo" },
+              content: { type: "string", description: "Full file content (use this OR patches, not both)" },
+              patches: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    search: { type: "string", description: "Exact string to find in current file" },
+                    replace: { type: "string", description: "Replacement string" },
+                  },
+                  required: ["search", "replace"],
+                },
+                description: "Search/replace patches applied to current file content. Tool reads file, applies patches, commits.",
+              },
             },
-            required: ["search", "replace"],
+            required: ["path"],
           },
-          description: "Array of {search, replace} patches applied in order. Each search must be found in the file.",
-        },
-        message: {
-          type: "string",
-          description: "Commit message",
-        },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
+          description: "Array of files to commit. Each needs 'path' plus either 'content' (full file) or 'patches' (search/replace edits).",
         },
       },
-      required: ["path", "patches"],
+      required: ["message", "files"],
     },
   },
   {
@@ -757,7 +699,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_write_file", "github_edit_file", "github_patch_file", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree"];
+const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 const WEB_TOOLS = ["web_fetch"];
 
@@ -828,9 +770,10 @@ export async function dispatchTool(
   const MUTATING_TOOLS = new Set([
     "execute_sql",
     "apply_migration",
-    "github_write_file",
-    "github_edit_file",
-    "github_patch_file",
+    "github_push_files",
+    "github_write_file",   // deprecated, kept for in-flight WO compat
+    "github_edit_file",    // deprecated, kept for in-flight WO compat
+    "github_patch_file",   // deprecated, kept for in-flight WO compat
   ]);
 
   let result: ToolResult;
@@ -856,6 +799,9 @@ export async function dispatchTool(
       break;
     case "github_patch_file":
       result = await handleGithubPatchFile(toolInput, ctx);
+      break;
+    case "github_push_files":
+      result = await handleGithubPushFiles(toolInput, ctx);
       break;
     case "deploy_edge_function":
       result = await handleDeployEdgeFunction(toolInput, ctx);
@@ -942,6 +888,10 @@ export async function dispatchTool(
       objectType = "migration";
       objectId = toolInput.name || "unknown";
       action = "DDL";
+    } else if (toolName === "github_push_files") {
+      objectType = "github_file";
+      objectId = (toolInput.files || []).map((f: any) => f.path).join(", ") || "unknown";
+      action = "PUSH";
     } else if (toolName === "github_write_file" || toolName === "github_edit_file" || toolName === "github_patch_file") {
       objectType = "github_file";
       objectId = toolInput.path || "unknown";

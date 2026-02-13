@@ -840,6 +840,163 @@ export async function handleGithubReadFileRange(
   }
 }
 
+/**
+ * github_push_files: Atomic multi-file commits via Git Data API.
+ * Replaces github_write_file, github_edit_file, github_patch_file.
+ * Uses blobs (UTF-8 encoding) instead of Contents API (base64) to eliminate
+ * the base64 round-trip that causes UTF-8 corruption on multi-byte chars.
+ *
+ * Two modes per file:
+ * - content: full file content (for new files or full rewrites)
+ * - patches: [{search, replace}] applied to current file (reads via raw API)
+ */
+export async function handleGithubPushFiles(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { message, branch } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+  const files = input.files;
+
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    return { success: false, error: "Missing required parameter: files (array of {path, content} or {path, patches})" };
+  }
+  if (!message) {
+    return { success: false, error: "Missing required parameter: message (commit message)" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  const ref = branch || "main";
+  const hdrs = githubHeaders(token);
+
+  try {
+    // Step 1: GET ref -> base commit SHA
+    const refResp = await fetch(`${GITHUB_API}/repos/${repo}/git/ref/heads/${ref}`, { headers: hdrs });
+    if (!refResp.ok) {
+      return { success: false, error: `Cannot find branch '${ref}': ${refResp.status}` };
+    }
+    const baseCommitSha = (await refResp.json()).object.sha;
+
+    // Step 2: GET commit -> base tree SHA
+    const commitResp = await fetch(`${GITHUB_API}/repos/${repo}/git/commits/${baseCommitSha}`, { headers: hdrs });
+    if (!commitResp.ok) {
+      return { success: false, error: `Cannot get commit: ${commitResp.status}` };
+    }
+    const baseTreeSha = (await commitResp.json()).tree.sha;
+
+    // Step 3: Create blobs for each file
+    const treeItems: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+    const processedFiles: string[] = [];
+
+    for (const file of files) {
+      if (!file.path) {
+        return { success: false, error: "Each file must have a 'path' property" };
+      }
+
+      let fileContent: string;
+
+      if (file.content !== undefined) {
+        // Full content mode
+        fileContent = file.content;
+      } else if (file.patches && Array.isArray(file.patches)) {
+        // Patch mode: read current file as raw text (no base64 decode)
+        const rawResp = await fetch(
+          `${GITHUB_API}/repos/${repo}/contents/${file.path}?ref=${ref}`,
+          { headers: { ...hdrs, Accept: "application/vnd.github.raw+json" } }
+        );
+        if (!rawResp.ok) {
+          return { success: false, error: `Cannot read ${file.path} for patching: ${rawResp.status}` };
+        }
+        fileContent = await rawResp.text();
+
+        // Apply patches sequentially
+        for (let i = 0; i < file.patches.length; i++) {
+          const patch = file.patches[i];
+          if (!patch.search || patch.replace === undefined) {
+            return { success: false, error: `File ${file.path} patch ${i}: missing 'search' or 'replace'` };
+          }
+          if (fileContent.indexOf(patch.search) === -1) {
+            return { success: false, error: `File ${file.path} patch ${i}: search string not found. First 80 chars: "${patch.search.slice(0, 80)}"` };
+          }
+          fileContent = fileContent.replace(patch.search, patch.replace);
+        }
+      } else {
+        return { success: false, error: `File ${file.path}: must provide either 'content' or 'patches'` };
+      }
+
+      // Create blob via Git Data API -- content sent as UTF-8, no base64
+      const blobResp = await fetch(`${GITHUB_API}/repos/${repo}/git/blobs`, {
+        method: "POST",
+        headers: hdrs,
+        body: JSON.stringify({ content: fileContent, encoding: "utf-8" }),
+      });
+      if (!blobResp.ok) {
+        const errText = await blobResp.text();
+        return { success: false, error: `Failed to create blob for ${file.path}: ${blobResp.status} ${errText}` };
+      }
+      treeItems.push({
+        path: file.path,
+        mode: "100644",
+        type: "blob",
+        sha: (await blobResp.json()).sha,
+      });
+      processedFiles.push(file.path);
+    }
+
+    // Step 4: Create tree with base_tree
+    const treeResp = await fetch(`${GITHUB_API}/repos/${repo}/git/trees`, {
+      method: "POST",
+      headers: hdrs,
+      body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
+    });
+    if (!treeResp.ok) {
+      const errText = await treeResp.text();
+      return { success: false, error: `Failed to create tree: ${treeResp.status} ${errText}` };
+    }
+    const newTreeSha = (await treeResp.json()).sha;
+
+    // Step 5: Create commit
+    const newCommitResp = await fetch(`${GITHUB_API}/repos/${repo}/git/commits`, {
+      method: "POST",
+      headers: hdrs,
+      body: JSON.stringify({ message, tree: newTreeSha, parents: [baseCommitSha] }),
+    });
+    if (!newCommitResp.ok) {
+      const errText = await newCommitResp.text();
+      return { success: false, error: `Failed to create commit: ${newCommitResp.status} ${errText}` };
+    }
+    const newCommitSha = (await newCommitResp.json()).sha;
+
+    // Step 6: Update ref (fast-forward)
+    const updateRefResp = await fetch(`${GITHUB_API}/repos/${repo}/git/refs/heads/${ref}`, {
+      method: "PATCH",
+      headers: hdrs,
+      body: JSON.stringify({ sha: newCommitSha }),
+    });
+    if (!updateRefResp.ok) {
+      const errText = await updateRefResp.text();
+      return { success: false, error: `Failed to update ref: ${updateRefResp.status} ${errText}` };
+    }
+
+    return {
+      success: true,
+      data: {
+        commit_sha: newCommitSha,
+        tree_sha: newTreeSha,
+        files_committed: processedFiles,
+        file_count: processedFiles.length,
+        message: `Committed ${processedFiles.length} file(s) to ${repo}/${ref}: ${processedFiles.join(", ")}`,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `github_push_files exception: ${e.message}` };
+  }
+}
+
 export async function handleGithubTree(
   input: Record<string, any>,
   ctx: ToolContext
