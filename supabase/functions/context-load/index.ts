@@ -167,13 +167,13 @@ async function buildWorkspaceSnapshot(
   if (mutations && mutations.length > 0) {
     const grouped: Record<string, any[]> = {};
     for (const m of mutations) {
-      const key = m.target_table;
+      const key = m.object_type;
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(m);
     }
     
     for (const [table, muts] of Object.entries(grouped)) {
-      const types = muts.map(m => m.mutation_type).join(', ');
+      const types = muts.map(m => m.action).join(', ');
       recentMutations += `- **${table}**: ${muts.length} changes (${types})\n`;
     }
   } else {
