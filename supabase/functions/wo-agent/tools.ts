@@ -698,9 +698,50 @@ export const TOOL_DEFINITIONS: Tool[] = [
       required: [],
     },
   },
+  {
+    name: "save_memory",
+    description:
+      "Save a memory for future work orders. Memories persist across WO executions and help you avoid repeating mistakes or rediscovering patterns.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        key: {
+          type: "string",
+          description:
+            "Unique key for this memory (e.g. 'github_push_patches_gotcha', 'tools_ts_large_file')",
+        },
+        memory_type: {
+          type: "string",
+          enum: ["pattern", "gotcha", "preference", "fact"],
+          description: "Type of memory: pattern (reusable approach), gotcha (trap to avoid), preference (style/convention), fact (learned truth)",
+        },
+        value: {
+          type: "object",
+          description: "The memory content as JSON object with relevant details",
+        },
+      },
+      required: ["key", "memory_type", "value"],
+    },
+  },
+  {
+    name: "recall_memory",
+    description:
+      "Recall saved memories from previous work orders. Returns all your memories, optionally filtered by type. Use this to check for known patterns or gotchas before attempting a task.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        memory_type: {
+          type: "string",
+          enum: ["pattern", "gotcha", "preference", "fact"],
+          description: "Optional filter to only return memories of this type",
+        },
+      },
+    },
+  },
 ];
 
 // Tool categories for filtering
+const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
@@ -871,6 +912,44 @@ export async function dispatchTool(
     case "search_lessons":
       result = await handleSearchLessons(toolInput, ctx);
       break;
+    case "save_memory": {
+      const { error: memErr } = await ctx.supabase
+        .from("agent_memory")
+        .upsert(
+          {
+            agent_id: ctx.agentName,
+            memory_type: toolInput.memory_type,
+            key: toolInput.key,
+            value: toolInput.value,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "agent_id,memory_type,key" }
+        );
+      if (memErr) {
+        result = { success: false, error: `Failed to save memory: ${memErr.message}` };
+      } else {
+        result = { success: true, data: { saved: true, key: toolInput.key, memory_type: toolInput.memory_type } };
+      }
+      break;
+    }
+    case "recall_memory": {
+      let query = ctx.supabase
+        .from("agent_memory")
+        .select("key, memory_type, value, updated_at")
+        .eq("agent_id", ctx.agentName)
+        .order("updated_at", { ascending: false })
+        .limit(50);
+      if (toolInput.memory_type) {
+        query = query.eq("memory_type", toolInput.memory_type);
+      }
+      const { data: memories, error: recallErr } = await query;
+      if (recallErr) {
+        result = { success: false, error: `Failed to recall memories: ${recallErr.message}` };
+      } else {
+        result = { success: true, data: { memories: memories || [], count: (memories || []).length } };
+      }
+      break;
+    }
     default:
       result = { success: false, error: `Unknown tool: ${toolName}` };
   }
