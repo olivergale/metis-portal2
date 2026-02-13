@@ -593,40 +593,43 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
-      // WO-0499: Use progress-based circuit breaker instead of lifecycle evaluation
+      // WO-0499: Progress-based circuit breaker — mutation-delta decides continue vs stuck
       const previousMutations = checkpoint?.detail?.mutation_digest?.total || null;
-      const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_circuit_breaker_progress", {
+      const { data: cbResult, error: cbErr } = await supabase.rpc("evaluate_circuit_breaker_progress", {
         p_wo_id: wo.id,
         p_checkpoint_count: checkpointCount,
         p_previous_mutation_count: previousMutations,
       });
 
-      if (lifecycleErr) {
-        console.error(`[WO-AGENT] evaluate_wo_lifecycle error:`, lifecycleErr.message);
+      if (cbErr) {
+        console.error(`[WO-AGENT] evaluate_circuit_breaker_progress error:`, cbErr.message);
       }
 
-      const verdict = lifecycle?.verdict || "fail";
-      const reason = lifecycle?.reason || `Circuit breaker (${checkpointCount} checkpoints)`;
-      const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
+      const decision = cbResult?.decision || "stuck";
+      const reason = cbResult?.reason || `Circuit breaker (${checkpointCount} checkpoints)`;
+      const mutationCount = cbResult?.mutation_count_current || 0;
 
-      if (verdict === "review") {
-        // SMART PATH: Agent made real mutations ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ send to review for auto-QA
-        const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
-        await supabase.from("work_order_execution_log").insert({
-          work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
-          detail: { event_type: "circuit_breaker_review", content: summary, verdict, delta: lifecycle?.delta },
-        });
-        await supabase.rpc("run_sql_void", {
-          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review', summary = '${summary.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
-        });
-        return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
+      // AC5: Log circuit breaker decision to loop_breaker phase
+      await supabase.from("work_order_execution_log").insert({
+        work_order_id: wo.id, phase: "loop_breaker", agent_name: agentContext.agentName,
+        detail: {
+          event_type: "circuit_breaker_decision", decision, reason,
+          mutation_count_current: cbResult?.mutation_count_current,
+          mutation_count_previous: cbResult?.mutation_count_previous,
+          delta: cbResult?.mutation_delta,
+          checkpoint_count: checkpointCount,
+        },
+      });
+
+      if (decision === "continue") {
+        // AC3: New mutations detected — allow continuation regardless of checkpoint count
+        // Fall through to continuation logic below
       } else {
-        // DUMB PATH: No mutations or fail verdict ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ mark failed + remediation
+        // stuck or hard_cap — fail + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
-          detail: { event_type: "circuit_breaker", content: msg, verdict, delta: lifecycle?.delta },
+          detail: { event_type: "circuit_breaker", content: msg, decision, mutation_count: mutationCount },
         });
         await supabase.rpc("run_sql_void", {
           sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
@@ -635,6 +638,7 @@ async function handleExecute(req: Request): Promise<Response> {
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "failed", turns: 0, summary: msg, tool_calls: 0 });
       }
     }
+
 
     // Build continuation context
     const cp = checkpoint.detail;
