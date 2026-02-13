@@ -1,0 +1,50 @@
+#!/bin/bash
+# pre-commit hook: Check for non-ASCII characters in .ts files
+# Blocks commit if any bytes 0x80-0xFF are found
+
+set -e
+
+# Get list of staged .ts files
+STAGED_TS_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.ts$' || true)
+
+if [ -z "$STAGED_TS_FILES" ]; then
+  # No .ts files staged, allow commit
+  exit 0
+fi
+
+echo "Checking staged TypeScript files for non-ASCII characters..."
+
+HAS_NON_ASCII=0
+
+for FILE in $STAGED_TS_FILES; do
+  if [ -f "$FILE" ]; then
+    # Use grep to find lines with bytes 0x80-0xFF
+    # -P enables Perl regex, -n shows line numbers
+    NON_ASCII_LINES=$(grep -Pn '[\x80-\xFF]' "$FILE" || true)
+    
+    if [ -n "$NON_ASCII_LINES" ]; then
+      HAS_NON_ASCII=1
+      echo ""
+      echo "ERROR: Non-ASCII characters found in $FILE:"
+      echo "$NON_ASCII_LINES" | while IFS=: read -r LINE_NUM LINE_CONTENT; do
+        echo "  Line $LINE_NUM: $LINE_CONTENT"
+        # Show hex dump of non-ASCII bytes
+        echo "    $(echo "$LINE_CONTENT" | LC_ALL=C grep -o '[\x80-\xFF]' | od -A n -t x1 | tr -d '\n')"
+      done
+    fi
+  fi
+done
+
+if [ $HAS_NON_ASCII -eq 1 ]; then
+  echo ""
+  echo "COMMIT BLOCKED: Non-ASCII characters detected in staged TypeScript files."
+  echo "Please replace them with ASCII equivalents:"
+  echo "  - Em-dashes (—) → double-hyphens (--)"
+  echo "  - Curly quotes (' ' " ") → straight quotes (' \")"
+  echo "  - Other Unicode → ASCII alternatives"
+  echo ""
+  exit 1
+fi
+
+echo "✓ All staged TypeScript files contain only ASCII characters"
+exit 0
