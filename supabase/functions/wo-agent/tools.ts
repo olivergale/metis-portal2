@@ -676,7 +676,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -877,6 +877,12 @@ export async function dispatchTool(
       break;
     case "github_search_code":
       result = await handleGithubSearchCode(toolInput, ctx);
+      break;
+    case "github_grep":
+      result = await handleGithubGrep(toolInput, ctx);
+      break;
+    case "github_read_file_range":
+      result = await handleGithubReadFileRange(toolInput, ctx);
       break;
     case "search_knowledge_base":
       result = await handleSearchKnowledgeBase(toolInput, ctx);
