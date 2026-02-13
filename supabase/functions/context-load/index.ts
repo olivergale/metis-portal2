@@ -1,6 +1,6 @@
 // context-load/index.ts - v17
 // v17: Added design_doc_required flag to work_orders (WO-PRD-GATE)
-// v16: Fix doc_status â use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
+// v16: Fix doc_status Ã¢ÂÂ use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
 // v15: Added verification_requirements to response (E2E verification gate)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -237,6 +237,7 @@ Deno.serve(async (req) => {
     const projectCode = body.project_code || "METIS-001";
     const userId = body.user_id || "default";
     const includeFull = body.include_full ?? true;
+    const workOrderId = body.work_order_id;
 
     const loadedAt = new Date().toISOString();
     const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
@@ -270,7 +271,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(10),
 
-      // 6. Directives (system rules) â exclude portal_only directives (v13)
+      // 6. Directives (system rules) Ã¢ÂÂ exclude portal_only directives (v13)
       supabase.from("system_directives")
         .select("name, content, enforcement, priority")
         .eq("active", true)
@@ -414,7 +415,7 @@ Deno.serve(async (req) => {
     const verificationRequirements = {
       gate_enabled: true,
       required_for_tags: ['requires_verification'],
-      enforcement_transition: 'in_progress â review',
+      enforcement_transition: 'in_progress Ã¢ÂÂ review',
       verification_coverage_pct: verificationCoveragePct,
       verified_last_30d: verifiedCount,
       completed_last_30d: totalCompleted,
