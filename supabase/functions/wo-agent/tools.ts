@@ -55,7 +55,8 @@ async function recordMutation(
   objectId: string,
   action: string,
   success: boolean,
-  errorMessage?: string
+  errorMessage?: string,
+  context?: Record<string, any>
 ): Promise<void> {
   try {
     const params: any = {
@@ -71,6 +72,10 @@ async function recordMutation(
     if (!success && errorMessage) {
       params.p_error_class = classifyError(errorMessage);
       params.p_error_detail = errorMessage.substring(0, 500);
+    }
+
+    if (context) {
+      params.p_context = context;
     }
 
     await ctx.supabase.rpc("record_mutation", params);
@@ -877,6 +882,8 @@ export async function dispatchTool(
     let objectId = "unknown";
     let action = "unknown";
 
+    let context: Record<string, any> | undefined;
+
     if (toolName === "execute_sql") {
       objectType = "sql_query";
       // Strip SQL comments before extracting action keyword and object_id
@@ -884,18 +891,31 @@ export async function dispatchTool(
       const strippedSql = rawSql.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").trim();
       objectId = strippedSql.substring(0, 100) || "unknown";
       action = strippedSql.split(/\s+/)[0]?.toUpperCase() || "UNKNOWN";
+      context = { sql: (toolInput.query || "").substring(0, 2000) };
     } else if (toolName === "apply_migration") {
       objectType = "migration";
       objectId = toolInput.name || "unknown";
       action = "DDL";
+      context = {
+        sql: (toolInput.query || "").substring(0, 2000),
+        migration_name: toolInput.name
+      };
     } else if (toolName === "github_push_files") {
       objectType = "github_file";
       objectId = (toolInput.files || []).map((f: any) => f.path).join(", ") || "unknown";
       action = "PUSH";
+      context = {
+        files: (toolInput.files || []).map((f: any) => ({
+          path: f.path,
+          mode: f.content ? "content" : "patch"
+        })),
+        message: toolInput.message
+      };
     } else if (toolName === "github_write_file" || toolName === "github_edit_file" || toolName === "github_patch_file") {
       objectType = "github_file";
       objectId = toolInput.path || "unknown";
       action = toolName === "github_write_file" ? "WRITE" : toolName === "github_edit_file" ? "EDIT" : "PATCH";
+      context = { path: toolInput.path };
     }
 
     // Skip recording SELECT queries (reads, not mutations)
@@ -909,7 +929,8 @@ export async function dispatchTool(
         objectId,
         action,
         result.success,
-        result.error
+        result.error,
+        context
       );
     }
   }
