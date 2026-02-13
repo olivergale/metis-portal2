@@ -1,6 +1,6 @@
 // context-load/index.ts - v17
 // v17: Added design_doc_required flag to work_orders (WO-PRD-GATE)
-// v16: Fix doc_status — use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
+// v16: Fix doc_status â use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
 // v15: Added verification_requirements to response (E2E verification gate)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -15,6 +15,212 @@ interface LoadRequest {
   project_code?: string;
   user_id?: string;
   include_full?: boolean;
+  work_order_id?: string;
+}
+
+interface WorkspaceSnapshot {
+  repository_structure: string;
+  database_schema: string;
+  recent_mutations: string;
+  total_size: number;
+}
+
+// Helper: Fetch GitHub tree with caching
+async function fetchGitHubTree(supabase: any, githubToken?: string): Promise<any> {
+  const cacheKey = 'github_tree_main';
+  const ttlMinutes = 60;
+  
+  // Check cache
+  const { data: cached } = await supabase
+    .from('workspace_cache')
+    .select('content, cached_at, ttl_minutes')
+    .eq('cache_key', cacheKey)
+    .single();
+  
+  if (cached) {
+    const cacheAge = Date.now() - new Date(cached.cached_at).getTime();
+    const cacheValid = cacheAge < cached.ttl_minutes * 60 * 1000;
+    if (cacheValid) {
+      return cached.content;
+    }
+  }
+  
+  // Fetch from GitHub
+  const token = githubToken || Deno.env.get('GITHUB_TOKEN');
+  if (!token) {
+    return null; // Skip if no token available
+  }
+  
+  const response = await fetch(
+    'https://api.github.com/repos/olivergale/metis-portal2/git/trees/main?recursive=true',
+    {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+      },
+    }
+  );
+  
+  if (!response.ok) {
+    console.error('GitHub API error:', response.status);
+    return null;
+  }
+  
+  const data = await response.json();
+  
+  // Cache the result
+  await supabase
+    .from('workspace_cache')
+    .upsert({
+      cache_key: cacheKey,
+      content: data,
+      cached_at: new Date().toISOString(),
+      ttl_minutes: ttlMinutes,
+    });
+  
+  return data;
+}
+
+// Helper: Build workspace snapshot
+async function buildWorkspaceSnapshot(
+  supabase: any,
+  workOrderId?: string,
+  workOrderObjective?: string
+): Promise<WorkspaceSnapshot> {
+  const parts: string[] = [];
+  let totalSize = 0;
+  
+  // 1. Repository Structure (GitHub tree filtered to supabase/functions/)
+  const githubTree = await fetchGitHubTree(supabase);
+  let repoStructure = '## Repository Structure\n\n';
+  
+  if (githubTree?.tree) {
+    const functionFiles = githubTree.tree
+      .filter((item: any) => item.path.startsWith('supabase/functions/'))
+      .sort((a: any, b: any) => a.path.localeCompare(b.path));
+    
+    // Build tree as indented list
+    let lastDir = '';
+    for (const item of functionFiles) {
+      const path = item.path.replace('supabase/functions/', '');
+      const parts = path.split('/');
+      const indent = '  '.repeat(parts.length - 1);
+      const name = parts[parts.length - 1];
+      
+      // Add directory header if changed
+      if (parts.length > 1 && parts[0] !== lastDir) {
+        repoStructure += `\n**${parts[0]}/**\n`;
+        lastDir = parts[0];
+      }
+      
+      if (item.type === 'blob') {
+        repoStructure += `${indent}- ${name}\n`;
+      }
+    }
+  } else {
+    repoStructure += '_GitHub tree not available_\n';
+  }
+  
+  parts.push(repoStructure);
+  totalSize += repoStructure.length;
+  
+  // 2. Database Schema (tables and columns from information_schema)
+  const { data: tables } = await supabase.rpc('run_sql', {
+    query: `
+      SELECT 
+        t.table_name,
+        array_agg(c.column_name ORDER BY c.ordinal_position) as columns
+      FROM information_schema.tables t
+      LEFT JOIN information_schema.columns c 
+        ON t.table_name = c.table_name 
+        AND t.table_schema = c.table_schema
+      WHERE t.table_schema = 'public'
+        AND t.table_type = 'BASE TABLE'
+      GROUP BY t.table_name
+      ORDER BY t.table_name
+    `
+  }).catch(() => ({ data: null }));
+  
+  let dbSchema = '## Database Schema\n\n';
+  if (tables) {
+    for (const table of tables) {
+      dbSchema += `**${table.table_name}**: ${table.columns.join(', ')}\n`;
+    }
+  } else {
+    dbSchema += '_Schema not available_\n';
+  }
+  
+  parts.push(dbSchema);
+  totalSize += dbSchema.length;
+  
+  // 3. Recent Mutations (last 24h from state_mutations)
+  const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
+  const { data: mutations } = await supabase
+    .from('state_mutations')
+    .select('mutation_type, target_table, created_at, work_order_id')
+    .gte('created_at', oneDayAgo)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  
+  let recentMutations = '## Recent System Mutations (24h)\n\n';
+  if (mutations && mutations.length > 0) {
+    const grouped: Record<string, any[]> = {};
+    for (const m of mutations) {
+      const key = m.target_table;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(m);
+    }
+    
+    for (const [table, muts] of Object.entries(grouped)) {
+      const types = muts.map(m => m.mutation_type).join(', ');
+      recentMutations += `- **${table}**: ${muts.length} changes (${types})\n`;
+    }
+  } else {
+    recentMutations += '_No recent mutations_\n';
+  }
+  
+  parts.push(recentMutations);
+  totalSize += recentMutations.length;
+  
+  // 4. Size guard: if over 4000 chars, reduce detail
+  if (totalSize > 4000) {
+    // Reduce repo structure to top-level only
+    repoStructure = '## Repository Structure\n\n';
+    if (githubTree?.tree) {
+      const topLevel = new Set(
+        githubTree.tree
+          .filter((item: any) => item.path.startsWith('supabase/functions/'))
+          .map((item: any) => item.path.replace('supabase/functions/', '').split('/')[0])
+      );
+      repoStructure += Array.from(topLevel).map(d => `- ${d}/`).join('\n') + '\n';
+    }
+    
+    // Reduce schema to only tables mentioned in WO objective
+    if (workOrderObjective && tables) {
+      const mentionedTables = tables.filter((t: any) => 
+        workOrderObjective.toLowerCase().includes(t.table_name.toLowerCase())
+      );
+      
+      if (mentionedTables.length > 0) {
+        dbSchema = '## Database Schema (filtered)\n\n';
+        for (const table of mentionedTables) {
+          dbSchema += `**${table.table_name}**: ${table.columns.join(', ')}\n`;
+        }
+      }
+    }
+    
+    // Recalculate
+    parts.length = 0;
+    parts.push(repoStructure, dbSchema, recentMutations);
+    totalSize = parts.reduce((sum, p) => sum + p.length, 0);
+  }
+  
+  return {
+    repository_structure: repoStructure,
+    database_schema: dbSchema,
+    recent_mutations: recentMutations,
+    total_size: totalSize,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -64,7 +270,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(10),
 
-      // 6. Directives (system rules) — exclude portal_only directives (v13)
+      // 6. Directives (system rules) â exclude portal_only directives (v13)
       supabase.from("system_directives")
         .select("name, content, enforcement, priority")
         .eq("active", true)
@@ -208,7 +414,7 @@ Deno.serve(async (req) => {
     const verificationRequirements = {
       gate_enabled: true,
       required_for_tags: ['requires_verification'],
-      enforcement_transition: 'in_progress → review',
+      enforcement_transition: 'in_progress â review',
       verification_coverage_pct: verificationCoveragePct,
       verified_last_30d: verifiedCount,
       completed_last_30d: totalCompleted,
