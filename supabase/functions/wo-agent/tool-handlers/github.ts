@@ -2,6 +2,7 @@
 // GitHub tools: read_file, write_file, edit_file (WO-0257), list_files, create_branch, create_pr (WO-0302)
 
 import type { ToolContext, ToolResult } from "../tools.ts";
+import { validateFileContent } from "./validation.ts";
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "Endgame-WO-Agent";
@@ -32,7 +33,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -209,7 +210,7 @@ export async function handleGithubWriteFile(
     if (detectUtf8Corruption(content)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -317,7 +318,7 @@ export async function handleGithubEditFile(
     if (detectUtf8Corruption(updatedContent)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content ÃÂ¢ÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...) that indicate encoding errors.",
       };
     }
 
@@ -352,7 +353,7 @@ export async function handleGithubEditFile(
           file_path: path,
           size_before: originalSize,
           size_after: newSize,
-          message: `CRITICAL: File size tripled after edit Ã¢ÂÂ possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
+          message: `CRITICAL: File size tripled after edit ÃÂ¢ÃÂÃÂ possible UTF-8 corruption. File: ${path}, before: ${originalSize}, after: ${newSize}`,
         },
       });
     }
@@ -366,7 +367,7 @@ export async function handleGithubEditFile(
     
     // WO-0501: Add size warning to result message if detected
     if (newSize > originalSize * 3) {
-      resultMessage = `Ã¢ÂÂ Ã¯Â¸Â  CRITICAL: File size tripled (${originalSize}B Ã¢ÂÂ ${newSize}B) Ã¢ÂÂ possible UTF-8 corruption!\n\n${resultMessage}`;
+      resultMessage = `ÃÂ¢ÃÂÃÂ ÃÂ¯ÃÂ¸ÃÂ  CRITICAL: File size tripled (${originalSize}B ÃÂ¢ÃÂÃÂ ${newSize}B) ÃÂ¢ÃÂÃÂ possible UTF-8 corruption!\n\n${resultMessage}`;
     }
     
     return {
@@ -876,7 +877,7 @@ export async function handleGithubTree(
       const depth = item.path.split("/").length - 1;
       const indent = "  ".repeat(depth);
       const name = item.path.split("/").pop();
-      const type = item.type === "tree" ? "📁" : "📄";
+      const type = item.type === "tree" ? "ð" : "ð";
       const sizeInfo = show_sizes && item.size ? ` (${item.size} bytes)` : "";
       tree.push(`${indent}${type} ${name}${sizeInfo}`);
     });
