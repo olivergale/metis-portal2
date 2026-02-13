@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker ÃÂ¢ÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -198,11 +198,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent Ã¢ÂÂ this is the root
+        // No parent ÃÂ¢ÃÂÃÂ this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) Ã¢ÂÂ if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) ÃÂ¢ÃÂÃÂ if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -210,7 +210,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal Ã¢ÂÂ current WO is the effective root
+        // Parent is terminal ÃÂ¢ÃÂÃÂ current WO is the effective root
         break;
       }
       
@@ -552,7 +552,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0387: Smart circuit breaker ÃÂ¢ÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0387: Smart circuit breaker ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
         p_event_type: "checkpoint",
@@ -568,7 +568,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations ÃÂ¢ÃÂÃÂ send to review for auto-QA
+        // SMART PATH: Agent made real mutations ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -579,7 +579,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict ÃÂ¢ÃÂÃÂ mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -623,6 +623,35 @@ async function handleExecute(req: Request): Promise<Response> {
     } else {
       finalUserMessage += `Previous progress: ${cp.turns_completed} turns, ${cp.mutations || 0} mutations.\n`;
       finalUserMessage += `Last actions: ${cp.last_actions || 'unknown'}\n\n`;
+    }
+
+    // WO-0486: Inject mutation digest for data-driven continuation context
+    const mutationDigest = cp.mutation_digest;
+    if (mutationDigest && mutationDigest.total > 0) {
+      finalUserMessage += `## What Was Already Done (Mutation Summary)\n`;
+      finalUserMessage += `- **Total mutations**: ${mutationDigest.total}\n`;
+      finalUserMessage += `- **Successful**: ${mutationDigest.successful}\n`;
+      finalUserMessage += `- **Failed**: ${mutationDigest.failed}\n`;
+      if (mutationDigest.by_error_class && Object.keys(mutationDigest.by_error_class).length > 0) {
+        finalUserMessage += `- **Failures by error class**: ${JSON.stringify(mutationDigest.by_error_class)}\n`;
+      }
+      finalUserMessage += `\n`;
+    }
+
+    // WO-0486: Inject failed approaches to prevent retry loops
+    const failedApproaches: any[] = cp.failed_approaches || [];
+    if (failedApproaches.length > 0) {
+      finalUserMessage += `## Failed Approaches (DO NOT RETRY)\n`;
+      finalUserMessage += `The following operations already failed in previous execution. Do NOT retry them:\n\n`;
+      for (const fa of failedApproaches) {
+        finalUserMessage += `- **${fa.tool}** on \`${fa.target}\` (action: ${fa.action})\n`;
+        finalUserMessage += `  - Error class: ${fa.error_class}\n`;
+        if (fa.error_detail) {
+          finalUserMessage += `  - Error: ${fa.error_detail}\n`;
+        }
+        finalUserMessage += `\n`;
+      }
+      finalUserMessage += `**IMPORTANT**: These approaches already failed. Try a different strategy or escalate if you cannot proceed.\n\n`;
     }
 
     finalUserMessage += `## Original Objective\n${wo.objective}\n\n`;
