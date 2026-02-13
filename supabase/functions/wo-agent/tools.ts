@@ -42,6 +42,42 @@ export interface ToolResult {
   terminal?: boolean; // if true, loop should stop
 }
 
+/**
+ * Record mutation to wo_mutations table (fire-and-forget)
+ * WO-0485: Mutation tracking for all mutating tool operations
+ */
+async function recordMutation(
+  ctx: ToolContext,
+  toolName: string,
+  objectType: string,
+  objectId: string,
+  action: string,
+  success: boolean,
+  errorMessage?: string
+): Promise<void> {
+  try {
+    const params: any = {
+      p_work_order_id: ctx.workOrderId,
+      p_tool_name: toolName,
+      p_object_type: objectType,
+      p_object_id: objectId,
+      p_action: action,
+      p_success: success,
+      p_agent_name: ctx.agentName,
+    };
+
+    if (!success && errorMessage) {
+      params.p_error_class = classifyError(errorMessage);
+      params.p_error_detail = errorMessage.substring(0, 500);
+    }
+
+    await ctx.supabase.rpc("record_mutation", params);
+  } catch (e: any) {
+    // Fire-and-forget: swallow errors, log to console only
+    console.warn(`[recordMutation] Failed to record mutation: ${e.message}`);
+  }
+}
+
 export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "execute_sql",
@@ -580,7 +616,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking â parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking Ã¢ÂÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
