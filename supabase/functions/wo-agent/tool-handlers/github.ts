@@ -126,7 +126,12 @@ export async function handleGithubReadFile(
 
     const data = await resp.json();
     // Decode base64 content
-    const content = atob(data.content.replace(/\n/g, ""));
+    let content = atob(data.content.replace(/\n/g, ""));
+
+    // WO-0484: Warn if file may be truncated
+    if (content.length > 10000) {
+      content = "WARNING: File content may be truncated at ~10k chars by GitHub API\n\n" + content;
+    }
 
     return {
       success: true,
