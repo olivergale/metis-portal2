@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker Ã¢ÂÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker ÃÂ¢ÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -198,11 +198,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent â this is the root
+        // No parent Ã¢ÂÂ this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) â if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) Ã¢ÂÂ if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -210,7 +210,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal â current WO is the effective root
+        // Parent is terminal Ã¢ÂÂ current WO is the effective root
         break;
       }
       
@@ -223,12 +223,168 @@ async function createFailureRemediation(
     console.log(`[WO-AGENT] Remediation root: ${rootWoSlug} (walked ${walkDepth} levels from ${wo.slug})`);
 
     const attemptNum = attempts + 1;
-    const objectiveText =
+    
+    // WO-0487: Query mutations and build structured diagnosis
+    let objectiveText =
       `Fix and complete ${wo.slug} (${wo.name}) which failed due to: ${failureReason}\n\n` +
       `The server-side builder agent exhausted its execution budget. ` +
       `Review what was accomplished (check execution_log for parent WO), ` +
       `then complete the remaining work.\n\n` +
-      `Parent WO objective: ${(wo.objective || "").slice(0, 1500)}`;
+      `Parent WO objective: ${(wo.objective || "").slice(0, 1500)}\n\n`;
+
+    // Query parent mutations
+    const { data: parentMutations } = await supabase
+      .from("wo_mutations")
+      .select("tool_name, object_type, object_id, action, success, error_class, error_detail")
+      .eq("work_order_id", wo.id)
+      .order("created_at", { ascending: true });
+
+    // Query parent qa_checklist
+    const { data: parentWo } = await supabase
+      .from("work_orders")
+      .select("qa_checklist")
+      .eq("id", wo.id)
+      .single();
+
+    const qaChecklist = parentWo?.qa_checklist || [];
+    
+    // For remediation chains, collect mutations from grandparent (up to depth 3)
+    const allMutations: any[] = [...(parentMutations || [])];
+    if (tags.includes("remediation")) {
+      const parentTag = tags.find((t: string) => t.startsWith("parent:"));
+      if (parentTag) {
+        const grandparentSlug = parentTag.replace("parent:", "");
+        const { data: grandparent } = await supabase
+          .from("work_orders")
+          .select("id, tags")
+          .eq("slug", grandparentSlug)
+          .single();
+        
+        if (grandparent) {
+          const { data: grandparentMutations } = await supabase
+            .from("wo_mutations")
+            .select("tool_name, object_type, object_id, action, success, error_class, error_detail")
+            .eq("work_order_id", grandparent.id)
+            .order("created_at", { ascending: true });
+          
+          if (grandparentMutations && grandparentMutations.length > 0) {
+            allMutations.unshift(...grandparentMutations);
+          }
+          
+          // Go one more level for depth 3
+          const grandparentTags = grandparent.tags || [];
+          if (grandparentTags.includes("remediation")) {
+            const ggParentTag = grandparentTags.find((t: string) => t.startsWith("parent:"));
+            if (ggParentTag) {
+              const ggSlug = ggParentTag.replace("parent:", "");
+              const { data: ggParent } = await supabase
+                .from("work_orders")
+                .select("id")
+                .eq("slug", ggSlug)
+                .single();
+              
+              if (ggParent) {
+                const { data: ggMutations } = await supabase
+                  .from("wo_mutations")
+                  .select("tool_name, object_type, object_id, action, success, error_class, error_detail")
+                  .eq("work_order_id", ggParent.id)
+                  .order("created_at", { ascending: true });
+                
+                if (ggMutations && ggMutations.length > 0) {
+                  allMutations.unshift(...ggMutations);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Build "Completed Mutations" section
+    const successfulMutations = allMutations.filter((m) => m.success);
+    if (successfulMutations.length > 0) {
+      objectiveText += `## Completed Mutations\n`;
+      objectiveText += `The following mutations were successfully applied:\n\n`;
+      
+      const grouped: Record<string, any[]> = {};
+      for (const mut of successfulMutations) {
+        const key = `${mut.tool_name}:${mut.object_id}`;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(mut);
+      }
+      
+      for (const [key, muts] of Object.entries(grouped)) {
+        const first = muts[0];
+        const actions = muts.map((m) => m.action).join(", ");
+        objectiveText += `- **${first.tool_name}** on \`${first.object_id}\` (${first.object_type}): ${actions}\n`;
+      }
+      objectiveText += `\n`;
+    }
+
+    // Build "Failed Mutations" section
+    const failedMutations = allMutations.filter((m) => !m.success);
+    if (failedMutations.length > 0) {
+      objectiveText += `## Failed Mutations\n`;
+      objectiveText += `The following mutations failed:\n\n`;
+      
+      for (const mut of failedMutations) {
+        objectiveText += `- **${mut.tool_name}** on \`${mut.object_id}\` (${mut.object_type})\n`;
+        objectiveText += `  - Action: ${mut.action}\n`;
+        objectiveText += `  - Error class: ${mut.error_class || "unknown"}\n`;
+        if (mut.error_detail) {
+          objectiveText += `  - Error: ${(mut.error_detail || "").slice(0, 200)}\n`;
+        }
+        objectiveText += `\n`;
+      }
+    }
+
+    // Build "DO NOT RETRY" section with alternatives
+    if (failedMutations.length > 0) {
+      objectiveText += `## DO NOT RETRY\n`;
+      objectiveText += `The following approaches failed and should NOT be retried:\n\n`;
+      
+      const failedPatterns: Record<string, { count: number; error_class: string; sample_error: string }> = {};
+      for (const mut of failedMutations) {
+        const key = `${mut.tool_name}:${mut.error_class || "unknown"}`;
+        if (!failedPatterns[key]) {
+          failedPatterns[key] = { count: 0, error_class: mut.error_class || "unknown", sample_error: mut.error_detail || "" };
+        }
+        failedPatterns[key].count++;
+      }
+      
+      for (const [key, pattern] of Object.entries(failedPatterns)) {
+        const [toolName, errorClass] = key.split(":");
+        objectiveText += `- **${toolName}** (${errorClass}): failed ${pattern.count}x\n`;
+        
+        // Suggest alternatives based on error_class
+        const alternatives = getAlternativeApproaches(toolName, errorClass);
+        if (alternatives) {
+          objectiveText += `  - **Alternative**: ${alternatives}\n`;
+        }
+        objectiveText += `\n`;
+      }
+    }
+
+    // Include parent QA checklist status
+    if (qaChecklist && qaChecklist.length > 0) {
+      objectiveText += `## Parent QA Checklist\n`;
+      const passed = qaChecklist.filter((item: any) => item.status === "pass").length;
+      const failed = qaChecklist.filter((item: any) => item.status === "fail").length;
+      const pending = qaChecklist.filter((item: any) => item.status === "pending").length;
+      
+      objectiveText += `- Passed: ${passed}\n`;
+      objectiveText += `- Failed: ${failed}\n`;
+      objectiveText += `- Pending: ${pending}\n\n`;
+      
+      const failedItems = qaChecklist.filter((item: any) => item.status === "fail");
+      if (failedItems.length > 0) {
+        objectiveText += `Failed criteria:\n`;
+        for (const item of failedItems) {
+          objectiveText += `- ${item.criterion || item.id}\n`;
+        }
+        objectiveText += `\n`;
+      }
+    }
 
     const { data: newWo, error: createErr } = await supabase.rpc("create_draft_work_order", {
       p_slug: null,
@@ -396,7 +552,7 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0387: Smart circuit breaker Ã¢ÂÂ call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0387: Smart circuit breaker ÃÂ¢ÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
       const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
         p_wo_id: wo.id,
         p_event_type: "checkpoint",
@@ -412,7 +568,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations Ã¢ÂÂ send to review for auto-QA
+        // SMART PATH: Agent made real mutations ÃÂ¢ÃÂÃÂ send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -423,7 +579,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict Ã¢ÂÂ mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict ÃÂ¢ÃÂÃÂ mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
