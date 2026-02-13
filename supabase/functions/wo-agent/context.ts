@@ -342,10 +342,10 @@ async function buildRemediationContext(
   // Parent QA findings (unresolved failures)
   const { data: findings } = await supabase
     .from("qa_findings")
-    .select("id, finding_type, description, evidence, checklist_item_id, resolution_status")
+    .select("id, finding_type, description, evidence, checklist_item_id, resolved_at")
     .eq("work_order_id", parentWo.id)
     .eq("finding_type", "fail")
-    .is("resolution_status", null)
+    .is("resolved_at", null)
     .order("created_at", { ascending: false })
     .limit(10);
 

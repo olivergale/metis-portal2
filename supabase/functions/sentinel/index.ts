@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
       triageEntries.push({
         wo_id: wo.id,
         triage_type: "orphan",
-        severity: "warning",
+        severity: "medium",
         diagnostic_context: { idle_minutes: wo.idle_minutes },
       });
     }
@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
       triageEntries.push({
         wo_id: wo.id,
         triage_type: "mismatch",
-        severity: "warning",
+        severity: "medium",
         diagnostic_context: wo.context,
       });
     }
@@ -90,7 +90,7 @@ Deno.serve(async (req: Request) => {
       triageEntries.push({
         wo_id: wo.id,
         triage_type: "spiral",
-        severity: "warning",
+        severity: "medium",
         diagnostic_context: { read_ratio: wo.read_ratio, turns: wo.turns },
       });
     }
@@ -270,7 +270,7 @@ async function detectStuckWOs(supabase: any) {
       if (!existing || existing.length === 0) {
         stuck.push({
           id: wo.id,
-          severity: "error",
+          severity: "high",
           context: { slug: wo.slug, last_activity: lastActivity, started_at: wo.started_at },
           escalate_to: "ops",
         });
