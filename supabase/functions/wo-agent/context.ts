@@ -97,6 +97,25 @@ export async function buildAgentContext(
     systemPrompt += `\n\n${knowledgeBase}`;
   }
 
+  // WO-0546: Load agent memories (patterns, gotchas, preferences, facts)
+  try {
+    const { data: memories } = await supabase
+      .from("agent_memory")
+      .select("key, memory_type, value")
+      .eq("agent_id", agentName)
+      .order("updated_at", { ascending: false })
+      .limit(20);
+
+    if (memories && memories.length > 0) {
+      systemPrompt += `\n\n## Your Memories\nPatterns and gotchas saved from previous work:\n`;
+      for (const mem of memories) {
+        systemPrompt += `- [${mem.memory_type}] ${mem.key}: ${JSON.stringify(mem.value)}\n`;
+      }
+    }
+  } catch {
+    // Memory loading failed, non-critical
+  }
+
   // WO-0405: Load promoted lessons filtered by agent role
   const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
     builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
