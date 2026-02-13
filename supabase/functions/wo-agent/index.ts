@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -239,11 +239,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ this is the root
+        // No parent ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -251,7 +251,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ current WO is the effective root
+        // Parent is terminal ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ current WO is the effective root
         break;
       }
       
@@ -593,11 +593,13 @@ async function handleExecute(req: Request): Promise<Response> {
       .eq("phase", "checkpoint");
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
-      const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_wo_lifecycle", {
+      // WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ call evaluate_wo_lifecycle for review-vs-fail decision
+      // WO-0499: Use progress-based circuit breaker instead of lifecycle evaluation
+      const previousMutations = checkpoint?.detail?.mutation_digest?.total || null;
+      const { data: lifecycle, error: lifecycleErr } = await supabase.rpc("evaluate_circuit_breaker_progress", {
         p_wo_id: wo.id,
-        p_event_type: "checkpoint",
-        p_event_context: { checkpoint_count: checkpointCount },
+        p_checkpoint_count: checkpointCount,
+        p_previous_mutation_count: previousMutations,
       });
 
       if (lifecycleErr) {
@@ -609,7 +611,7 @@ async function handleExecute(req: Request): Promise<Response> {
       const mutationCount = lifecycle?.delta?.cumulative_mutation_count || 0;
 
       if (verdict === "review") {
-        // SMART PATH: Agent made real mutations ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ send to review for auto-QA
+        // SMART PATH: Agent made real mutations ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ send to review for auto-QA
         const summary = `Circuit breaker (${checkpointCount} checkpoints). ${mutationCount} cumulative mutations. Auto-submitted for QA review.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -620,7 +622,7 @@ async function handleExecute(req: Request): Promise<Response> {
         });
         return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "review", turns: 0, summary, tool_calls: 0 });
       } else {
-        // DUMB PATH: No mutations or fail verdict ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ mark failed + remediation
+        // DUMB PATH: No mutations or fail verdict ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ mark failed + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
