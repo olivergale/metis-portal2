@@ -32,7 +32,7 @@ function githubHeaders(token: string): Record<string, string> {
 /**
  * Check if content contains UTF-8 corruption signature.
  * WO-0501: Detect multiply-encoded UTF-8 sequences that cause exponential file bloat.
- * Pattern: 4+ consecutive corrupted bytes (em-dash â ÃÃÃÃÃÃÃÃ...)
+ * Pattern: 4+ consecutive corrupted bytes (em-dash Ã¢ÂÂ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ...)
  */
 function detectUtf8Corruption(content: string): boolean {
   // Match 4+ consecutive occurrences of the corruption pattern
@@ -209,7 +209,7 @@ export async function handleGithubWriteFile(
     if (detectUtf8Corruption(content)) {
       return {
         success: false,
-        error: "UTF-8 corruption detected in file content — aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂ...) that indicate encoding errors.",
+        error: "UTF-8 corruption detected in file content â aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÃÃÃ...) that indicate encoding errors.",
       };
     }
 
@@ -313,7 +313,16 @@ export async function handleGithubEditFile(
     // 3. Replace
     const updatedContent = currentContent.replace(old_string, new_string);
 
+    // WO-0501: Check for UTF-8 corruption before committing
+    if (detectUtf8Corruption(updatedContent)) {
+      return {
+        success: false,
+        error: "UTF-8 corruption detected in file content — aborting commit to prevent data loss. Content contains multiply-encoded byte sequences (ÃÂÃÂ...) that indicate encoding errors.",
+      };
+    }
+
     // 4. Write back
+    const originalSize = fileData.size;
     const encodedContent = btoa(unescape(encodeURIComponent(updatedContent)));
     const commitMsg = message || `Edit ${path} via github_edit_file`;
 
