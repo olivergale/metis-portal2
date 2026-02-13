@@ -418,6 +418,64 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "github_grep",
+    description:
+      "Search file contents in GitHub repository using Code Search API. Returns up to 10 matches with file paths and matched line content.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        pattern: {
+          type: "string",
+          description: "Search pattern to find in file contents",
+        },
+        path: {
+          type: "string",
+          description: "Optional directory filter (e.g., 'supabase/functions' to search only in that directory)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "github_read_file_range",
+    description:
+      "Read specific line range from a GitHub file without 10k char truncation. Decodes full file content and returns requested lines with line numbers.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        path: {
+          type: "string",
+          description: "File path within the repo",
+        },
+        start_line: {
+          type: "number",
+          description: "Starting line number (1-indexed)",
+        },
+        end_line: {
+          type: "number",
+          description: "Ending line number (1-indexed, inclusive)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["path", "start_line", "end_line"],
+    },
+  },
+  {
     name: "search_knowledge_base",
     description:
       "Search the institutional knowledge base for lessons learned, patterns, and best practices. Returns relevant KB entries filtered by tags and severity.",
@@ -618,7 +676,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
