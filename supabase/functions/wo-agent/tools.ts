@@ -616,7 +616,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "delegate_subtask",
     description:
-      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking Ã¢ÂÂ parent continues immediately. Use check_child_status to poll for completion.",
+      "Create a child work order with inherited context and specific model assignment. The child WO is immediately dispatched for execution. Always non-blocking ÃÂ¢ÃÂÃÂ parent continues immediately. Use check_child_status to poll for completion.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -737,58 +737,128 @@ export async function dispatchTool(
   toolInput: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
+  // Define mutating tools that need recording
+  const MUTATING_TOOLS = new Set([
+    "execute_sql",
+    "apply_migration",
+    "github_write_file",
+    "github_edit_file",
+    "github_patch_file",
+  ]);
+
+  let result: ToolResult;
+
   switch (toolName) {
     case "execute_sql":
-      return handleExecuteSql(toolInput, ctx);
+      result = await handleExecuteSql(toolInput, ctx);
+      break;
     case "apply_migration":
-      return handleApplyMigration(toolInput, ctx);
+      result = await handleApplyMigration(toolInput, ctx);
+      break;
     case "read_table":
-      return handleReadTable(toolInput, ctx);
+      result = await handleReadTable(toolInput, ctx);
+      break;
     case "github_read_file":
-      return handleGithubReadFile(toolInput, ctx);
+      result = await handleGithubReadFile(toolInput, ctx);
+      break;
     case "github_write_file":
-      return handleGithubWriteFile(toolInput, ctx);
+      result = await handleGithubWriteFile(toolInput, ctx);
+      break;
     case "github_edit_file":
-      return handleGithubEditFile(toolInput, ctx);
+      result = await handleGithubEditFile(toolInput, ctx);
+      break;
     case "github_patch_file":
-      return handleGithubPatchFile(toolInput, ctx);
+      result = await handleGithubPatchFile(toolInput, ctx);
+      break;
     case "deploy_edge_function":
-      return handleDeployEdgeFunction(toolInput, ctx);
+      result = await handleDeployEdgeFunction(toolInput, ctx);
+      break;
     case "log_progress":
-      return handleLogProgress(toolInput, ctx);
+      result = await handleLogProgress(toolInput, ctx);
+      break;
     case "read_execution_log":
-      return handleReadExecutionLog(toolInput, ctx);
+      result = await handleReadExecutionLog(toolInput, ctx);
+      break;
     case "get_schema":
-      return handleGetSchema(toolInput, ctx);
+      result = await handleGetSchema(toolInput, ctx);
+      break;
     case "mark_complete":
-      return handleMarkComplete(toolInput, ctx);
+      result = await handleMarkComplete(toolInput, ctx);
+      break;
     case "mark_failed":
-      return handleMarkFailed(toolInput, ctx);
+      result = await handleMarkFailed(toolInput, ctx);
+      break;
     case "resolve_qa_findings":
-      return handleResolveQaFindings(toolInput, ctx);
+      result = await handleResolveQaFindings(toolInput, ctx);
+      break;
     case "update_qa_checklist":
-      return handleUpdateQaChecklist(toolInput, ctx);
+      result = await handleUpdateQaChecklist(toolInput, ctx);
+      break;
     case "transition_state":
-      return handleTransitionState(toolInput, ctx);
+      result = await handleTransitionState(toolInput, ctx);
+      break;
     case "delegate_subtask":
-      return handleDelegateSubtask(toolInput, ctx);
+      result = await handleDelegateSubtask(toolInput, ctx);
+      break;
     case "check_child_status":
-      return handleCheckChildStatus(toolInput, ctx);
+      result = await handleCheckChildStatus(toolInput, ctx);
+      break;
     case "web_fetch":
-      return handleWebFetch(toolInput, ctx);
+      result = await handleWebFetch(toolInput, ctx);
+      break;
     case "github_list_files":
-      return handleGithubListFiles(toolInput, ctx);
+      result = await handleGithubListFiles(toolInput, ctx);
+      break;
     case "github_create_branch":
-      return handleGithubCreateBranch(toolInput, ctx);
+      result = await handleGithubCreateBranch(toolInput, ctx);
+      break;
     case "github_create_pr":
-      return handleGithubCreatePr(toolInput, ctx);
+      result = await handleGithubCreatePr(toolInput, ctx);
+      break;
     case "github_search_code":
-      return handleGithubSearchCode(toolInput, ctx);
+      result = await handleGithubSearchCode(toolInput, ctx);
+      break;
     case "search_knowledge_base":
-      return handleSearchKnowledgeBase(toolInput, ctx);
+      result = await handleSearchKnowledgeBase(toolInput, ctx);
+      break;
     case "search_lessons":
-      return handleSearchLessons(toolInput, ctx);
+      result = await handleSearchLessons(toolInput, ctx);
+      break;
     default:
-      return { success: false, error: `Unknown tool: ${toolName}` };
+      result = { success: false, error: `Unknown tool: ${toolName}` };
   }
+
+  // Record mutation for mutating tools (fire-and-forget)
+  if (MUTATING_TOOLS.has(toolName)) {
+    // Extract object_type, object_id, and action from toolInput and result
+    let objectType = "unknown";
+    let objectId = "unknown";
+    let action = "unknown";
+
+    if (toolName === "execute_sql") {
+      objectType = "sql_query";
+      objectId = toolInput.query?.substring(0, 100) || "unknown";
+      action = toolInput.query?.trim().split(/\s+/)[0]?.toUpperCase() || "UNKNOWN";
+    } else if (toolName === "apply_migration") {
+      objectType = "migration";
+      objectId = toolInput.name || "unknown";
+      action = "DDL";
+    } else if (toolName === "github_write_file" || toolName === "github_edit_file" || toolName === "github_patch_file") {
+      objectType = "github_file";
+      objectId = toolInput.path || "unknown";
+      action = toolName === "github_write_file" ? "WRITE" : toolName === "github_edit_file" ? "EDIT" : "PATCH";
+    }
+
+    await recordMutation(
+      ctx,
+      toolName,
+      objectType,
+      objectId,
+      action,
+      result.success,
+      result.error
+    );
+  }
+
+  return result;
 }
