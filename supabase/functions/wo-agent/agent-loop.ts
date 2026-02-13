@@ -1,9 +1,9 @@
 // wo-agent/agent-loop.ts v10
-// WO-0474: Fix catch block bypassing stall detection — API error counter + emergency trim + non-retryable fail-fast
+// WO-0474: Fix catch block bypassing stall detection â API error counter + emergency trim + non-retryable fail-fast
 // WO-0477: Remove budget system, wall-clock only, non-productive recursion detection
 // WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
-// WO-0378: Message corruption fix — repairMessages, dispatchTool try/catch, pair-safe trimming
-// WO-0187: Continuation pattern — checkpoint before timeout, self-reinvoke via pg_net
+// WO-0378: Message corruption fix â repairMessages, dispatchTool try/catch, pair-safe trimming
+// WO-0187: Continuation pattern â checkpoint before timeout, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -13,11 +13,11 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
 
-const TIMEOUT_MS = 350_000; // 350s — 50s buffer before 400s Supabase Pro wall clock limit
-const CHECKPOINT_MS = 300_000; // 300s — checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 350_000; // 350s â 50s buffer before 400s Supabase Pro wall clock limit
+const CHECKPOINT_MS = 300_000; // 300s â checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 3; // Circuit breaker: max 3 continuations per WO execution
 const STALL_WINDOW = 5; // Consecutive turns with zero mutations AND zero successful reads = fail
-const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only — prefer agent_execution_profiles.model
+const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only â prefer agent_execution_profiles.model
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
@@ -113,7 +113,7 @@ function repairMessages(messages: Array<{ role: string; content: any }>): number
     // Check if next message has matching tool_results
     const nextMsg = messages[i + 1];
     if (!nextMsg || nextMsg.role !== 'user' || !Array.isArray(nextMsg.content)) {
-      // No matching user message with tool_results — inject one
+      // No matching user message with tool_results â inject one
       const dummyResults = toolUseBlocks.map((tb: any) => ({
         type: 'tool_result' as const,
         tool_use_id: tb.id,
@@ -186,7 +186,7 @@ export async function runAgentLoop(
   const client = new Anthropic({ apiKey });
   const startTime = Date.now();
   const toolCalls: AgentLoopResult["toolCalls"] = [];
-  // WO-0401: Config-driven model — profile > WO override > default
+  // WO-0401: Config-driven model â profile > WO override > default
   const resolvedModel = model || DEFAULT_MODEL;
 
   // WO-0166: Filter tools based on WO tags AND agent role (tools_allowed)
@@ -219,10 +219,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 20;
 
   while (true) {
-    // Check checkpoint / timeout — checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout â checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ — both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ â both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -258,6 +258,56 @@ export async function runAgentLoop(
           return `${tc.tool} (ok)`;
         });
 
+      // WO-0486: Query mutation digest for checkpoint context
+      let mutationDigest: any = null;
+      let failedApproaches: any[] = [];
+      try {
+        // Get mutation summary
+        const { data: mutSummary } = await ctx.supabase
+          .from("wo_mutation_summary")
+          .select("*")
+          .eq("work_order_id", ctx.workOrderId)
+          .maybeSingle();
+        
+        if (mutSummary) {
+          mutationDigest = {
+            total: mutSummary.total_mutations || 0,
+            successful: mutSummary.successful_count || 0,
+            failed: mutSummary.failed_count || 0,
+            by_error_class: mutSummary.error_class_breakdown || {},
+          };
+        }
+
+        // Get failed approaches grouped by tool+object+error_class
+        const { data: failedMuts } = await ctx.supabase
+          .from("wo_mutations")
+          .select("tool_name, object_type, object_id, action, error_class, error_detail")
+          .eq("work_order_id", ctx.workOrderId)
+          .eq("success", false)
+          .order("created_at", { ascending: false })
+          .limit(20);
+        
+        if (failedMuts && failedMuts.length > 0) {
+          // Group by tool_name + object_id + error_class to deduplicate
+          const grouped = new Map<string, any>();
+          for (const m of failedMuts) {
+            const key = `${m.tool_name}:${m.object_id || m.object_type}:${m.error_class}`;
+            if (!grouped.has(key)) {
+              grouped.set(key, {
+                tool: m.tool_name,
+                target: m.object_id || m.object_type,
+                action: m.action,
+                error_class: m.error_class,
+                error_detail: m.error_detail?.slice(0, 200),
+              });
+            }
+          }
+          failedApproaches = Array.from(grouped.values());
+        }
+      } catch (mutErr: any) {
+        console.error(`[WO-AGENT] Failed to query mutation digest:`, mutErr.message);
+      }
+
       await ctx.supabase.from("work_order_execution_log").insert({
         work_order_id: ctx.workOrderId,
         phase: "checkpoint",
@@ -269,6 +319,8 @@ export async function runAgentLoop(
           elapsed_ms: elapsed,
           delegated_children: childWOs.length > 0 ? childWOs : undefined,
           accomplishments: accomplishments.length > 0 ? accomplishments : undefined,
+          mutation_digest: mutationDigest,
+          failed_approaches: failedApproaches.length > 0 ? failedApproaches : undefined,
         },
       });
 
@@ -285,19 +337,19 @@ export async function runAgentLoop(
 
       // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair.
       // If the message at (1 + trimCount) is a user message with tool_results,
-      // its preceding assistant message has tool_use blocks — keep the pair together.
+      // its preceding assistant message has tool_use blocks â keep the pair together.
       const cutIdx = 1 + trimCount;
       if (cutIdx < messages.length) {
         const msgAtCut = messages[cutIdx];
         if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
             (msgAtCut.content as any[]).some((b: any) => b.type === 'tool_result')) {
-          // This is a tool_result message — its assistant pair is at cutIdx-1
+          // This is a tool_result message â its assistant pair is at cutIdx-1
           // Include it in the trim to keep pairs intact
           trimCount += 1;
         }
       }
 
-      // Summarize before discarding — extract tool calls, mutations, errors
+      // Summarize before discarding â extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -340,7 +392,7 @@ export async function runAgentLoop(
         messages,
       });
 
-      // Successful API call — reset error counter
+      // Successful API call â reset error counter
       consecutiveApiErrors = 0;
 
       // Log the turn
@@ -355,7 +407,7 @@ export async function runAgentLoop(
           .map((b) => b.text)
           .join("\n");
 
-        // No terminal tool was called — nudge the model
+        // No terminal tool was called â nudge the model
         messages.push({ role: "assistant", content: response.content });
         messages.push({
           role: "user",
@@ -479,7 +531,7 @@ export async function runAgentLoop(
         },
       });
 
-      // Non-retryable: prompt too long — trim aggressively or fail immediately
+      // Non-retryable: prompt too long â trim aggressively or fail immediately
       if (e.message?.includes('prompt is too long') || e.status === 400) {
         // Try emergency trim: keep only first message + last 4 pairs
         const emergencyMax = 1 + 4 * 2;
@@ -499,8 +551,8 @@ export async function runAgentLoop(
           console.log(`[WO-AGENT] ${ctx.workOrderSlug} emergency trim: ${trimCount} messages removed, ${messages.length} remaining`);
           consecutiveApiErrors++;
         } else {
-          // Already minimal — context is fundamentally too large, fail immediately
-          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further — system prompt + initial context exceeds model limit.`;
+          // Already minimal â context is fundamentally too large, fail immediately
+          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further â system prompt + initial context exceeds model limit.`;
           console.log(`[WO-AGENT] ${ctx.workOrderSlug} FATAL: ${reason}`);
           await logFailed(ctx, reason);
           return { status: "failed", turns: turn, summary: reason, toolCalls };
@@ -526,7 +578,7 @@ export async function runAgentLoop(
     }
   }
 
-  // Should not reach here — loop exits via checkpoint, terminal tool, or stall detection
+  // Should not reach here â loop exits via checkpoint, terminal tool, or stall detection
   const summary = `Loop exited unexpectedly after ${turn} turns`;
   await logFailed(ctx, summary);
   return { status: "failed", turns: turn, summary, toolCalls };
@@ -570,7 +622,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical — don't fail the loop
+    // Non-critical â don't fail the loop
   }
 }
 
