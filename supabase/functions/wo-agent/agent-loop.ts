@@ -13,8 +13,8 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
 
-const TIMEOUT_MS = 130_000; // 130s — 20s buffer before 150s Supabase request idle timeout
-const CHECKPOINT_MS = 100_000; // 100s — checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 380_000; // 380s — 20s buffer before 400s Supabase Pro wall clock limit (waitUntil mode)
+const CHECKPOINT_MS = 350_000; // 350s — checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 3; // Circuit breaker: max 3 continuations per WO execution
 const STALL_WINDOW = 5; // Consecutive turns with zero mutations AND zero successful reads = fail
 const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only â prefer agent_execution_profiles.model

@@ -11,6 +11,11 @@ import { buildAgentContext } from "./context.ts";
 import { runAgentLoop } from "./agent-loop.ts";
 import type { ToolContext } from "./tools.ts";
 
+// WO-0513: beforeunload safety net — log when worker is shutting down
+addEventListener('beforeunload', (ev: any) => {
+  console.log(`[WO-AGENT] Worker shutting down: ${ev.detail?.reason || 'unknown'}`);
+});
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -742,47 +747,67 @@ async function handleExecute(req: Request): Promise<Response> {
     });
   }
 
-  // Run the agentic loop
-  // WO-0401: Pass config-driven model from agent profile
-  const result = await runAgentLoop(
-    agentContext.systemPrompt,
-    finalUserMessage,
-    toolCtx,
-    wo.tags || [],
-    agentContext.model
-  );
-
-  console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
-
-  // WO-0187: Self-reinvoke on checkpoint/timeout
-  if (result.status === "checkpoint" || result.status === "timeout") {
+  // WO-0513: Run agentic loop as background task via EdgeRuntime.waitUntil()
+  // This returns the HTTP response immediately, avoiding the 150s request idle timeout.
+  // The background task uses the full 400s Pro plan wall clock budget.
+  const backgroundExecution = async () => {
     try {
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-      const selfUrl = Deno.env.get("SUPABASE_URL")!;
-      await supabase.rpc("run_sql_void", {
-        sql_query: `SELECT net.http_post(
-          url := '${selfUrl}/functions/v1/wo-agent/execute',
-          headers := jsonb_build_object(
-            'Content-Type', 'application/json',
-            'Authorization', 'Bearer ${anonKey}',
-            'apikey', '${anonKey}'
-          ),
-          body := jsonb_build_object('work_order_id', '${wo.id}')
-        );`,
-      });
-      console.log(`[WO-AGENT] ${wo.slug} checkpointed -- self-reinvoke queued`);
-    } catch (e: any) {
-      console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
-      await supabase.from("work_order_execution_log").insert({
-        work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
-        detail: { event_type: "continuation_failed", error: e.message, content: `Self-reinvoke failed after checkpoint: ${e.message}` },
-      }).then(null, () => {});
-    }
-  }
+      // WO-0401: Pass config-driven model from agent profile
+      const result = await runAgentLoop(
+        agentContext.systemPrompt,
+        finalUserMessage,
+        toolCtx,
+        wo.tags || [],
+        agentContext.model
+      );
 
+      console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
+
+      // WO-0187: Self-reinvoke on checkpoint/timeout
+      if (result.status === "checkpoint" || result.status === "timeout") {
+        try {
+          const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+          const selfUrl = Deno.env.get("SUPABASE_URL")!;
+          await supabase.rpc("run_sql_void", {
+            sql_query: `SELECT net.http_post(
+              url := '${selfUrl}/functions/v1/wo-agent/execute',
+              headers := jsonb_build_object(
+                'Content-Type', 'application/json',
+                'Authorization', 'Bearer ${anonKey}',
+                'apikey', '${anonKey}'
+              ),
+              body := jsonb_build_object('work_order_id', '${wo.id}')
+            );`,
+          });
+          console.log(`[WO-AGENT] ${wo.slug} checkpointed -- self-reinvoke queued`);
+        } catch (e: any) {
+          console.error(`[WO-AGENT] ${wo.slug} self-reinvoke failed:`, e.message);
+          await supabase.from("work_order_execution_log").insert({
+            work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
+            detail: { event_type: "continuation_failed", error: e.message, content: `Self-reinvoke failed after checkpoint: ${e.message}` },
+          }).then(null, () => {});
+        }
+      }
+    } catch (e: any) {
+      console.error(`[WO-AGENT] ${wo.slug} background execution error:`, e.message);
+      try {
+        await supabase.from("work_order_execution_log").insert({
+          work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
+          detail: { event_type: "background_error", error: e.message, content: `Background execution crashed: ${e.message}` },
+        });
+        await supabase.rpc("run_sql_void", {
+          sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = 'Background execution error: ${e.message.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
+        });
+      } catch { /* meta-error */ }
+    }
+  };
+
+  EdgeRuntime.waitUntil(backgroundExecution());
+
+  // Return immediately — caller (pg_net trigger) already ignores this response
   return jsonResponse({
-    work_order_id: wo.id, slug: wo.slug, status: result.status,
-    turns: result.turns, summary: result.summary, tool_calls: result.toolCalls.length,
+    work_order_id: wo.id, slug: wo.slug, status: "started",
+    message: "Execution started in background (400s wall clock budget)",
   });
 }
 
