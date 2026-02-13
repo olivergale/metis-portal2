@@ -1,7 +1,7 @@
 // context-load/index.ts - v18
 // v18: Added workspace snapshot with GitHub tree caching, DB schema, and recent mutations (WO-0526)
 // v17: Added design_doc_required flag to work_orders (WO-PRD-GATE)
-// v16: Fix doc_status ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
+// v16: Fix doc_status ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ use project UUID (not code string) for project_documents query + call check_doc_currency() RPC
 // v15: Added verification_requirements to response (E2E verification gate)
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -154,7 +154,7 @@ async function buildWorkspaceSnapshot(
   parts.push(dbSchema);
   totalSize += dbSchema.length;
   
-  // 3. Recent Mutations (last 24h from state_mutations)
+  // 3. Recent Mutations (last 24h from wo_mutations)
   const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
   const { data: mutations } = await supabase
     .from('state_mutations')
@@ -272,7 +272,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(10),
 
-      // 6. Directives (system rules) ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ exclude portal_only directives (v13)
+      // 6. Directives (system rules) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ exclude portal_only directives (v13)
       supabase.from("system_directives")
         .select("name, content, enforcement, priority")
         .eq("active", true)
@@ -416,7 +416,7 @@ Deno.serve(async (req) => {
     const verificationRequirements = {
       gate_enabled: true,
       required_for_tags: ['requires_verification'],
-      enforcement_transition: 'in_progress ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ review',
+      enforcement_transition: 'in_progress ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ review',
       verification_coverage_pct: verificationCoveragePct,
       verified_last_30d: verifiedCount,
       completed_last_30d: totalCompleted,
