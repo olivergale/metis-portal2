@@ -1,9 +1,9 @@
 // wo-agent/agent-loop.ts v10
-// WO-0474: Fix catch block bypassing stall detection ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ API error counter + emergency trim + non-retryable fail-fast
+// WO-0474: Fix catch block bypassing stall detection ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ API error counter + emergency trim + non-retryable fail-fast
 // WO-0477: Remove budget system, wall-clock only, non-productive recursion detection
 // WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
-// WO-0378: Message corruption fix ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ repairMessages, dispatchTool try/catch, pair-safe trimming
-// WO-0187: Continuation pattern ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ checkpoint before timeout, self-reinvoke via pg_net
+// WO-0378: Message corruption fix ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ repairMessages, dispatchTool try/catch, pair-safe trimming
+// WO-0187: Continuation pattern ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ checkpoint before timeout, self-reinvoke via pg_net
 // WO-0163: Progress-based velocity gate replaces hard turn limits
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
@@ -13,11 +13,11 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
 
-const TIMEOUT_MS = 380_000; // 380s ÃÂ¢ÃÂÃÂ 20s buffer before 400s Supabase Pro wall clock limit (waitUntil mode)
-const CHECKPOINT_MS = 350_000; // 350s ÃÂ¢ÃÂÃÂ checkpoint before timeout to enable continuation
+const TIMEOUT_MS = 380_000; // 380s ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ 20s buffer before 400s Supabase Pro wall clock limit (waitUntil mode)
+const CHECKPOINT_MS = 350_000; // 350s ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ checkpoint before timeout to enable continuation
 const MAX_CONTINUATIONS = 3; // Circuit breaker: max 3 continuations per WO execution
 const STALL_WINDOW = 5; // Consecutive turns with zero mutations AND zero successful reads = fail
-const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ prefer agent_execution_profiles.model
+const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ prefer agent_execution_profiles.model
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
@@ -123,7 +123,7 @@ function repairMessages(messages: Array<{ role: string; content: any }>): number
     // Check if next message has matching tool_results
     const nextMsg = messages[i + 1];
     if (!nextMsg || nextMsg.role !== 'user' || !Array.isArray(nextMsg.content)) {
-      // No matching user message with tool_results ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ inject one
+      // No matching user message with tool_results ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ inject one
       const dummyResults = toolUseBlocks.map((tb: any) => ({
         type: 'tool_result' as const,
         tool_use_id: tb.id,
@@ -182,6 +182,9 @@ export async function runAgentLoop(
   let consecutiveStallTurns = 0;
   // API error tracking: catch block must also bail on repeated failures
   let consecutiveApiErrors = 0;
+  // WO-0528: Track last error for consecutive failure detection
+  let lastErrorClass: string | null = null;
+  let lastErrorObject: string | null = null;
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
@@ -196,7 +199,7 @@ export async function runAgentLoop(
   const client = new Anthropic({ apiKey });
   const startTime = Date.now();
   const toolCalls: AgentLoopResult["toolCalls"] = [];
-  // WO-0401: Config-driven model ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ profile > WO override > default
+  // WO-0401: Config-driven model ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ profile > WO override > default
   const resolvedModel = model || DEFAULT_MODEL;
 
   // WO-0166: Filter tools based on WO tags AND agent role (tools_allowed)
@@ -229,10 +232,10 @@ export async function runAgentLoop(
   const MAX_HISTORY_PAIRS = isRemediation ? 15 : 20;
 
   while (true) {
-    // Check checkpoint / timeout ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ checkpoint FIRST so long turns don't skip it
+    // Check checkpoint / timeout ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ checkpoint FIRST so long turns don't skip it
     const elapsed = Date.now() - startTime;
 
-    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ both save progress for continuation
+    // WO-0187: Checkpoint at 100s+ OR timeout at 125s+ ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ both save progress for continuation
     if (elapsed > CHECKPOINT_MS) {
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
@@ -347,19 +350,19 @@ export async function runAgentLoop(
 
       // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair.
       // If the message at (1 + trimCount) is a user message with tool_results,
-      // its preceding assistant message has tool_use blocks ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ keep the pair together.
+      // its preceding assistant message has tool_use blocks ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ keep the pair together.
       const cutIdx = 1 + trimCount;
       if (cutIdx < messages.length) {
         const msgAtCut = messages[cutIdx];
         if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
             (msgAtCut.content as any[]).some((b: any) => b.type === 'tool_result')) {
-          // This is a tool_result message ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ its assistant pair is at cutIdx-1
+          // This is a tool_result message ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ its assistant pair is at cutIdx-1
           // Include it in the trim to keep pairs intact
           trimCount += 1;
         }
       }
 
-      // Summarize before discarding ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ extract tool calls, mutations, errors
+      // Summarize before discarding ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
 
       // Remove old messages (preserve index 0 = original WO context)
@@ -402,7 +405,7 @@ export async function runAgentLoop(
         messages,
       });
 
-      // Successful API call ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ reset error counter
+      // Successful API call ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ reset error counter
       consecutiveApiErrors = 0;
 
       // Log the turn
@@ -422,7 +425,7 @@ export async function runAgentLoop(
         const hasRecentProgress = toolCalls.slice(-5).some(tc => tc.tool === 'log_progress' && tc.success);
         const appearsComplete = hasMutations && (hasRecentProgress || turn > 5);
 
-        // No terminal tool was called ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ nudge the model
+        // No terminal tool was called ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ nudge the model
         messages.push({ role: "assistant", content: response.content });
         // WO-0508 Fix #2: Conditional nudge based on appearsComplete
         const nudgeMessage = appearsComplete
@@ -550,7 +553,7 @@ export async function runAgentLoop(
         },
       });
 
-      // Non-retryable: prompt too long ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ trim aggressively or fail immediately
+      // Non-retryable: prompt too long ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ trim aggressively or fail immediately
       if (e.message?.includes('prompt is too long') || e.status === 400) {
         // Try emergency trim: keep only first message + last 4 pairs
         const emergencyMax = 1 + 4 * 2;
@@ -570,8 +573,8 @@ export async function runAgentLoop(
           console.log(`[WO-AGENT] ${ctx.workOrderSlug} emergency trim: ${trimCount} messages removed, ${messages.length} remaining`);
           consecutiveApiErrors++;
         } else {
-          // Already minimal ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ context is fundamentally too large, fail immediately
-          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ system prompt + initial context exceeds model limit.`;
+          // Already minimal ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ context is fundamentally too large, fail immediately
+          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ system prompt + initial context exceeds model limit.`;
           console.log(`[WO-AGENT] ${ctx.workOrderSlug} FATAL: ${reason}`);
           await logFailed(ctx, reason);
           return { status: "failed", turns: turn, summary: reason, toolCalls };
@@ -597,7 +600,7 @@ export async function runAgentLoop(
     }
   }
 
-  // Should not reach here ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ loop exits via checkpoint, terminal tool, or stall detection
+  // Should not reach here ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ loop exits via checkpoint, terminal tool, or stall detection
   const summary = `Loop exited unexpectedly after ${turn} turns`;
   await logFailed(ctx, summary);
   return { status: "failed", turns: turn, summary, toolCalls };
@@ -641,7 +644,7 @@ async function logTurn(
       },
     });
   } catch {
-    // Non-critical ÃÂÃÂ¢ÃÂÃÂÃÂÃÂ don't fail the loop
+    // Non-critical ÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ don't fail the loop
   }
 }
 
