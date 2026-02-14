@@ -1,8 +1,7 @@
 import { apiFetch, escapeHtml, relativeTime } from '../utils/api';
 import type { WorkOrder, ExecutionLogEntry, QAFinding, WOEvent } from '../types';
 import { renderActionButtons } from './WOActions';
-
-let autoRefreshInterval: number | null = null;
+import { loadWOEvents, setupAutoRefresh, clearAutoRefresh } from './WOEventsTimeline';
 
 /**
  * Render WO Detail Panel — slide-out panel showing full execution trail,
