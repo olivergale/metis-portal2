@@ -1206,7 +1206,12 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
 
       let accepted = false;
       if (allPass && itemsEvaluated > 0) {
-        const { data: acceptData, error: acceptError } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: null });
+        const { data: acceptData, error: acceptError } = await supabase.rpc('wo_transition', {
+          p_wo_id: work_order_id,
+          p_event: 'qa_passed',
+          p_actor: 'auto-qa',
+          p_depth: 0
+        });
         if (!acceptError && !(acceptData?.error)) {
           accepted = true;
           await logPhase(supabase, work_order_id, "completing", "qa-gate", { action: "auto-accepted", items_evaluated: itemsEvaluated, slug: wo.slug, model: 'sonnet-4.5' });
