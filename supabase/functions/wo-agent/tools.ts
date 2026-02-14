@@ -424,6 +424,45 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "github_patch_file",
+    description:
+      "Apply surgical patches to a file using search/replace. Reads full file content via Git Data API, applies patches sequentially, and commits. Use when you need to make multiple replacements in one file (unlike github_edit_file which only does one replacement).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path within the repo, e.g. src/App.ts",
+        },
+        patches: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              search: { type: "string", description: "Exact string to find in file" },
+              replace: { type: "string", description: "Replacement string" },
+            },
+            required: ["search", "replace"],
+          },
+          description: "Array of search/replace patches applied sequentially. Fails if any search string not found or appears more than once.",
+        },
+        message: {
+          type: "string",
+          description: "Commit message",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["path", "patches", "message"],
+    },
+  },
+  {
     name: "github_tree",
     description:
       "Get the entire repository file tree in one call using GitHub Git Trees API. Returns full repo structure with optional path filtering and file sizes. Much more efficient than github_list_files for discovering repo structure.",
