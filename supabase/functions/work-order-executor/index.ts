@@ -558,24 +558,21 @@ async function handleRemediationCompletion(supabase: any, wo: { id?: string; slu
       }
 
       if (parentWo.status === 'review') {
-        // Two-step: review  ->  in_progress  ->  review triggers trg_auto_run_qa_evaluation
-        await supabase.rpc('update_work_order_state', {
-          p_work_order_id: parentWo.id,
-          p_status: 'in_progress',
-          p_approved_at: null,
-          p_approved_by: null,
-          p_started_at: null,
-          p_completed_at: null,
-          p_summary: `Remediation ${wo.slug} completed, re-evaluating`
+        // Two-step: review -> in_progress -> review triggers trg_auto_run_qa_evaluation
+        // Using reopen to go back to in_progress, then submit_for_review to re-trigger QA
+        await supabase.rpc('wo_transition', {
+          p_wo_id: parentWo.id,
+          p_event: 'reopen',
+          p_payload: { summary: `Remediation ${wo.slug} completed, re-evaluating` },
+          p_actor: 'work-order-executor',
+          p_depth: 0
         });
-        await supabase.rpc('update_work_order_state', {
-          p_work_order_id: parentWo.id,
-          p_status: 'review',
-          p_approved_at: null,
-          p_approved_by: null,
-          p_started_at: null,
-          p_completed_at: null,
-          p_summary: `Re-evaluation after remediation ${wo.slug}`
+        await supabase.rpc('wo_transition', {
+          p_wo_id: parentWo.id,
+          p_event: 'submit_for_review',
+          p_payload: { summary: `Re-evaluation after remediation ${wo.slug}` },
+          p_actor: 'work-order-executor',
+          p_depth: 0
         });
         console.log(`[REMEDIATION] Re-triggered auto-QA on parent ${parentSlug}`);
       }
