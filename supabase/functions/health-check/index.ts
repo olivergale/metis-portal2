@@ -290,7 +290,18 @@ serve(async (req) => {
       }
     });
 
-    // 6. SAVE TO PLATFORM_HEALTH_SNAPSHOTS
+    // 6. STALE WO_EVENTS CHECK (pending events older than 5 minutes) - WO-0621
+    console.log("Checking for stale wo_events...");
+    
+    const { data: staleEventsResult, error: staleEventsError } = await supabase.rpc('check_stale_wo_events');
+    
+    if (staleEventsError) {
+      console.error('Error checking stale wo_events:', staleEventsError);
+    } else {
+      console.log(`Stale event check complete: ${staleEventsResult} stale events processed`);
+    }
+
+    // 7. SAVE TO PLATFORM_HEALTH_SNAPSHOTS
     const health_status = 
       metrics.failure_rate.last_hour >= 3 || metrics.self_heal_failures.length > 0 
         ? 'critical' 
