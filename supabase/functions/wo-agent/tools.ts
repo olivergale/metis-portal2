@@ -699,6 +699,50 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "request_clarification",
+    description:
+      "Pause the work order and request human input when encountering ambiguity. The WO will transition to blocked_on_input status and wait for a human response. Use this instead of guessing or failing when requirements are unclear.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        question: {
+          type: "string",
+          description: "The specific question you need answered",
+        },
+        context: {
+          type: "string",
+          description: "Context about why you need clarification (what you've tried, what's ambiguous)",
+        },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional: Structured choice options for the human to select from",
+        },
+        urgency: {
+          type: "string",
+          enum: ["low", "normal", "high"],
+          description: "Urgency level for the clarification request (default: normal)",
+        },
+      },
+      required: ["question"],
+    },
+  },
+  {
+    name: "check_clarification",
+    description:
+      "Check if a clarification request has been answered. Returns the current status (pending/answered/expired) and response if available. If expired, the WO will be transitioned to failed.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        clarification_id: {
+          type: "string",
+          description: "The UUID of the clarification request (returned from request_clarification)",
+        },
+      },
+      required: ["clarification_id"],
+    },
+  },
+  {
     name: "save_memory",
     description:
       "Save a memory for future work orders. Memories persist across WO executions and help you avoid repeating mistakes or rediscovering patterns.",
