@@ -12,7 +12,7 @@
 type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree } from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree, handleReadFullFile, handleGitLog, handleGitDiff, handleGitBlame } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
 import { handleWebFetch } from "./tool-handlers/web.ts";
 import {
@@ -451,6 +451,102 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
   },
   {
+    name: "read_full_file",
+    description:
+      "Read FULL file content from GitHub using Git Data API (no 10k char truncation). Use this instead of github_read_file for large files (>10k chars). Returns complete file content via blob API (up to 100MB).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path within the repo, e.g. supabase/functions/wo-agent/tools.ts",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        ref: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "git_log",
+    description:
+      "Get commit history for a file or repository. Returns commit SHA, message, author, and date. Useful for understanding code evolution and finding when changes were made.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "Optional file path to get history for (omit for repo-wide history)",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        ref: {
+          type: "string",
+          description: "Branch name or commit SHA to start from (default: main)",
+        },
+        limit: {
+          type: "number",
+          description: "Max commits to return (default: 20, max: 100)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "git_diff",
+    description:
+      "Compare two commits or branches. Returns list of changed files with additions, deletions, and patch content. Useful for reviewing changes between versions.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        base: {
+          type: "string",
+          description: "Base commit SHA or branch name to compare from",
+        },
+        head: {
+          type: "string",
+          description: "Head commit SHA or branch name to compare to (default: main)",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+      },
+      required: ["base"],
+    },
+  },
+  {
+    name: "git_blame",
+    description:
+      "Get line-by-line blame information for a file. Shows which commit last modified each line range, with author and date. Uses GitHub GraphQL API.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path within the repo",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        ref: {
+          type: "string",
+          description: "Branch name or commit SHA (default: main)",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
     name: "search_knowledge_base",
     description:
       "Search the institutional knowledge base for lessons learned, patterns, and best practices. Returns relevant KB entries filtered by tags and severity.",
@@ -828,7 +924,7 @@ const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree"];
+const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree", "read_full_file", "git_log", "git_diff", "git_blame"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 const WEB_TOOLS = ["web_fetch"];
 
@@ -988,6 +1084,18 @@ export async function dispatchTool(
       break;
     case "github_tree":
       result = await handleGithubTree(toolInput, ctx);
+      break;
+    case "read_full_file":
+      result = await handleReadFullFile(toolInput, ctx);
+      break;
+    case "git_log":
+      result = await handleGitLog(toolInput, ctx);
+      break;
+    case "git_diff":
+      result = await handleGitDiff(toolInput, ctx);
+      break;
+    case "git_blame":
+      result = await handleGitBlame(toolInput, ctx);
       break;
     case "search_knowledge_base":
       result = await handleSearchKnowledgeBase(toolInput, ctx);

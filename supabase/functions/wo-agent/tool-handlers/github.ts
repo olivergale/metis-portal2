@@ -997,6 +997,307 @@ export async function handleGithubPushFiles(
   }
 }
 
+/**
+ * WO-0564: Read full file content using Git Data API (no 10k truncation).
+ * Uses /git/trees to find blob SHA, then /git/blobs/:sha for full base64 content.
+ * Supports files up to 100MB (GitHub blob API limit).
+ */
+export async function handleReadFullFile(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, ref: inputRef } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!path) {
+    return { success: false, error: "Missing required parameter: path" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = inputRef || "main";
+    const hdrs = githubHeaders(token);
+
+    // Step 1: Get the tree SHA for the branch
+    const refResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/ref/heads/${ref}`,
+      { headers: hdrs }
+    );
+    if (!refResp.ok) {
+      return { success: false, error: `Cannot find branch '${ref}': ${refResp.status}` };
+    }
+    const commitSha = (await refResp.json()).object.sha;
+
+    // Step 2: Get recursive tree to find the blob SHA for the target path
+    const treeResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/trees/${commitSha}?recursive=1`,
+      { headers: hdrs }
+    );
+    if (!treeResp.ok) {
+      return { success: false, error: `Cannot get tree: ${treeResp.status}` };
+    }
+    const treeData = await treeResp.json();
+    const entry = (treeData.tree || []).find((item: any) => item.path === path && item.type === "blob");
+    if (!entry) {
+      return { success: false, error: `File not found in tree: ${path} (branch: ${ref})` };
+    }
+
+    // Step 3: Get blob content via Git Data API (full content, no truncation)
+    const blobResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/blobs/${entry.sha}`,
+      { headers: hdrs }
+    );
+    if (!blobResp.ok) {
+      return { success: false, error: `Cannot get blob: ${blobResp.status}` };
+    }
+    const blobData = await blobResp.json();
+
+    // Decode base64 content
+    const content = atob(blobData.content.replace(/\n/g, ""));
+    const lines = content.split("\n");
+
+    return {
+      success: true,
+      data: {
+        content,
+        path,
+        repo,
+        branch: ref,
+        sha: entry.sha,
+        size: blobData.size,
+        line_count: lines.length,
+        char_count: content.length,
+        encoding: blobData.encoding,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `read_full_file exception: ${e.message}` };
+  }
+}
+
+/**
+ * WO-0566: Get commit history for a file or repo using GitHub Commits API.
+ */
+export async function handleGitLog(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, ref: inputRef, limit } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const params = new URLSearchParams();
+    params.set("per_page", String(Math.min(limit || 20, 100)));
+    if (inputRef) params.set("sha", inputRef);
+    if (path) params.set("path", path);
+
+    const resp = await fetch(
+      `${GITHUB_API}/repos/${repo}/commits?${params.toString()}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub Commits API error ${resp.status}: ${errText}` };
+    }
+
+    const commits = await resp.json();
+    const results = commits.map((c: any) => ({
+      sha: c.sha,
+      message: c.commit.message,
+      author: c.commit.author?.name || c.author?.login || "unknown",
+      date: c.commit.author?.date,
+      url: c.html_url,
+    }));
+
+    return {
+      success: true,
+      data: {
+        commits: results,
+        count: results.length,
+        path: path || "(all files)",
+        repo,
+        ref: inputRef || "main",
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `git_log exception: ${e.message}` };
+  }
+}
+
+/**
+ * WO-0566: Compare two commits/branches using GitHub Compare API.
+ */
+export async function handleGitDiff(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { base, head } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!base) {
+    return { success: false, error: "Missing required parameter: base (commit SHA or branch name)" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const headRef = head || "main";
+    const resp = await fetch(
+      `${GITHUB_API}/repos/${repo}/compare/${base}...${headRef}`,
+      { headers: githubHeaders(token) }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub Compare API error ${resp.status}: ${errText}` };
+    }
+
+    const data = await resp.json();
+    const files = (data.files || []).map((f: any) => ({
+      filename: f.filename,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      changes: f.changes,
+      patch: (f.patch || "").substring(0, 5000),
+    }));
+
+    return {
+      success: true,
+      data: {
+        base,
+        head: headRef,
+        repo,
+        status: data.status,
+        ahead_by: data.ahead_by,
+        behind_by: data.behind_by,
+        total_commits: data.total_commits,
+        files,
+        file_count: files.length,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `git_diff exception: ${e.message}` };
+  }
+}
+
+/**
+ * WO-0566: Get line-level blame using GitHub REST API.
+ * Note: GitHub REST doesn't have a direct blame endpoint, but we can get
+ * commit history per line range via the commits API. For full blame,
+ * we use the community endpoint that returns blame data.
+ */
+export async function handleGitBlame(
+  input: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const { path, ref: inputRef } = input;
+  const repo = input.repo || "olivergale/metis-portal2";
+
+  if (!path) {
+    return { success: false, error: "Missing required parameter: path" };
+  }
+
+  const token = ctx.githubToken || (await getGitHubToken(ctx.supabase));
+  if (!token) {
+    return { success: false, error: "GitHub token not available" };
+  }
+
+  try {
+    const ref = inputRef || "main";
+
+    // Use GitHub GraphQL API for blame data
+    const query = `
+      query($owner: String!, $name: String!, $ref: String!, $path: String!) {
+        repository(owner: $owner, name: $name) {
+          object(expression: $ref) {
+            ... on Commit {
+              blame(path: $path) {
+                ranges {
+                  startingLine
+                  endingLine
+                  commit {
+                    oid
+                    message
+                    author {
+                      name
+                      date
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const [owner, name] = repo.split("/");
+    const resp = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": USER_AGENT,
+      },
+      body: JSON.stringify({
+        query,
+        variables: { owner, name, ref, path },
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return { success: false, error: `GitHub GraphQL API error ${resp.status}: ${errText}` };
+    }
+
+    const gqlData = await resp.json();
+    if (gqlData.errors) {
+      return { success: false, error: `GraphQL errors: ${JSON.stringify(gqlData.errors)}` };
+    }
+
+    const blame = gqlData.data?.repository?.object?.blame;
+    if (!blame) {
+      return { success: false, error: `No blame data found for ${path} at ${ref}` };
+    }
+
+    const ranges = (blame.ranges || []).map((r: any) => ({
+      startLine: r.startingLine,
+      endLine: r.endingLine,
+      commit_sha: r.commit.oid.substring(0, 10),
+      commit_message: r.commit.message.split("\n")[0].substring(0, 80),
+      author: r.commit.author?.name || "unknown",
+      date: r.commit.author?.date,
+    }));
+
+    return {
+      success: true,
+      data: {
+        path,
+        repo,
+        ref,
+        ranges,
+        range_count: ranges.length,
+      },
+    };
+  } catch (e: any) {
+    return { success: false, error: `git_blame exception: ${e.message}` };
+  }
+}
+
 export async function handleGithubTree(
   input: Record<string, any>,
   ctx: ToolContext
