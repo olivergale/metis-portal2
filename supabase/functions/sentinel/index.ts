@@ -260,10 +260,29 @@ async function detectStuckWOs(supabase: any) {
     .eq("status", "in_progress")
     .lt("started_at", thirtyMinAgo);
 
-  if (!candidates || candidates.length === 0) return [];
+  // WO-0552: Also check for WOs stuck in blocked_on_input beyond expiry
+  const { data: blockedCandidates } = await supabase
+    .from("work_orders")
+    .select(`
+      id, slug, status, started_at, updated_at,
+      clarification_requests!inner(
+        id, status, expires_at
+      )
+    `)
+    .eq("status", "blocked_on_input")
+    .eq("clarification_requests.status", "pending")
+    .lt("clarification_requests.expires_at", new Date().toISOString());
+
+  const allCandidates = [...(candidates || []), ...(blockedCandidates || [])];
+  if (allCandidates.length === 0) return [];
 
   const stuck = [];
-  for (const wo of candidates) {
+  for (const wo of allCandidates) {
+    // Skip blocked_on_input WOs unless they have expired clarifications
+    if (wo.status === "blocked_on_input") {
+      // This WO is waiting for human input, not stuck
+      continue;
+    }
     const { data: logs } = await supabase
       .from("work_order_execution_log")
       .select("created_at")
