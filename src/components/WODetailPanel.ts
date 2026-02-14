@@ -1,5 +1,6 @@
 import { apiFetch, escapeHtml, relativeTime } from '../utils/api';
 import type { WorkOrder, ExecutionLogEntry, QAFinding } from '../types';
+import { renderActionButtons } from './WOActions';
 
 /**
  * Render WO Detail Panel — slide-out panel showing full execution trail,
@@ -37,6 +38,12 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
   // Content
   const content = document.createElement('div');
   content.className = 'wo-detail-content';
+
+  // Action buttons
+  const actionButtons = renderActionButtons(wo);
+  if (actionButtons) {
+    content.appendChild(actionButtons);
+  }
 
   // Clarification Banner (if blocked_on_input)
   if (wo.status === 'blocked_on_input') {
