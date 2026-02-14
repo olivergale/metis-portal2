@@ -85,7 +85,14 @@ export function anthropicMessagesToOpenAI(
             openAIMessages.push({
               role: "tool",
               tool_call_id: block.tool_use_id,
-              content: block.content,
+              content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+            });
+          }
+          // Also emit any text blocks as a user message (e.g. error guidance)
+          if (textBlocks.length > 0) {
+            openAIMessages.push({
+              role: "user",
+              content: textBlocks.map((b: any) => b.text).join("\n"),
             });
           }
         } else {

@@ -1,4 +1,5 @@
-// wo-agent/agent-loop.ts v10
+// wo-agent/agent-loop.ts v11
+// WO-0551: Dual-provider support -- Anthropic SDK for claude models, OpenRouter for all others (MiniMax, DeepSeek, etc.)
 // WO-0474: Fix catch block bypassing stall detection  -- API error counter + emergency trim + non-retryable fail-fast
 // WO-0477: Remove budget system, wall-clock only, non-productive recursion detection
 // WO-0387: Accomplishments metadata in toolCalls + checkpoint detail for richer continuations
@@ -8,10 +9,11 @@
 // WO-0167: Message history summarization replaces blind truncation
 // WO-0166: Role-based tool filtering per agent identity
 // Core agentic tool-use loop for work order execution
-// Calls Anthropic API iteratively, dispatching tool calls until completion
+// Dual-provider: Anthropic SDK for claude-* models, OpenRouter (OpenAI-compatible) for everything else
 
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
+import { anthropicToolsToOpenAI, anthropicMessagesToOpenAI, openAIResponseToAnthropic } from "./format-converters.ts";
 
 const TIMEOUT_MS = 380_000; // 380s  -- 20s buffer before 400s Supabase Pro wall clock limit (waitUntil mode)
 const CHECKPOINT_MS = 350_000; // 350s  -- checkpoint before timeout to enable continuation
@@ -35,6 +37,67 @@ const ERROR_RECOVERY_GUIDANCE: Record<string, string> = {
   github_match_failure: 'The old_string was not found in the file. Use github_read_file to see current file contents before editing.',
   unknown: 'Previous approach failed. Try a fundamentally different strategy.',
 };
+
+// WO-0551: Provider detection -- route claude models to Anthropic SDK, everything else to OpenRouter
+function isAnthropicModel(model: string): boolean {
+  return model.startsWith('claude-') || model.startsWith('anthropic/');
+}
+
+// WO-0551: Call OpenRouter with OpenAI-compatible format, return Anthropic-format response
+async function callOpenRouter(
+  model: string,
+  systemPrompt: string,
+  messages: Array<{ role: string; content: any }>,
+  tools: any[],
+  ctx: ToolContext,
+): Promise<any> {
+  const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!openrouterKey) throw new Error("OPENROUTER_API_KEY not set");
+
+  // Convert to OpenAI format
+  const openAIMessages = anthropicMessagesToOpenAI(messages, systemPrompt);
+  const openAITools = anthropicToolsToOpenAI(tools);
+
+  const requestBody: any = {
+    model,
+    messages: openAIMessages,
+    max_tokens: 4096,
+  };
+  if (openAITools.length > 0) requestBody.tools = openAITools;
+
+  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${openrouterKey}`,
+      "HTTP-Referer": "https://metis-portal2.vercel.app",
+      "X-Title": "ENDGAME-001 wo-agent",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!resp.ok) {
+    const errBody = await resp.text();
+    throw new Error(`OpenRouter ${resp.status}: ${errBody.slice(0, 500)}`);
+  }
+
+  const openAIResponse = await resp.json();
+
+  // Log usage to llm_usage if possible
+  try {
+    await ctx.supabase.from("llm_usage").insert({
+      model_id: model,
+      input_tokens: openAIResponse.usage?.prompt_tokens || 0,
+      output_tokens: openAIResponse.usage?.completion_tokens || 0,
+      work_order_id: ctx.workOrderId,
+      openrouter_id: openAIResponse.id || null,
+      success: true,
+    });
+  } catch { /* non-critical */ }
+
+  // Convert back to Anthropic format for rest of agent loop
+  return openAIResponseToAnthropic(openAIResponse);
+}
 
 // v9: Budget/velocity system removed. Wall-clock timeout + stall detection only.
 
@@ -186,21 +249,27 @@ export async function runAgentLoop(
   let lastErrorClass: string | null = null;
   let lastErrorObject: string | null = null;
 
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) {
-    return {
-      status: "failed",
-      turns: 0,
-      summary: "ANTHROPIC_API_KEY not set",
-      toolCalls: [],
-    };
-  }
-
-  const client = new Anthropic({ apiKey });
   const startTime = Date.now();
   const toolCalls: AgentLoopResult["toolCalls"] = [];
   // WO-0401: Config-driven model  -- profile > WO override > default
   const resolvedModel = model || DEFAULT_MODEL;
+  const useAnthropic = isAnthropicModel(resolvedModel);
+
+  // WO-0551: Validate required API key based on provider
+  if (useAnthropic) {
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      return { status: "failed", turns: 0, summary: "ANTHROPIC_API_KEY not set", toolCalls: [] };
+    }
+  } else {
+    const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
+    if (!openrouterKey) {
+      return { status: "failed", turns: 0, summary: "OPENROUTER_API_KEY not set", toolCalls: [] };
+    }
+  }
+
+  // Only create Anthropic client if using Anthropic models
+  const client = useAnthropic ? new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! }) : null;
 
   // WO-0166: Filter tools based on WO tags AND agent role (tools_allowed)
   const tools = await getToolsForWO(tags || [], ctx.supabase, ctx.agentName);
@@ -391,19 +460,26 @@ export async function runAgentLoop(
     console.log(`[WO-AGENT] Turn ${turn} for ${ctx.workOrderSlug} (msgs: ${messages.length}, elapsed: ${Math.round((Date.now() - startTime) / 1000)}s/${Math.round(TIMEOUT_MS / 1000)}s)`);
 
     try {
-      const response = await client.messages.create({
-        model: resolvedModel,
-        max_tokens: 4096,
-        system: [
-          {
-            type: "text" as const,
-            text: systemPrompt,
-            cache_control: { type: "ephemeral" as const },
-          },
-        ],
-        tools,
-        messages,
-      });
+      // WO-0551: Dual-provider API call
+      let response: any;
+      if (useAnthropic && client) {
+        response = await client.messages.create({
+          model: resolvedModel,
+          max_tokens: 4096,
+          system: [
+            {
+              type: "text" as const,
+              text: systemPrompt,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ],
+          tools,
+          messages,
+        });
+      } else {
+        // OpenRouter path -- converts to OpenAI format, calls API, converts response back
+        response = await callOpenRouter(resolvedModel, systemPrompt, messages, tools, ctx);
+      }
 
       // Successful API call  -- reset error counter
       consecutiveApiErrors = 0;
@@ -415,9 +491,9 @@ export async function runAgentLoop(
       if (response.stop_reason === "end_turn") {
         // Model wants to stop without calling a tool
         // Extract text content
-        const textContent = response.content
-          .filter((b): b is Anthropic.TextBlock => b.type === "text")
-          .map((b) => b.text)
+        const textContent = (response.content || [])
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
           .join("\n");
 
         // WO-0508 Fix #2: Check if work appears complete based on tool call history
@@ -441,15 +517,15 @@ export async function runAgentLoop(
 
       if (response.stop_reason === "tool_use") {
         // Process tool calls
-        const toolBlocks = response.content.filter(
-          (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+        const toolBlocks = (response.content || []).filter(
+          (b: any) => b.type === "tool_use"
         );
 
         // Add assistant message to conversation
         messages.push({ role: "assistant", content: response.content });
 
         // Execute each tool and collect results
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: any[] = [];
         let terminalReached = false;
 
         for (const toolBlock of toolBlocks) {
@@ -656,19 +732,19 @@ export async function runAgentLoop(
 async function logTurn(
   ctx: ToolContext,
   turn: number,
-  response: Anthropic.Message,
+  response: any, // WO-0551: Accept both Anthropic.Message and converted OpenRouter response
   turnsTrimmed = 0,
   messageCount = 0
 ): Promise<void> {
   try {
-    const textContent = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text.slice(0, 500))
+    const textContent = (response.content || [])
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => (b.text || "").slice(0, 500))
       .join(" | ");
 
-    const toolNames = response.content
-      .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
-      .map((b) => b.name);
+    const toolNames = (response.content || [])
+      .filter((b: any) => b.type === "tool_use")
+      .map((b: any) => b.name);
 
     const usage = response.usage as any;
     await ctx.supabase.from("work_order_execution_log").insert({

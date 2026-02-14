@@ -165,6 +165,14 @@ export async function buildAgentContext(
     // Profile not found, continue with defaults
   }
 
+  // WO-0551: Remediation WOs always use Opus for high-quality fixes
+  const isRemediation = (workOrder.tags || []).some((t: string) =>
+    t === 'remediation' || t === 'auto-qa-loop'
+  );
+  if (isRemediation) {
+    agentModel = "claude-opus-4-6";
+  }
+
   // Add agent-specific instructions
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
   systemPrompt += `You are executing work order **${workOrder.slug}** (${workOrder.name}).\n`;
