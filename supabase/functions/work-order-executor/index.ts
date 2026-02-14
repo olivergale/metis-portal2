@@ -1301,7 +1301,13 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         const refinement = await refineStaleness(supabase, work_order_id, freshnessCheck.stale_details);
 
         if (refinement.decision === 'deprecate') {
-          await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Auto-deprecated: ${refinement.reason}` });
+          await supabase.rpc('wo_transition', {
+            p_wo_id: work_order_id,
+            p_event: 'cancel',
+            p_payload: { summary: `Auto-deprecated: ${refinement.reason}` },
+            p_actor: 'ilmarinen',
+            p_depth: 0
+          });
           await logPhase(supabase, work_order_id, "deprecated", "ilmarinen", { reason: refinement.reason });
         } else if (refinement.decision === 'refine') {
           const { data: wo } = await supabase.from('work_orders').select('client_info').eq('id', work_order_id).single();
@@ -1356,7 +1362,13 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       let consolidated = 0;
       const errors: string[] = [];
       for (const secId of secondaryIds) {
-        const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: secId, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Consolidated into ${primary_id}: ${reason || 'Duplicate'}` });
+        const { data, error } = await supabase.rpc('wo_transition', {
+          p_wo_id: secId,
+          p_event: 'cancel',
+          p_payload: { summary: `Consolidated into ${primary_id}: ${reason || 'Duplicate'}` },
+          p_actor: 'user-portal',
+          p_depth: 0
+        });
         if (error) { errors.push(`${secId}: ${error.message}`); }
         else if (data?.error) { errors.push(`${secId}: ${data.error}`); }
         else { consolidated++; }
