@@ -38,6 +38,12 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
   const content = document.createElement('div');
   content.className = 'wo-detail-content';
 
+  // Clarification Banner (if blocked_on_input)
+  if (wo.status === 'blocked_on_input') {
+    const clarificationBanner = renderClarificationBanner(wo.id);
+    content.appendChild(clarificationBanner);
+  }
+
   // Info Section
   content.appendChild(renderInfoSection(wo));
 
