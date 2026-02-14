@@ -65,7 +65,7 @@ function handleExec(req, res) {
         if (!fs.existsSync(woPath)) {
           // Create worktree for this WO
           try {
-            execFileSync('git', ['worktree', 'add', woPath], { 
+            execFileSync('git', ['worktree', 'add', '--detach', woPath], {
               cwd: MAIN_WORKSPACE, 
               timeout: 30000 
             });
