@@ -202,7 +202,7 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
             evidence.push(`Referenced WO ${wo.slug}: status=${wo.status}, qa_checklist_items=${Array.isArray(wo.qa_checklist) ? wo.qa_checklist.length : 0}`);
             
             // If AC claims transition to specific status, verify it
-            const targetStatus = combined.match(new RegExp(`${wo.slug}.*(?:to|â|->)\\s*(\\w+)`, 'i'));
+            const targetStatus = combined.match(new RegExp(`${wo.slug}.*(?:to|Ã¢ÂÂ|->)\\s*(\\w+)`, 'i'));
             if (targetStatus && targetStatus[1]) {
               const matches = wo.status === targetStatus[1].toLowerCase();
               evidence.push(`  Status transition claim: ${matches ? 'VERIFIED' : `MISMATCH (expected ${targetStatus[1]}, got ${wo.status})`}`);
@@ -608,7 +608,7 @@ Deno.serve(async (req) => {
 
     // Default: Run LIE DETECTOR QA evaluation
     const acText = wo.acceptance_criteria || 'No acceptance criteria defined';
-    const systemEvidence = await gatherSystemStateEvidence(supabase, acText, wo.summary, wo.objective);
+    const systemEvidence = await gatherSystemStateEvidence(supabase, acText, wo.summary, wo.objective, execLog || []);
     const prompt = buildLieDetectorPrompt(wo, execLog || [], acText, systemEvidence.text, systemEvidence.github_file_evidence, mutationVerificationResults);
 
     const message = await anthropic.messages.create({
