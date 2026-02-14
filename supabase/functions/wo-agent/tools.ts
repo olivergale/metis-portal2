@@ -8,7 +8,7 @@
 // Tool definitions for the agentic work order executor
 // Each tool maps to an Anthropic tool_use schema + a dispatch handler
 
-// Tool type from Anthropic SDK — inlined to avoid deep npm sub-path import that breaks Deno edge runtime
+// Tool type from Anthropic SDK â inlined to avoid deep npm sub-path import that breaks Deno edge runtime
 type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
@@ -460,6 +460,41 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["path", "patches", "message"],
+    },
+  },
+  {
+    name: "patch_file",
+    description:
+      "Apply a simple patch to a single file using old_string/new_string parameters. This is a convenience wrapper around github_patch_file for single-replacement use cases. Fails if the old_string is not found or appears more than once.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path within the repo, e.g. src/App.ts",
+        },
+        old_string: {
+          type: "string",
+          description: "Exact string to find in the file (old content)",
+        },
+        new_string: {
+          type: "string",
+          description: "Replacement string (new content)",
+        },
+        repo: {
+          type: "string",
+          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
+        },
+        branch: {
+          type: "string",
+          description: "Branch name (default: main)",
+        },
+        commit_message: {
+          type: "string",
+          description: "Commit message",
+        },
+      },
+      required: ["path", "old_string", "new_string", "commit_message"],
     },
   },
   {
