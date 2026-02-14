@@ -46,7 +46,8 @@ export interface ToolResult {
 }
 
 /**
- * Record mutation to wo_mutations table (fire-and-forget)
+ * Record mutation to wo_mutations table with return value and retry logic
+ * WO-0628: Sequential accountability - returns {success, mutation_id}
  * WO-0485: Mutation tracking for all mutating tool operations
  */
 async function recordMutation(
@@ -58,32 +59,54 @@ async function recordMutation(
   success: boolean,
   errorMessage?: string,
   context?: Record<string, any>
-): Promise<void> {
-  try {
-    const params: any = {
-      p_work_order_id: ctx.workOrderId,
-      p_tool_name: toolName,
-      p_object_type: objectType,
-      p_object_id: objectId,
-      p_action: action,
-      p_success: success,
-      p_agent_name: ctx.agentName,
-    };
+): Promise<{ success: boolean; mutation_id: string | null }> {
+  const maxRetries = 3;
+  let lastError: string | null = null;
 
-    if (!success && errorMessage) {
-      params.p_error_class = classifyError(errorMessage);
-      params.p_error_detail = errorMessage.substring(0, 500);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const params: any = {
+        p_work_order_id: ctx.workOrderId,
+        p_tool_name: toolName,
+        p_object_type: objectType,
+        p_object_id: objectId,
+        p_action: action,
+        p_success: success,
+        p_agent_name: ctx.agentName,
+      };
+
+      if (!success && errorMessage) {
+        params.p_error_class = classifyError(errorMessage);
+        params.p_error_detail = errorMessage.substring(0, 500);
+      }
+
+      if (context) {
+        params.p_context = context;
+      }
+
+      const result = await ctx.supabase.rpc("record_mutation", params);
+      
+      if (result.error) {
+        lastError = result.error.message;
+        console.warn(`[recordMutation] Attempt ${attempt} failed: ${lastError}`);
+        if (!lastError.includes('network') && !lastError.includes('timeout') && attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+          continue;
+        }
+      } else {
+        return { success: true, mutation_id: result.data };
+      }
+    } catch (e: any) {
+      lastError = e.message;
+      console.warn(`[recordMutation] Attempt ${attempt} exception: ${lastError}`);
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+      }
     }
-
-    if (context) {
-      params.p_context = context;
-    }
-
-    await ctx.supabase.rpc("record_mutation", params);
-  } catch (e: any) {
-    // Fire-and-forget: swallow errors, log to console only
-    console.warn(`[recordMutation] Failed to record mutation: ${e.message}`);
   }
+
+  console.error(`[recordMutation] Failed after ${maxRetries} attempts: ${lastError}`);
+  return { success: false, mutation_id: null };
 }
 
 export const TOOL_DEFINITIONS: Tool[] = [
@@ -1528,7 +1551,7 @@ export async function dispatchTool(
           }
         }
 
-        // Parse test command â default to npm test
+        // Parse test command Ã¢ÂÂ default to npm test
         const testCmd = (toolInput.test_command || "npm test").trim();
         const parts = testCmd.split(/\s+/);
         const command = parts[0];
