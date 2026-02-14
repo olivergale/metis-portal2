@@ -989,6 +989,25 @@ export const TOOL_DEFINITIONS: Tool[] = [
       required: ["command", "args"],
     },
   },
+  {
+    name: "run_tests",
+    description:
+      "Run test suite via Fly Machine sandbox. Executes test command in the workspace directory with 120s timeout.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        test_command: {
+          type: "string",
+          description: "Test command to run (default: npm test)",
+        },
+        cwd: {
+          type: "string",
+          description: "Working directory for test execution (default: /workspace/{wo_slug})",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 // Tool categories for filtering
@@ -1387,6 +1406,83 @@ export async function dispatchTool(
           result = { success: false, error: "Sandbox exec timed out after 30s" };
         } else {
           result = { success: false, error: `Sandbox exec error: ${e.message}` };
+        }
+      }
+      break;
+    }
+    case "run_tests": {
+      // WO-0594 AC4: Run tests via sandbox_exec with 120s timeout
+      const testCommand = toolInput.test_command || "npm test";
+      const cwd = toolInput.cwd || `/workspace/${ctx.workOrderSlug}`;
+      
+      // Use sandbox_exec internally with longer timeout
+      const testArgs = ["npm", "test"];
+      // Extract command and args from test_command string
+      const cmdParts = testCommand.split(" ");
+      
+      try {
+        const { data: flySettings } = await ctx.supabase
+          .from("system_settings")
+          .select("setting_key, setting_value")
+          .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+        const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+        const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+        if (!flyUrl) {
+          result = { success: false, error: "Fly Machine URL not configured" };
+          break;
+        }
+
+        // Build args array for test execution
+        // Default: npm test, but support custom commands
+        const execArgs = cmdParts[0] === "npm" ? ["run", ...cmdParts.slice(1)] : cmdParts;
+        const command = cmdParts[0] === "npm" ? "npm" : cmdParts[0];
+
+        // Call Fly Machine /exec with 120s timeout for tests
+        const execCtrl = new AbortController();
+        const execTimer = setTimeout(() => execCtrl.abort(), 120000);
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (flyToken && flyToken !== "not_required_public_endpoint") {
+          headers["Authorization"] = `Bearer ${flyToken}`;
+        }
+        const response = await fetch(`${flyUrl}/exec`, {
+          method: "POST",
+          headers,
+          signal: execCtrl.signal,
+          body: JSON.stringify({
+            command,
+            args: execArgs,
+            timeout_ms: 120000,
+            wo_slug: ctx.workOrderSlug,
+            cwd,
+          }),
+        });
+        clearTimeout(execTimer);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          result = { success: false, error: `Test run failed (${response.status}): ${errorData.error || errorData.stderr || response.statusText}` };
+        } else {
+          const execResult = await response.json();
+          const success = execResult.exit_code === 0;
+          result = {
+            success,
+            output: execResult.stdout || "",
+            error: execResult.stderr || undefined,
+            data: {
+              stdout: execResult.stdout,
+              stderr: execResult.stderr,
+              exit_code: execResult.exit_code,
+              test_command: testCommand,
+              cwd,
+            },
+          };
+        }
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          result = { success: false, error: "Test execution timed out after 120s" };
+        } else {
+          result = { success: false, error: `Test run error: ${e.message}` };
         }
       }
       break;
