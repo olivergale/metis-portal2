@@ -358,14 +358,12 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       const currentTags: string[] = parentWo.tags || [];
       const escalationTags = [...new Set([...currentTags, 'escalation:ilmarinen', 'circuit-breaker-tripped'])];
 
-      const { error: escStateErr } = await supabase.rpc('update_work_order_state', {
-        p_work_order_id: parentWo.id,
-        p_status: 'failed',
-        p_approved_at: null,
-        p_approved_by: null,
-        p_started_at: null,
-        p_completed_at: new Date().toISOString(),
-        p_summary: escalationSummary
+      const { error: escStateErr } = await supabase.rpc('wo_transition', {
+        p_wo_id: parentWo.id,
+        p_event: 'mark_failed',
+        p_payload: { summary: escalationSummary },
+        p_actor: 'auto-qa-circuit-breaker',
+        p_depth: 0
       });
       if (escStateErr) {
         console.error('[REMEDIATION] Escalation state transition failed:', escStateErr);
