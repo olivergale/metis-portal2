@@ -1,6 +1,8 @@
 import { apiFetch, escapeHtml, relativeTime } from '../utils/api';
-import type { WorkOrder, ExecutionLogEntry, QAFinding } from '../types';
+import type { WorkOrder, ExecutionLogEntry, QAFinding, WOEvent } from '../types';
 import { renderActionButtons } from './WOActions';
+
+let autoRefreshInterval: number | null = null;
 
 /**
  * Render WO Detail Panel — slide-out panel showing full execution trail,
@@ -59,6 +61,16 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
   content.appendChild(execSection);
   loadExecutionLog(wo.id, execSection);
 
+  // WO Events Timeline (loaded async)
+  const eventsSection = renderSectionShell('WO Events Timeline', 'Loading...');
+  content.appendChild(eventsSection);
+  loadWOEvents(wo.id, eventsSection);
+
+  // Set up auto-refresh for in_progress WOs
+  if (wo.status === 'in_progress') {
+    setupAutoRefresh(wo.id, eventsSection);
+  }
+
   // QA Checklist
   content.appendChild(renderQAChecklist(wo.qa_checklist));
 
@@ -94,6 +106,12 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
 }
 
 function closePanel(overlay: HTMLElement, panel: HTMLElement) {
+  // Clear auto-refresh interval
+  if (autoRefreshInterval !== null) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
+
   overlay.classList.remove('open');
   panel.classList.remove('open');
   setTimeout(() => {
