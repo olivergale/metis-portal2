@@ -434,6 +434,9 @@ export async function runAgentLoop(
           accomplishments: accomplishments.length > 0 ? accomplishments : undefined,
           mutation_digest: mutationDigest,
           failed_approaches: failedApproaches.length > 0 ? failedApproaches : undefined,
+          // WO-0628: AC6 - Mutation count verification
+          mutation_verification: mutationVerificationPassed ? "passed" : "failed",
+          mutation_verification_error: mutationVerificationError,
         },
       });
 
