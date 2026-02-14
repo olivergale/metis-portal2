@@ -105,6 +105,132 @@ function renderSectionShell(title: string, placeholder: string): HTMLElement {
   return section;
 }
 
+/* ──────────── Clarification Banner ──────────── */
+
+function renderClarificationBanner(woId: string): HTMLElement {
+  const banner = document.createElement('div');
+  banner.className = 'clarification-banner';
+  banner.innerHTML = `
+    <div class="clarification-header">
+      <span class="clarification-icon">⏸️</span>
+      <span class="clarification-title">Agent Waiting for Clarification</span>
+    </div>
+    <div class="clarification-body">
+      <div class="clarification-loading">Loading clarification request...</div>
+    </div>
+  `;
+  loadClarificationRequest(woId, banner);
+  return banner;
+}
+
+async function loadClarificationRequest(woId: string, banner: HTMLElement) {
+  try {
+    const clarifications = await apiFetch<any[]>(
+      `/rest/v1/clarification_requests?work_order_id=eq.${woId}&status=eq.pending&order=created_at.desc&limit=1`
+    );
+
+    const body = banner.querySelector('.clarification-body')!;
+
+    if (!clarifications || clarifications.length === 0) {
+      body.innerHTML = '<div class="clarification-empty">No pending clarification found</div>';
+      return;
+    }
+
+    const clarification = clarifications[0];
+    const options = clarification.options ? JSON.parse(clarification.options) : null;
+    const urgency = clarification.urgency || 'normal';
+
+    body.innerHTML = `
+      <div class="clarification-question">
+        <strong>Question:</strong> ${escapeHtml(clarification.question)}
+      </div>
+      ${clarification.context ? `
+        <div class="clarification-context">
+          <strong>Context:</strong> ${escapeHtml(clarification.context)}
+        </div>
+      ` : ''}
+      <div class="clarification-urgency urgency-${urgency}">
+        Urgency: <span>${urgency.toUpperCase()}</span>
+      </div>
+      ${options && options.length > 0 ? `
+        <div class="clarification-options">
+          <strong>Suggested Options:</strong>
+          <div class="clarification-options-list">
+            ${options.map((opt: string, idx: number) => `
+              <button class="clarification-option-btn" data-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      <div class="clarification-form">
+        <label for="clarification-response">Your Response:</label>
+        <textarea 
+          id="clarification-response" 
+          class="clarification-textarea"
+          placeholder="Provide your answer or clarification..."
+          rows="4"
+        ></textarea>
+        <div class="clarification-actions">
+          <button id="submit-clarification" class="btn btn-primary">Submit Answer</button>
+        </div>
+      </div>
+    `;
+
+    // Attach handlers
+    const textarea = body.querySelector('#clarification-response') as HTMLTextAreaElement;
+    const submitBtn = body.querySelector('#submit-clarification') as HTMLButtonElement;
+
+    // Option buttons populate textarea
+    body.querySelectorAll('.clarification-option-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const option = (btn as HTMLElement).dataset.option!;
+        textarea.value = option;
+      });
+    });
+
+    // Submit handler
+    submitBtn.addEventListener('click', async () => {
+      const response = textarea.value.trim();
+      if (!response) {
+        alert('Please provide a response');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting...';
+
+      try {
+        await apiFetch('/functions/v1/answer-clarification', {
+          method: 'POST',
+          body: JSON.stringify({
+            clarification_id: clarification.id,
+            response,
+            responded_by: 'portal-user', // TODO: Get actual user ID
+          }),
+        });
+
+        body.innerHTML = `
+          <div class="clarification-success">
+            ✅ Response submitted successfully! The work order will resume execution.
+          </div>
+        `;
+
+        // Refresh the page after 2 seconds to show updated WO status
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } catch (err: any) {
+        alert(`Failed to submit response: ${err.message}`);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Answer';
+      }
+    });
+  } catch (err) {
+    const body = banner.querySelector('.clarification-body')!;
+    body.innerHTML = '<div class="clarification-empty">Failed to load clarification request</div>';
+  }
+}
+
 /* ──────────────── Info Section ──────────────── */
 
 function renderInfoSection(wo: WorkOrder): HTMLElement {
