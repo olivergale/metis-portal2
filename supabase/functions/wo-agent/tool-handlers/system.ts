@@ -144,6 +144,34 @@ export async function handleMarkComplete(
       }
     } catch { /* non-critical */ }
 
+    // WO-0389: Check for deployment_verification records when WO has deployment-related tags
+    // If the WO deployed edge functions but has no verification records, block completion
+    const DEPLOYMENT_TAGS = new Set(["edge-function", "deploy", "deployment", "supabase", "migration", "schema"]);
+    const { data: woForTags } = await ctx.supabase
+      .from("work_orders")
+      .select("tags")
+      .eq("id", ctx.workOrderId)
+      .single();
+    
+    const woTags = woForTags?.tags || [];
+    const hasDeploymentTag = woTags.some((t: string) => DEPLOYMENT_TAGS.has(t.toLowerCase()));
+    
+    if (hasDeploymentTag) {
+      // Check for deployment_verification entries in execution log
+      const { count: verifyCount } = await ctx.supabase
+        .from("work_order_execution_log")
+        .select("id", { count: "exact", head: true })
+        .eq("work_order_id", ctx.workOrderId)
+        .eq("phase", "deployment_verification");
+      
+      if ((verifyCount || 0) === 0) {
+        return {
+          success: false,
+          error: `BLOCKED: WO has deployment-related tags but no deployment_verification records. Deployments must be verified before mark_complete. Run deploy and ensure verification passes, or use transition_state to move to review manually.`,
+        };
+      }
+    }
+
     // Update the WO summary (with overlap warning if any)
     await ctx.supabase
       .from("work_orders")
