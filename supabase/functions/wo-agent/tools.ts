@@ -1278,7 +1278,7 @@ export async function dispatchTool(
     case "sandbox_exec": {
       try {
         // WO-0590: Read-only command whitelist -- block writes, pipes, redirects
-        const ALLOWED_COMMANDS = new Set(["grep", "find", "wc", "cat", "head", "tail", "echo", "test", "ls", "file", "deno", "diff", "jq"]);
+        const ALLOWED_COMMANDS = new Set(["grep", "find", "wc", "cat", "head", "tail", "echo", "test", "ls", "file", "deno", "diff", "jq", "node", "npm", "npx", "tsc", "python3", "git", "curl", "sed"]);
         const cmd = (toolInput.command || "").trim();
         if (!ALLOWED_COMMANDS.has(cmd)) {
           result = { success: false, error: `Command '${cmd}' is not in the sandbox whitelist. Allowed: ${[...ALLOWED_COMMANDS].join(", ")}` };
@@ -1291,41 +1291,82 @@ export async function dispatchTool(
           result = { success: false, error: "Sandbox args contain blocked characters (pipes, redirects, semicolons, backticks). Use separate tool calls instead." };
           break;
         }
-        const sandboxUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sandbox-exec`;
-        const response = await fetch(sandboxUrl, {
+
+        // WO-0593: Read Fly Machine URL from system_settings
+        const { data: flySettings } = await ctx.supabase
+          .from("system_settings")
+          .select("setting_key, setting_value")
+          .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+        const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+        const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+        if (!flyUrl) {
+          result = { success: false, error: "Fly Machine URL not configured in system_settings (fly_machine_url)" };
+          break;
+        }
+
+        // WO-0593: Git-pull-on-demand -- first sandbox call per WO triggers repo sync
+        // Track per-WO git pull status via a simple static Set
+        if (!(globalThis as any)._flyGitPulled) {
+          (globalThis as any)._flyGitPulled = new Set<string>();
+        }
+        const pulledSet = (globalThis as any)._flyGitPulled as Set<string>;
+        if (!pulledSet.has(ctx.workOrderId)) {
+          try {
+            const pullCtrl = new AbortController();
+            const pullTimer = setTimeout(() => pullCtrl.abort(), 60000);
+            await fetch(`${flyUrl}/git-pull`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: pullCtrl.signal,
+              body: "{}",
+            });
+            clearTimeout(pullTimer);
+            pulledSet.add(ctx.workOrderId);
+          } catch (_pullErr) {
+            // Non-fatal: git pull failure shouldn't block exec
+          }
+        }
+
+        // WO-0593: Call Fly Machine /exec endpoint
+        const execCtrl = new AbortController();
+        const execTimer = setTimeout(() => execCtrl.abort(), 30000);
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (flyToken && flyToken !== "not_required_public_endpoint") {
+          headers["Authorization"] = `Bearer ${flyToken}`;
+        }
+        const response = await fetch(`${flyUrl}/exec`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-          },
+          headers,
+          signal: execCtrl.signal,
           body: JSON.stringify({
             command: toolInput.command,
             args: toolInput.args || [],
-            files: toolInput.files,
             timeout_ms: toolInput.timeout_ms || 30000,
-            work_order_id: ctx.workOrderId,
+            wo_slug: ctx.workOrderSlug,
           }),
         });
+        clearTimeout(execTimer);
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({ error: response.statusText }));
-          result = { success: false, error: `Sandbox exec failed: ${errorData.error || response.statusText}` };
+          result = { success: false, error: `Sandbox exec failed (${response.status}): ${errorData.error || errorData.stderr || response.statusText}` };
         } else {
           const execResult = await response.json();
           const success = execResult.exit_code === 0;
           result = {
             success,
+            output: execResult.stdout || "",
+            error: execResult.stderr || undefined,
             data: {
               stdout: execResult.stdout,
               stderr: execResult.stderr,
               exit_code: execResult.exit_code,
-              timed_out: execResult.timed_out,
-              duration_ms: execResult.duration_ms,
             },
           };
         }
 
-        // Record mutation with verification_attempts tracking
+        // Record mutation
         const cmdStr = `${toolInput.command} ${(toolInput.args || []).join(" ")}`;
         await recordMutation(
           ctx,
@@ -1339,11 +1380,14 @@ export async function dispatchTool(
             command: toolInput.command,
             args: toolInput.args,
             exit_code: result.data?.exit_code,
-            verification_attempts: 1,
           }
         );
       } catch (e: any) {
-        result = { success: false, error: `Sandbox exec error: ${e.message}` };
+        if (e.name === "AbortError") {
+          result = { success: false, error: "Sandbox exec timed out after 30s" };
+        } else {
+          result = { success: false, error: `Sandbox exec error: ${e.message}` };
+        }
       }
       break;
     }
