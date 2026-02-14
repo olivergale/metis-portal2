@@ -108,34 +108,44 @@ export async function handleDeployEdgeFunction(
 
     const result = await deployResp.json();
 
-    // WO-0389: Log deployment_verification phase after successful deploy
-    // This provides evidence that the function was actually deployed
+    // WO-0389: Verify the deployed function is reachable via smoke test
     let verificationPassed = false;
     let verificationDetail = "";
-    
+
     try {
-      // Call the deployed function's status endpoint to verify it's running
-      const funcUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/${function_name}`;
-      const verifyResp = await fetch(`${funcUrl}/health-check`, {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      const funcUrl = `${supabaseUrl}/functions/v1/${function_name}`;
+
+      // Smoke test: POST with auth header (edge functions require anon key)
+      const verifyCtrl = new AbortController();
+      const verifyTimer = setTimeout(() => verifyCtrl.abort(), 10000);
+      const verifyResp = await fetch(funcUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Add a short timeout to not block deployment
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${anonKey}`,
+        },
+        signal: verifyCtrl.signal,
+        body: JSON.stringify({ health_check: true }),
       }).catch(() => null);
-      
-      // Also try the main endpoint with a GET
-      if (!verifyResp?.ok) {
-        const testResp = await fetch(funcUrl, { method: "GET" }).catch(() => null);
-        verificationPassed = testResp?.ok || false;
-        verificationDetail = testResp 
-          ? `HTTP ${testResp.status}: ${testResp.statusText}` 
-          : "Could not reach function endpoint";
+      clearTimeout(verifyTimer);
+
+      if (verifyResp) {
+        // Any response (even 400/422) means the function is deployed and reachable
+        // Only 502/503/504 or no response means it's not running
+        const status = verifyResp.status;
+        if (status < 500) {
+          verificationPassed = true;
+          verificationDetail = `Function reachable: HTTP ${status}`;
+        } else {
+          verificationDetail = `Function returned server error: HTTP ${status}`;
+        }
       } else {
-        verificationPassed = true;
-        verificationDetail = "Function responded OK";
+        verificationDetail = "Could not reach function endpoint (timeout or network error)";
       }
     } catch (verifyErr: any) {
       verificationDetail = `Verification check failed: ${verifyErr.message}`;
-      // Don't fail the deploy, just note the verification issue
     }
 
     // Log deployment with verification info
