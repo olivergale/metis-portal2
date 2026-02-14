@@ -191,26 +191,15 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review -- non-master agents use enforcement RPC, master uses bypass
-    const MASTER = new Set(["ilmarinen"]);
-    if (MASTER.has(ctx.agentName)) {
-      await ctx.supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'review' WHERE id = '${ctx.workOrderId}' AND status = 'in_progress';`,
-      });
-    } else {
-      // WO-0236: Correct 7-param RPC signature
-      const { error: rpcErr } = await ctx.supabase.rpc("update_work_order_state", {
-        p_work_order_id: ctx.workOrderId,
-        p_status: "review",
-        p_approved_at: null,
-        p_approved_by: null,
-        p_started_at: null,
-        p_completed_at: null,
-        p_summary: summary + overlapWarning,
-      });
-      if (rpcErr) {
-        return { success: false, error: `mark_complete state transition failed: ${rpcErr.message}` };
-      }
+    // Transition to review using wo_transition (handles all enforcement uniformly)
+    const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
+      p_work_order_id: ctx.workOrderId,
+      p_event: "submit_for_review",
+      p_actor: ctx.agentName,
+      p_payload: { summary: summary + overlapWarning },
+    });
+    if (rpcErr) {
+      return { success: false, error: `mark_complete state transition failed: ${rpcErr.message}` };
     }
 
     // Check if this is a remediation WO -- propagate evidence to parent
