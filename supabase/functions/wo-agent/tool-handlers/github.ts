@@ -1225,6 +1225,75 @@ export async function handleGithubPushFiles(
       return { success: false, error: `Failed to update ref: ${updateRefResp.status} ${errText}` };
     }
 
+    // WO-0594 AC1+AC2: Verify pushed files via sandbox_exec
+    const verificationResults: Array<{path: string; verified: boolean; actualBytes: number; expectedBytes: number; error?: string}> = [];
+    for (const file of files) {
+      if (!file.path) continue;
+      
+      // Get expected byte count from content/patches
+      let expectedBytes = 0;
+      if (file.content) {
+        expectedBytes = new TextEncoder().encode(file.content).length;
+      } else if (file.patches) {
+        // For patches, we can't easily calculate expected bytes - skip verification
+        continue;
+      }
+
+      // Call sandbox_exec to verify byte count
+      const verification = await verifyPushedFile(ctx, file.path, expectedBytes);
+      verificationResults.push({
+        path: file.path,
+        verified: verification.verified,
+        actualBytes: verification.actualBytes,
+        expectedBytes,
+        error: verification.error,
+      });
+
+      // Log verification result via recordMutation with verified flag
+      await recordVerification(
+        ctx.supabase,
+        ctx.workOrderId,
+        "github_push_files",
+        file.path,
+        verification.verified,
+        {
+          actual_bytes: verification.actualBytes,
+          expected_bytes: expectedBytes,
+          mismatch_percent: expectedBytes > 0 ? Math.abs(verification.actualBytes - expectedBytes) / expectedBytes * 100 : 0,
+          error: verification.error,
+        }
+      );
+
+      // AC2: Log warning if mismatch > 5%
+      const mismatchPercent = expectedBytes > 0 
+        ? Math.abs(verification.actualBytes - expectedBytes) / expectedBytes * 100 
+        : 0;
+      if (mismatchPercent > 5 && !verification.error) {
+        await ctx.supabase.from("work_order_execution_log").insert({
+          work_order_id: ctx.workOrderId,
+          phase: "stream",
+          agent_name: ctx.agentName,
+          detail: {
+            event_type: "byte_count_mismatch_warning",
+            tool_name: "github_push_files",
+            file_path: file.path,
+            actual_bytes: verification.actualBytes,
+            expected_bytes: expectedBytes,
+            mismatch_percent: mismatchPercent.toFixed(2),
+            message: `WARNING: File byte count differs by ${mismatchPercent.toFixed(1)}% from expected`,
+          },
+        });
+      }
+    }
+
+    // Build verification summary for result message
+    const verifiedCount = verificationResults.filter(v => v.verified).length;
+    const totalVerified = verificationResults.length;
+    let verificationMessage = "";
+    if (totalVerified > 0) {
+      verificationMessage = ` (verified ${verifiedCount}/${totalVerified} files)`;
+    }
+
     return {
       success: true,
       data: {
