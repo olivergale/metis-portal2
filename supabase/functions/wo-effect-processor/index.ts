@@ -1,305 +1,281 @@
-// wo-effect-processor/index.ts
-// WO-0619: Effect processor scaffold with claim_pending_events RPC integration
-//
-// Polls wo_events table, claims a batch atomically, processes each event.
-// Dispatch handlers: dispatch_execution, run_qa. Remaining handlers added in WO-0617.
+/**
+ * WO Effect Processor Edge Function
+ * 
+ * Polls wo_events table for pending events, claims a batch atomically,
+ * and processes each event by dispatching to the appropriate handler.
+ * 
+ * Event types handled:
+ * - dispatch_execution: POST to wo-agent to start work order execution
+ * - run_qa: POST to qa-review to run QA evaluation
+ * 
+ * This is a scaffold - additional handlers will be added in subsequent WOs.
+ */
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const WO_AGENT_URL = `${SUPABASE_URL}/functions/v1/wo-agent`;
-const QA_REVIEW_URL = `${SUPABASE_URL}/functions/v1/qa-review`;
-
-const MAX_RETRIES = 3;
-const MAX_DEPTH = 5;
+// Handler interfaces
+interface EventHandler {
+  (event: WoEvent): Promise<void>;
+}
 
 interface WoEvent {
   id: string;
-  work_order_id: string | null;
+  work_order_id: string;
   event_type: string;
-  previous_status: string | null;
-  new_status: string | null;
-  payload: Record<string, unknown> | null;
   actor: string;
-  depth: number | null;
-  status: string | null;
-  retry_count: number | null;
-  created_at: string;
-  processed_at: string | null;
+  depth: number;
+  payload: Record<string, unknown>;
+  previous_status?: string;
+  new_status?: string;
+  retry_count: number;
 }
 
-async function claimEvents(supabase: any, batchSize: number): Promise<WoEvent[]> {
-  const { data, error } = await supabase.rpc('claim_pending_events', {
-    p_batch_size: batchSize,
-  });
-
-  if (error) {
-    console.error('[CLAIM] RPC error:', error);
-    throw error;
-  }
-
-  console.log(`[CLAIM] Claimed ${data?.length || 0} events`);
-  return data || [];
-}
-
-async function markEventDone(supabase: any, eventId: string): Promise<void> {
-  const { error } = await supabase
+/**
+ * Default handler for unknown effect types
+ */
+async function unknownEffectHandler(event: WoEvent): Promise<void> {
+  console.log(`Unknown effect type: ${event.event_type}, marking event failed`);
+  
+  await supabase
     .from('wo_events')
-    .update({ status: 'done', processed_at: new Date().toISOString() })
-    .eq('id', eventId);
-
-  if (error) {
-    console.error(`[MARK_DONE] Failed for ${eventId}:`, error);
-  }
+    .update({
+      status: 'failed',
+      error_detail: `unknown_effect_type: ${event.event_type}`,
+      processed_at: new Date().toISOString()
+    })
+    .eq('id', event.id);
 }
 
-async function markEventFailed(
-  supabase: any,
-  eventId: string,
-  errorDetail: string,
-  retryCount: number
-): Promise<void> {
-  if (retryCount < MAX_RETRIES) {
-    // Retry: reset to pending and increment retry_count
-    const { error } = await supabase
-      .from('wo_events')
-      .update({
-        status: 'pending',
-        retry_count: retryCount + 1,
-        error_detail: errorDetail,
+/**
+ * dispatch_execution handler
+ * POST to wo-agent to start work order execution
+ */
+async function dispatchExecutionHandler(event: WoEvent): Promise<void> {
+  console.log(`dispatch_execution: Dispatching work order ${event.work_order_id}`);
+  
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/wo-agent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`
+      },
+      body: JSON.stringify({
+        work_order_id: event.work_order_id
       })
-      .eq('id', eventId);
-
-    if (error) {
-      console.error(`[MARK_RETRY] Failed for ${eventId}:`, error);
-    } else {
-      console.log(`[MARK_RETRY] Event ${eventId} queued for retry (attempt ${retryCount + 1})`);
     }
-  } else {
-    // Max retries exceeded: mark as failed
-    const { error } = await supabase
-      .from('wo_events')
-      .update({
-        status: 'failed',
-        error_detail: errorDetail,
-        processed_at: new Date().toISOString(),
+  );
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`wo-agent dispatch failed: ${response.status} - ${errorText}`);
+  }
+  
+  console.log(`dispatch_execution: Successfully dispatched ${event.work_order_id}`);
+}
+
+/**
+ * run_qa handler
+ * POST to qa-review to run QA evaluation
+ */
+async function runQaHandler(event: WoEvent): Promise<void> {
+  console.log(`run_qa: Running QA for work order ${event.work_order_id}`);
+  
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/qa-review`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`
+      },
+      body: JSON.stringify({
+        work_order_id: event.work_order_id
       })
-      .eq('id', eventId);
-
-    if (error) {
-      console.error(`[MARK_FAILED] Failed for ${eventId}:`, error);
-    } else {
-      console.log(`[MARK_FAILED] Event ${eventId} marked as failed: ${errorDetail}`);
     }
+  );
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`qa-review failed: ${response.status} - ${errorText}`);
   }
+  
+  console.log(`run_qa: Successfully triggered QA for ${event.work_order_id}`);
 }
 
-async function dispatchExecution(supabase: any, event: WoEvent): Promise<void> {
-  if (!event.work_order_id) {
-    throw new Error('dispatch_execution requires work_order_id in event');
-  }
-
-  console.log(`[DISPATCH] Executing work order: ${event.work_order_id}`);
-
-  const resp = await fetch(WO_AGENT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`,
-    },
-    body: JSON.stringify({
-      work_order_id: event.work_order_id,
-    }),
-  });
-
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    throw new Error(`dispatch_execution failed: ${errorText.slice(0, 200)}`);
-  }
-
-  const result = await resp.json();
-  console.log(`[DISPATCH] Result:`, result);
-}
-
-async function runQaReview(supabase: any, event: WoEvent): Promise<void> {
-  if (!event.work_order_id) {
-    throw new Error('run_qa requires work_order_id in event');
-  }
-
-  console.log(`[QA] Running QA review for work order: ${event.work_order_id}`);
-
-  const resp = await fetch(QA_REVIEW_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`,
-    },
-    body: JSON.stringify({
-      work_order_id: event.work_order_id,
-    }),
-  });
-
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    throw new Error(`run_qa failed: ${errorText.slice(0, 200)}`);
-  }
-
-  const result = await resp.json();
-  console.log(`[QA] Result:`, result);
-}
-
-async function handleUnknownEffectType(supabase: any, event: WoEvent): Promise<void> {
-  console.warn(`[UNKNOWN] Unknown effect_type: ${event.event_type}`);
-  throw new Error(`unknown_effect_type: ${event.event_type}`);
-}
-
-async function processEvent(supabase: any, event: WoEvent): Promise<void> {
-  console.log(`[PROCESS] Event ${event.id}: type=${event.event_type}, depth=${event.depth}, retry=${event.retry_count}`);
-
-  // Check cascade depth
-  const depth = event.depth || 0;
-  if (depth > MAX_DEPTH) {
-    console.error(`[CASCADE] Depth exceeded: ${depth} > ${MAX_DEPTH}`);
-    await markEventFailed(supabase, event.id, 'cascade_depth_exceeded', event.retry_count || 0);
-    return;
-  }
-
-  try {
-    switch (event.event_type) {
-      case 'dispatch_execution':
-        await dispatchExecution(supabase, event);
-        break;
-
-      case 'run_qa':
-        await runQaReview(supabase, event);
-        break;
-
-      default:
-        await handleUnknownEffectType(supabase, event);
-        break;
-    }
-
-    // Success: mark as done
-    await markEventDone(supabase, event.id);
-    console.log(`[PROCESS] Event ${event.id} completed successfully`);
-
-  } catch (error) {
-    const errorMessage = (error as Error).message;
-    console.error(`[PROCESS] Event ${event.id} failed:`, errorMessage);
-    await markEventFailed(supabase, event.id, errorMessage, event.retry_count || 0);
-  }
-}
-
-async function pollAndProcess(supabase: any, batchSize: number = 10): Promise<number> {
-  const events = await claimEvents(supabase, batchSize);
-
-  if (events.length === 0) {
-    console.log('[POLL] No pending events');
-    return 0;
-  }
-
-  console.log(`[POLL] Processing ${events.length} events...`);
-
-  for (const event of events) {
-    await processEvent(supabase, event);
-  }
-
-  return events.length;
-}
-
+/**
+ * Main handler - processes a batch of pending events
+ */
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-
-  const url = new URL(req.url);
-  const action = url.pathname.split('/').pop();
-
+  // Parse request body for optional batch_size
+  let batchSize = 10; // default
   try {
-    // POST /process — Poll and process a batch of events
-    if (req.method === "POST" && action === "process") {
-      const { batch_size } = await req.json().catch(() => ({}));
-      const batchSize = batch_size || 10;
-
-      console.log(`[HTTP] Processing batch (size: ${batchSize})`);
-      const processed = await pollAndProcess(supabase, batchSize);
-
+    const body = await req.json();
+    batchSize = body.batch_size || batchSize;
+  } catch {
+    // Use default if no body or parse error
+  }
+  
+  console.log(`WO Effect Processor: Processing batch of up to ${batchSize} events`);
+  
+  try {
+    // Step 1: Claim a batch of pending events atomically
+    const { data: claimedEvents, error: claimError } = await supabase.rpc(
+      'claim_pending_events',
+      { p_batch_size: batchSize }
+    );
+    
+    if (claimError) {
+      console.error('Failed to claim events:', claimError);
       return new Response(
-        JSON.stringify({
-          processed,
-          timestamp: new Date().toISOString(),
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: 'Failed to claim events', details: claimError }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
-
-    // GET /status — Get processor status
-    if (req.method === "GET" && action === "status") {
-      // Get pending count
-      const { count: pendingCount } = await supabase
-        .from('wo_events')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending');
-
-      // Get processing count
-      const { count: processingCount } = await supabase
-        .from('wo_events')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'processing');
-
-      // Get failed count
-      const { count: failedCount } = await supabase
-        .from('wo_events')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'failed');
-
+    
+    if (!claimedEvents || claimedEvents.length === 0) {
+      console.log('No pending events to process');
       return new Response(
-        JSON.stringify({
-          function: 'wo-effect-processor',
-          version: 'scaffold-v1',
-          handlers: ['dispatch_execution', 'run_qa'],
-          limits: {
-            max_retries: MAX_RETRIES,
-            max_depth: MAX_DEPTH,
-          },
-          event_counts: {
-            pending: pendingCount || 0,
-            processing: processingCount || 0,
-            failed: failedCount || 0,
-          },
-          endpoints: {
-            process: 'POST /process — Poll and process events',
-            status: 'GET /status — Get processor status',
-          },
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ processed: 0, message: 'No pending events' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
-
+    
+    console.log(`Claimed ${claimedEvents.length} events for processing`);
+    
+    // Step 2: Process each event
+    const results: Array<{ eventId: string; success: boolean; error?: string }> = [];
+    
+    for (const event of claimedEvents) {
+      const woEvent: WoEvent = {
+        id: event.id,
+        work_order_id: event.work_order_id,
+        event_type: event.event_type,
+        actor: event.actor,
+        depth: event.depth || 0,
+        payload: event.payload || {},
+        previous_status: event.previous_status,
+        new_status: event.new_status,
+        retry_count: event.retry_count || 0
+      };
+      
+      try {
+        // Cascade depth check
+        if (woEvent.depth > 5) {
+          console.log(`Cascade depth exceeded for event ${woEvent.id}: depth=${woEvent.depth}`);
+          
+          await supabase
+            .from('wo_events')
+            .update({
+              status: 'failed',
+              error_detail: 'cascade_depth_exceeded',
+              processed_at: new Date().toISOString()
+            })
+            .eq('id', woEvent.id);
+          
+          results.push({ eventId: woEvent.id, success: false, error: 'cascade_depth_exceeded' });
+          continue;
+        }
+        
+        // Route to appropriate handler based on event_type
+        let handler: EventHandler;
+        
+        switch (woEvent.event_type) {
+          case 'dispatch_execution':
+            handler = dispatchExecutionHandler;
+            break;
+          case 'run_qa':
+            handler = runQaHandler;
+            break;
+          default:
+            handler = unknownEffectHandler;
+        }
+        
+        // Execute the handler
+        await handler(woEvent);
+        
+        // Mark event as done
+        await supabase
+          .from('wo_events')
+          .update({
+            status: 'done',
+            processed_at: new Date().toISOString()
+          })
+          .eq('id', woEvent.id);
+        
+        results.push({ eventId: woEvent.id, success: true });
+        console.log(`Successfully processed event ${woEvent.id} (${woEvent.event_type})`);
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Error processing event ${woEvent.id}:`, errorMessage);
+        
+        // Check retry count and decide next action
+        const newRetryCount = woEvent.retry_count + 1;
+        
+        if (newRetryCount < 3) {
+          // Retry: reset to pending and increment retry_count
+          await supabase
+            .from('wo_events')
+            .update({
+              status: 'pending',
+              retry_count: newRetryCount,
+              error_detail: null
+            })
+            .eq('id', woEvent.id);
+          
+          results.push({ 
+            eventId: woEvent.id, 
+            success: false, 
+            error: `retry: ${errorMessage}` 
+          });
+        } else {
+          // Max retries exceeded: mark as failed
+          await supabase
+            .from('wo_events')
+            .update({
+              status: 'failed',
+              error_detail: errorMessage,
+              processed_at: new Date().toISOString()
+            })
+            .eq('id', woEvent.id);
+          
+          results.push({ 
+            eventId: woEvent.id, 
+            success: false, 
+            error: `failed: ${errorMessage}` 
+          });
+        }
+      }
+    }
+    
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+    
+    console.log(`Batch complete: ${successCount} succeeded, ${failCount} failed`);
+    
     return new Response(
       JSON.stringify({
-        error: "Unknown action",
-        available: ["POST /process", "GET /status"],
+        processed: claimedEvents.length,
+        succeeded: successCount,
+        failed: failCount,
+        results
       }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
-
+    
   } catch (error) {
-    console.error('[ERROR]', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('WO Effect Processor error:', errorMessage);
+    
     return new Response(
-      JSON.stringify({ error: (error as Error).message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: 'Internal error', details: errorMessage }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 });
