@@ -318,6 +318,28 @@ export async function runAgentLoop(
       const lastActions = toolCalls.slice(-5).map(tc => `${tc.tool}(${tc.success ? 'ok' : 'err'})`).join(', ');
       const summary = `Checkpointed at ${Math.round(elapsed / 1000)}s, ${turn} turns. Last: ${lastActions}`;
 
+      // WO-0628: AC6 - Verify mutation count matches tool dispatch counter
+      const successfulMutations = toolCalls.filter(tc => tc.success && MUTATION_TOOLS.has(tc.tool)).length;
+      let mutationVerificationPassed = true;
+      let mutationVerificationError: string | null = null;
+      try {
+        const { data: mutationCount } = await ctx.supabase
+          .from("wo_mutations")
+          .select("id", { count: "exact", head: true })
+          .eq("work_order_id", ctx.workOrderId)
+          .eq("success", true);
+        
+        const dbMutationCount = mutationCount || 0;
+        if (dbMutationCount !== successfulMutations) {
+          mutationVerificationPassed = false;
+          mutationVerificationError = `Mutation count mismatch: tool_calls=${successfulMutations}, wo_mutations=${dbMutationCount}`;
+          console.warn(`[WO-AGENT] ${ctx.workOrderSlug} ${mutationVerificationError}`);
+        }
+      } catch (verifyErr: any) {
+        mutationVerificationError = `Failed to verify mutations: ${verifyErr.message}`;
+        console.error(`[WO-AGENT] ${ctx.workOrderSlug} mutation verification error:`, verifyErr.message);
+      }
+
       // Collect delegated children from tool calls in this execution
       const delegatedChildren = toolCalls
         .filter(tc => tc.tool === "delegate_subtask" && tc.success)
