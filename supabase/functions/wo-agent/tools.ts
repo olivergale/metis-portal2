@@ -787,6 +787,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 // Tool categories for filtering
 const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
+const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
 const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree"];
@@ -991,6 +992,63 @@ export async function dispatchTool(
         result = { success: false, error: `Failed to recall memories: ${recallErr.message}` };
       } else {
         result = { success: true, data: { memories: memories || [], count: (memories || []).length } };
+      }
+      break;
+    }
+    case "request_clarification": {
+      try {
+        const clarificationUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/request-clarification`;
+        const response = await fetch(clarificationUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            work_order_id: ctx.workOrderId,
+            question: toolInput.question,
+            context: toolInput.context,
+            options: toolInput.options,
+            urgency: toolInput.urgency || "normal",
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          result = { success: false, error: `Clarification request failed: ${errorData.error || response.statusText}` };
+        } else {
+          const data = await response.json();
+          // Set terminal flag to stop the agent loop
+          result = { success: true, data, terminal: true };
+        }
+      } catch (e: any) {
+        result = { success: false, error: `Failed to request clarification: ${e.message}` };
+      }
+      break;
+    }
+    case "check_clarification": {
+      try {
+        const checkUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/check-clarification`;
+        const response = await fetch(checkUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            clarification_id: toolInput.clarification_id,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          result = { success: false, error: `Check clarification failed: ${errorData.error || response.statusText}` };
+        } else {
+          const data = await response.json();
+          result = { success: true, data };
+        }
+      } catch (e: any) {
+        result = { success: false, error: `Failed to check clarification: ${e.message}` };
       }
       break;
     }
