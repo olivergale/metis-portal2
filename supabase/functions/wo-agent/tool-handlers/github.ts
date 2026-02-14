@@ -7,6 +7,116 @@ import { validateFileContent } from "./validation.ts";
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "Endgame-WO-Agent";
 
+/**
+ * WO-0594: Call Fly Machine sandbox to verify file integrity after push.
+ * Returns { verified: boolean, actualBytes: number, error?: string }
+ */
+async function verifyPushedFile(
+  ctx: ToolContext,
+  filePath: string,
+  expectedContentLength: number
+): Promise<{ verified: boolean; actualBytes: number; error?: string }> {
+  try {
+    // Read Fly Machine config from system_settings
+    const { data: flySettings } = await ctx.supabase
+      .from("system_settings")
+      .select("setting_key, setting_value")
+      .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+    
+    const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+    const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+    if (!flyUrl) {
+      return { verified: false, actualBytes: 0, error: "Fly Machine URL not configured" };
+    }
+
+    // First git-pull to ensure sandbox has latest (if not already pulled this WO)
+    if (!(globalThis as any)._flyGitPulled) {
+      (globalThis as any)._flyGitPulled = new Set<string>();
+    }
+    const pulledSet = (globalThis as any)._flyGitPulled as Set<string>;
+    if (!pulledSet.has(ctx.workOrderId)) {
+      try {
+        await fetch(`${flyUrl}/git-pull`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        pulledSet.add(ctx.workOrderId);
+      } catch { /* non-fatal */ }
+    }
+
+    // Call wc -c to get actual byte count
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (flyToken && flyToken !== "not_required_public_endpoint") {
+      headers["Authorization"] = `Bearer ${flyToken}`;
+    }
+
+    const wcResp = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "wc",
+        args: ["-c", filePath],
+        timeout_ms: 30000,
+        wo_slug: ctx.workOrderSlug,
+      }),
+    });
+
+    if (!wcResp.ok) {
+      return { verified: false, actualBytes: 0, error: `wc -c failed: ${wcResp.status}` };
+    }
+
+    const wcResult = await wcResp.json();
+    const wcOutput = (wcResult.stdout || "").trim();
+    const actualBytes = parseInt(wcOutput.split(/\s+/)[0], 10) || 0;
+
+    // Check byte count mismatch
+    const mismatchPercent = expectedContentLength > 0 
+      ? Math.abs(actualBytes - expectedContentLength) / expectedContentLength * 100 
+      : 0;
+    
+    const verified = mismatchPercent <= 5;
+    
+    return { verified, actualBytes };
+  } catch (e: any) {
+    return { verified: false, actualBytes: 0, error: e.message };
+  }
+}
+
+/**
+ * Record verification result to execution_log.
+ * WO-0594: Log verification result via recordMutation with verified=true/false
+ */
+async function logVerification(
+  ctx: ToolContext,
+  filePath: string,
+  verified: boolean,
+  actualBytes: number,
+  expectedBytes: number,
+  error?: string
+): Promise<void> {
+  try {
+    await ctx.supabase.from("work_order_execution_log").insert({
+      work_order_id: ctx.workOrderId,
+      phase: "stream",
+      agent_name: ctx.agentName,
+      detail: {
+        event_type: "file_verification",
+        tool_name: "github_push_files",
+        file_path: filePath,
+        verified,
+        actual_bytes: actualBytes,
+        expected_bytes: expectedBytes,
+        mismatch_percent: expectedBytes > 0 ? Math.abs(actualBytes - expectedBytes) / expectedBytes * 100 : 0,
+        error,
+      },
+    });
+  } catch (e: any) {
+    console.warn("[logVerification] Failed to log verification:", e.message);
+  }
+}
+
 async function getGitHubToken(supabase: any): Promise<string | null> {
   try {
     const { data, error } = await supabase
