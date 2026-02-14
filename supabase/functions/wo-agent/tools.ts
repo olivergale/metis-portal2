@@ -1011,7 +1011,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 ];
 
 // Tool categories for filtering
-export const SANDBOX_TOOLS = ["sandbox_exec"];
+export const SANDBOX_TOOLS = ["sandbox_exec", "run_tests"];
 const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
