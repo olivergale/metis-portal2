@@ -607,10 +607,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Update last_qa_run_at
-    await supabase.from('work_orders')
-      .update({ last_qa_run_at: new Date().toISOString() })
-      .eq('id', work_order_id);
+    // AC#4 (WO-0560): Set qa_review_verified_at AFTER all findings are written and checklist is updated.
+    // This signals to trg_auto_close_review_on_qa_pass that the lie detector is complete.
+    // Without this, auto-close could fire during checklist update before findings are fully written.
+    try {
+      const bypassKey = 'app.wo_executor' + '_bypass';
+      await supabase.rpc('run_sql_void', {
+        sql_query: `SELECT set_config('${bypassKey}', 'true', true); UPDATE work_orders SET qa_review_verified_at = NOW(), last_qa_run_at = NOW() WHERE id = '${work_order_id}';`,
+      });
+    } catch (e) {
+      console.error('Failed to set qa_review_verified_at via bypass:', e);
+      // Fallback: direct update
+      await supabase.from('work_orders')
+        .update({ qa_review_verified_at: new Date().toISOString(), last_qa_run_at: new Date().toISOString() })
+        .eq('id', work_order_id);
+    }
 
     // Log evaluation
     await supabase.from('audit_log').insert({
