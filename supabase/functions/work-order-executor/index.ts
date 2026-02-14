@@ -751,7 +751,13 @@ Deno.serve(async (req) => {
           try {
             const refinement = await refineStaleness(supabase, work_order_id, freshnessCheck.stale_details);
             if (refinement.decision === 'deprecate') {
-              await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'cancelled', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: `Auto-deprecated: ${refinement.reason}` });
+              await supabase.rpc('wo_transition', {
+                p_wo_id: work_order_id,
+                p_event: 'cancel',
+                p_payload: { summary: `Auto-deprecated: ${refinement.reason}` },
+                p_actor: 'ilmarinen',
+                p_depth: 0
+              });
               return new Response(JSON.stringify(buildStructuredError('ERR_WO_STALE', `Deprecated: ${refinement.reason}`, { deprecated: true })), { status: 410, headers: {...corsHeaders,"Content-Type":"application/json"} });
             }
             if (refinement.decision === 'refine') {
@@ -769,14 +775,12 @@ Deno.serve(async (req) => {
       const gateResult = await evaluateGates(supabase, work_order_id, 'work_order_execute', { priority: wo.priority });
       if (!gateResult.approved) {
         // Transition WO to pending_approval status so it's visible in portal
-        await supabase.rpc('update_work_order_state', {
-          p_work_order_id: work_order_id,
-          p_status: 'pending_approval',
-          p_approved_at: null,
-          p_approved_by: null,
-          p_started_at: null,
-          p_completed_at: null,
-          p_summary: null
+        await supabase.rpc('wo_transition', {
+          p_wo_id: work_order_id,
+          p_event: 'request_approval',
+          p_payload: { reason: 'Gate approval required before execution' },
+          p_actor: 'ilmarinen',
+          p_depth: 0
         });
 
         await logPhase(supabase, work_order_id, "gate_blocked", "ilmarinen", {
