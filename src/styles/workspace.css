@@ -265,6 +265,16 @@
   background: var(--status-blocked);
 }
 
+.card-status.blocked-on-input {
+  background: #FBBF24;
+  color: #000;
+}
+
+.card-clarification-icon {
+  font-size: 14px;
+  margin-left: 4px;
+}
+
 .card-assignee {
   color: var(--text-muted);
 }
