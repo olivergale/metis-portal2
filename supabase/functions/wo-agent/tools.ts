@@ -1122,6 +1122,88 @@ export async function dispatchTool(
       break;
     case "github_push_files":
       result = await handleGithubPushFiles(toolInput, ctx);
+      // WO-0594: Auto-verify pushed files if push succeeded
+      if (result.success && result.data?.file_paths) {
+        for (const filepath of result.data.file_paths) {
+          try {
+            // 1. Verify file exists and is readable via cat
+            const catResult = await fetch(`${flyUrl}/exec`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                command: "cat",
+                args: [filepath],
+                timeout_ms: 10000,
+                wo_slug: ctx.workOrderSlug,
+              }),
+            });
+            const catJson = await catResult.json();
+            const verified = catJson.exit_code === 0;
+            
+            // 2. Verify byte count matches expected
+            let byteCountMismatch = false;
+            if (verified && toolInput.files) {
+              const fileInput = toolInput.files.find((f: any) => f.path === filepath);
+              if (fileInput?.content) {
+                const expectedBytes = fileInput.content.length;
+                const wcResult = await fetch(`${flyUrl}/exec`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    command: "wc",
+                    args: ["-c", filepath],
+                    timeout_ms: 10000,
+                    wo_slug: ctx.workOrderSlug,
+                  }),
+                });
+                const wcJson = await wcResult.json();
+                if (wcJson.exit_code === 0 && wcJson.stdout) {
+                  const actualBytes = parseInt(wcJson.stdout.trim().split(/\s+/)[0], 10);
+                  const mismatchPct = Math.abs(actualBytes - expectedBytes) / expectedBytes * 100;
+                  if (mismatchPct > 5) {
+                    byteCountMismatch = true;
+                    // Log warning to execution_log
+                    await ctx.supabase.from("work_order_execution_log").insert({
+                      work_order_id: ctx.workOrderId,
+                      phase: "stream",
+                      agent_name: ctx.agentName,
+                      detail: {
+                        event_type: "verification_warning",
+                        tool_name: "sandbox_exec",
+                        message: `Byte count mismatch for ${filepath}: expected ${expectedBytes}, got ${actualBytes} (${mismatchPct.toFixed(1)}% diff)`,
+                      },
+                    });
+                  }
+                }
+              }
+            }
+            
+            // Log verification result via recordMutation
+            await recordMutation(
+              ctx,
+              "sandbox_exec",
+              "file_verification",
+              filepath,
+              "VERIFY",
+              verified && !byteCountMismatch,
+              byteCountMismatch ? `Byte count mismatch >5%` : undefined,
+              { verified, byteCountMismatch, filepath }
+            );
+          } catch (verifyErr: any) {
+            // Verification failed - log but don't fail the push
+            await recordMutation(
+              ctx,
+              "sandbox_exec",
+              "file_verification",
+              filepath,
+              "VERIFY",
+              false,
+              verifyErr.message,
+              { filepath, verification_error: true }
+            );
+          }
+        }
+      }
       break;
     case "deploy_edge_function":
       result = await handleDeployEdgeFunction(toolInput, ctx);
@@ -1446,7 +1528,7 @@ export async function dispatchTool(
           }
         }
 
-        // Parse test command — default to npm test
+        // Parse test command â default to npm test
         const testCmd = (toolInput.test_command || "npm test").trim();
         const parts = testCmd.split(/\s+/);
         const command = parts[0];
