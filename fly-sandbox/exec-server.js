@@ -8,7 +8,7 @@ const PORT = 8080;
 const ALLOWED_COMMANDS = new Set([
   'grep', 'find', 'wc', 'cat', 'head', 'tail', 'echo', 'test',
   'ls', 'file', 'diff', 'jq', 'node', 'npm', 'npx', 'tsc',
-  'python3', 'git', 'curl', 'sed'
+  'python3', 'git', 'curl', 'sed', 'deno'
 ]);
 
 const BLOCKED_COMMANDS = new Set([
