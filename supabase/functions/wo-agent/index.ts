@@ -462,12 +462,29 @@ async function createFailureRemediation(
       return;
     }
 
+    // Read remediation agent from system_settings (configurable, not hardcoded)
+    let remediationAgent = "builder"; // fallback default
+    try {
+      const { data: agentSetting } = await supabase
+        .from("system_settings")
+        .select("setting_value")
+        .eq("setting_key", "remediation_default_agent")
+        .single();
+      if (agentSetting?.setting_value) {
+        remediationAgent = typeof agentSetting.setting_value === "string"
+          ? agentSetting.setting_value
+          : JSON.parse(JSON.stringify(agentSetting.setting_value)).replace(/"/g, "");
+      }
+    } catch {
+      // Use fallback default
+    }
+
     try {
       await supabase.rpc("start_work_order", {
         p_work_order_id: woId,
-        p_agent_name: "builder",
+        p_agent_name: remediationAgent,
       });
-      console.log(`[WO-AGENT] Auto-started remediation WO for ${wo.slug} (attempt ${attemptNum})`);
+      console.log(`[WO-AGENT] Auto-started remediation WO for ${wo.slug} (attempt ${attemptNum}, agent=${remediationAgent})`);
     } catch (startErr: any) {
       console.error(`[WO-AGENT] Failed to auto-start remediation:`, startErr.message);
       await supabase.from("work_order_execution_log").insert({

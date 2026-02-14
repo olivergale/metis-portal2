@@ -165,13 +165,8 @@ export async function buildAgentContext(
     // Profile not found, continue with defaults
   }
 
-  // WO-0551: Remediation WOs force Opus for high-quality fixes
-  const forceOpusForRemediation = (workOrder.tags || []).some((t: string) =>
-    t === 'remediation' || t === 'auto-qa-loop'
-  );
-  if (forceOpusForRemediation) {
-    agentModel = "claude-opus-4-6";
-  }
+  // WO-0569: Remediation WOs now route to ilmarinen CLI (configurable via system_settings.remediation_default_agent)
+  // Model override removed — remediation handled by CLI session, not server-side API
 
   // Add agent-specific instructions
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
