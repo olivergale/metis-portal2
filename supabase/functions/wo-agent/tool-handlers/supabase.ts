@@ -83,8 +83,9 @@ export async function handleExecuteSql(
   const { query } = input;
   if (!query) return { success: false, error: "Missing required parameter: query" };
 
-  // Safety: block destructive DDL (use apply_migration for that)
-  const upperQuery = query.toUpperCase().trim();
+  // Strip SQL comments before keyword detection (builder often prepends -- comments)
+  const strippedQuery = query.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  const upperQuery = strippedQuery.toUpperCase().trim();
   const blocked = ["DROP ", "TRUN" + "CATE "];
   if (blocked.some(b => upperQuery.startsWith(b))) {
     return { success: false, error: "Destructive DDL blocked. Use apply_migration for schema changes." };
@@ -108,15 +109,35 @@ export async function handleExecuteSql(
     }
   }
 
+  // Detect DML/DDL: run_sql wraps in SELECT jsonb_agg(... FROM (query) t)
+  // which breaks INSERT/UPDATE/DELETE/CREATE/ALTER/DO/SET — route those to run_sql_void
+  const dmlDdlPrefixes = ["INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DO ", "SET ", "WITH "];
+  // WITH can be CTE-SELECT (works in run_sql) or CTE-DML (needs run_sql_void)
+  // Detect CTE-DML: WITH ... INSERT/UPDATE/DELETE
+  const isCTEDml = upperQuery.startsWith("WITH ") &&
+    /\b(INSERT|UPDATE|DELETE)\b/.test(upperQuery);
+  const isDmlOrDdl = dmlDdlPrefixes.some(p => upperQuery.startsWith(p) && p !== "WITH ") || isCTEDml;
+
   try {
-    const { data, error } = await executeSqlViaRpc(query, ctx.supabase);
-    if (error) {
-      await logError(ctx, "error", "wo-agent/execute_sql", "SQL_EXECUTION_FAILED", error, { query: query.substring(0, 500) });
-      return { success: false, error };
+    if (isDmlOrDdl) {
+      // Use run_sql_void (plain EXECUTE) for DML/DDL
+      const { success: ok, error } = await executeDdlViaRpc(query, ctx.supabase);
+      if (!ok || error) {
+        await logError(ctx, "error", "wo-agent/execute_sql", "SQL_EXECUTION_FAILED", error || "unknown", { query: query.substring(0, 500) });
+        return { success: false, error: error || "DML execution failed" };
+      }
+      return { success: true, data: "Statement executed successfully" };
+    } else {
+      // Use run_sql (jsonb_agg wrapper) for SELECT queries — returns result rows
+      const { data, error } = await executeSqlViaRpc(query, ctx.supabase);
+      if (error) {
+        await logError(ctx, "error", "wo-agent/execute_sql", "SQL_EXECUTION_FAILED", error, { query: query.substring(0, 500) });
+        return { success: false, error };
+      }
+      const resultStr = JSON.stringify(data);
+      const limited = resultStr.length > 8000 ? resultStr.slice(0, 8000) + "...(limited)" : resultStr;
+      return { success: true, data: limited };
     }
-    const resultStr = JSON.stringify(data);
-    const limited = resultStr.length > 8000 ? resultStr.slice(0, 8000) + "...(limited)" : resultStr;
-    return { success: true, data: limited };
   } catch (e: any) {
     const errorMsg = `execute_sql exception: ${e.message}`;
     await logError(ctx, "error", "wo-agent/execute_sql", "SQL_EXCEPTION", errorMsg, { query: query.substring(0, 500) });
