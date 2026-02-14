@@ -1,5 +1,5 @@
 // wo-agent/index.ts v6
-// WO-0387: Smart circuit breaker ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
+// WO-0387: Smart circuit breaker -- evaluate_wo_lifecycle for review-vs-fail, accomplishments in continuation
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0258: Auto-remediation on circuit breaker / timeout failures
 // v5: Resilient health-check -- consecutive detection, timeout, auto-recovery
@@ -11,7 +11,7 @@ import { buildAgentContext } from "./context.ts";
 import { runAgentLoop } from "./agent-loop.ts";
 import type { ToolContext } from "./tools.ts";
 
-// WO-0513: beforeunload safety net — log when worker is shutting down
+// WO-0513: beforeunload safety net -- log when worker is shutting down
 addEventListener('beforeunload', (ev: any) => {
   console.log(`[WO-AGENT] Worker shutting down: ${ev.detail?.reason || 'unknown'}`);
 });
@@ -244,11 +244,11 @@ async function createFailureRemediation(
         .single();
       
       if (!parentCheck || !parentCheck.parent_id) {
-        // No parent ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ this is the root
+        // No parent -- this is the root
         break;
       }
       
-      // Check if parent is terminal (done/cancelled) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ if so, current WO is the effective root
+      // Check if parent is terminal (done/cancelled) -- if so, current WO is the effective root
       const { data: parentWo } = await supabase
         .from("work_orders")
         .select("id, slug, status")
@@ -256,7 +256,7 @@ async function createFailureRemediation(
         .single();
       
       if (!parentWo || parentWo.status === "done" || parentWo.status === "cancelled") {
-        // Parent is terminal ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ current WO is the effective root
+        // Parent is terminal -- current WO is the effective root
         break;
       }
       
@@ -641,7 +641,7 @@ async function handleExecute(req: Request): Promise<Response> {
     }
 
     if ((checkpointCount || 0) >= 3) {
-      // WO-0499: Progress-based circuit breaker â mutation-delta decides continue vs stuck
+      // WO-0499: Progress-based circuit breaker  --  mutation-delta decides continue vs stuck
       const previousMutations = checkpoint?.detail?.mutation_digest?.total || null;
       const { data: cbResult, error: cbErr } = await supabase.rpc("evaluate_circuit_breaker_progress", {
         p_wo_id: wo.id,
@@ -670,10 +670,10 @@ async function handleExecute(req: Request): Promise<Response> {
       });
 
       if (decision === "continue") {
-        // AC3: New mutations detected â allow continuation regardless of checkpoint count
+        // AC3: New mutations detected  --  allow continuation regardless of checkpoint count
         // Fall through to continuation logic below
       } else {
-        // stuck or hard_cap â fail + remediation
+        // stuck or hard_cap  --  fail + remediation
         const msg = `${reason}. Marking failed.`;
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
@@ -821,7 +821,7 @@ async function handleExecute(req: Request): Promise<Response> {
 
   EdgeRuntime.waitUntil(backgroundExecution());
 
-  // Return immediately — caller (pg_net trigger) already ignores this response
+  // Return immediately -- caller (pg_net trigger) already ignores this response
   return jsonResponse({
     work_order_id: wo.id, slug: wo.slug, status: "started",
     message: "Execution started in background (400s wall clock budget)",

@@ -1,23 +1,23 @@
 // work-order-executor/index.ts v60
-// v60: WO-0234 â Fix auto-QA race: check WO status before evaluation AND before writing findings, skip gracefully if done/cancelled
-// v56: Agent rename â sentinelâqa-gate in all logging
-// v54: WO-0151 â Fix /reprioritize to include 'review' status WOs in queue evaluation (AC7 compliance)
-// v53: Add /reprioritize endpoint â dynamic queue scoring on 5 dimensions (priority, deps, freshness, lessons, complexity)
-// v52: WO-0107 â Add handler_count to /status for post-deploy smoke test validation
-// v51: WO-0110 â Enforce summary in /complete (400 if empty), add depends_on sync for remediation sub-WOs (block parent completion while children active)
-// v50: Fix auto-QA race condition â idempotency guard in createRemediationWO (skip if active remediation exists), dedup guard in /auto-qa (10s cooldown via last_qa_run_at)
-// v48: Fix remediation guard â check auto-qa-loop tag (not remediation), escalate failed sub-WOs to parent circuit breaker
-// v47: Fix auto-QA duplicate findings â resolve existing unresolved findings at start of /auto-qa (idempotent concurrent calls)
-// v46: Remediation loop â auto-QA failures create fix WOs, two-step parent re-evaluation on completion
-// v39: WO-0023 â Rewrite /rollback as read-only planner (no execution, no Management API, no git fetch)
+// v60: WO-0234  --  Fix auto-QA race: check WO status before evaluation AND before writing findings, skip gracefully if done/cancelled
+// v56: Agent rename  --  sentinel -> qa-gate in all logging
+// v54: WO-0151  --  Fix /reprioritize to include 'review' status WOs in queue evaluation (AC7 compliance)
+// v53: Add /reprioritize endpoint  --  dynamic queue scoring on 5 dimensions (priority, deps, freshness, lessons, complexity)
+// v52: WO-0107  --  Add handler_count to /status for post-deploy smoke test validation
+// v51: WO-0110  --  Enforce summary in /complete (400 if empty), add depends_on sync for remediation sub-WOs (block parent completion while children active)
+// v50: Fix auto-QA race condition  --  idempotency guard in createRemediationWO (skip if active remediation exists), dedup guard in /auto-qa (10s cooldown via last_qa_run_at)
+// v48: Fix remediation guard  --  check auto-qa-loop tag (not remediation), escalate failed sub-WOs to parent circuit breaker
+// v47: Fix auto-QA duplicate findings  --  resolve existing unresolved findings at start of /auto-qa (idempotent concurrent calls)
+// v46: Remediation loop  --  auto-QA failures create fix WOs, two-step parent re-evaluation on completion
+// v39: WO-0023  --  Rewrite /rollback as read-only planner (no execution, no Management API, no git fetch)
 // v38: Upgrade auto-qa to Sonnet + execution log evidence; restore all endpoints; fix rollback (no Deno.Command)
-// v37: Daemon deploy â rollback via audit_log + GitHub API (but dropped all other endpoints)
-// v36: Daemon deploy â rollback rewrite attempt
-// v35: Daemon deploy â rollback rewrite attempt
-// v34: WO-0019 â Implement actual /rollback execution: git checkout, deploy, smoke test, audit log, manifest update
-// v33: Fix /consolidate â add AI gap analysis mode for UI (work_order_id + duplicates) alongside legacy bulk cancel
-// v32: WO-367B574B â Add /rollback endpoint stub for git-versioned rollbacks (source control workflow)
-// v31: AC2 fix â auto-qa reads wo.summary as primary context instead of only client_info
+// v37: Daemon deploy  --  rollback via audit_log + GitHub API (but dropped all other endpoints)
+// v36: Daemon deploy  --  rollback rewrite attempt
+// v35: Daemon deploy  --  rollback rewrite attempt
+// v34: WO-0019  --  Implement actual /rollback execution: git checkout, deploy, smoke test, audit log, manifest update
+// v33: Fix /consolidate  --  add AI gap analysis mode for UI (work_order_id + duplicates) alongside legacy bulk cancel
+// v32: WO-367B574B  --  Add /rollback endpoint stub for git-versioned rollbacks (source control workflow)
+// v31: AC2 fix  --  auto-qa reads wo.summary as primary context instead of only client_info
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -295,7 +295,7 @@ async function refineStaleness(
       max_tokens: 1024,
       messages: [{
         role: "user",
-        content: `You are evaluating whether a stale work order is still valid after system changes.\n\nWORK ORDER:\nSlug: ${wo.slug}\nName: ${wo.name}\nObjective: ${wo.objective}\nTags: ${(wo.tags || []).join(', ')}\n\nCHANGES SINCE CREATION:\n${mutationContext || 'None'}\n\nCOMPLETED WORK ORDERS WITH OVERLAPPING TAGS:\n${conflictContext}\n\nCONFLICTS:\n${(staleDetails?.conflicts || []).join('\n')}\n\nDecide one of:\n1. "deprecate" â completed WOs fully cover this objective. Cancel it.\n2. "refine" â parts are covered, gaps remain. Rewrite name+objective for ONLY what's missing.\n3. "proceed" â changes don't affect this WO. Execute as-is.\n\nRespond with ONLY JSON:\n{"decision": "deprecate"|"refine"|"proceed", "refined_name": "...", "refined_objective": "...", "reason": "brief explanation"}`
+        content: `You are evaluating whether a stale work order is still valid after system changes.\n\nWORK ORDER:\nSlug: ${wo.slug}\nName: ${wo.name}\nObjective: ${wo.objective}\nTags: ${(wo.tags || []).join(', ')}\n\nCHANGES SINCE CREATION:\n${mutationContext || 'None'}\n\nCOMPLETED WORK ORDERS WITH OVERLAPPING TAGS:\n${conflictContext}\n\nCONFLICTS:\n${(staleDetails?.conflicts || []).join('\n')}\n\nDecide one of:\n1. "deprecate"  --  completed WOs fully cover this objective. Cancel it.\n2. "refine"  --  parts are covered, gaps remain. Rewrite name+objective for ONLY what's missing.\n3. "proceed"  --  changes don't affect this WO. Execute as-is.\n\nRespond with ONLY JSON:\n{"decision": "deprecate"|"refine"|"proceed", "refined_name": "...", "refined_objective": "...", "reason": "brief explanation"}`
       }],
     }),
   });
@@ -323,7 +323,7 @@ async function getGitHistory(supabase: any, functionSlug: string): Promise<any[]
   return data || [];
 }
 
-// v46: Remediation loop â create fix WO when auto-QA finds failures
+// v46: Remediation loop  --  create fix WO when auto-QA finds failures
 async function createRemediationWO(supabase: any, parentWo: { id: string; slug: string; name: string; objective?: string }, failures: any[]): Promise<{ remediation_wo_id?: string; error?: string }> {
   try {
     // Circuit breaker: check existing remediation attempts for this parent
@@ -332,12 +332,12 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       .contains('tags', ['remediation', `parent:${parentWo.slug}`])
       .limit(10);
 
-    // v50: Idempotency guard â skip if an active remediation already exists
+    // v50: Idempotency guard  --  skip if an active remediation already exists
     const activeRemediation = (existingRemediations || []).find(
       (r: any) => ['draft', 'ready', 'in_progress', 'review'].includes(r.status)
     );
     if (activeRemediation) {
-      console.log(`[REMEDIATION] Skipping â active remediation ${activeRemediation.slug} (${activeRemediation.status}) already exists for ${parentWo.slug}`);
+      console.log(`[REMEDIATION] Skipping  --  active remediation ${activeRemediation.slug} (${activeRemediation.status}) already exists for ${parentWo.slug}`);
       return { remediation_wo_id: activeRemediation.id };
     }
 
@@ -345,7 +345,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
     const MAX_ATTEMPTS = 3;
 
     if (attempts >= MAX_ATTEMPTS) {
-      console.log(`[REMEDIATION] Circuit breaker: ${attempts}/${MAX_ATTEMPTS} for ${parentWo.slug} â escalating`);
+      console.log(`[REMEDIATION] Circuit breaker: ${attempts}/${MAX_ATTEMPTS} for ${parentWo.slug}  --  escalating`);
 
       // Escalation: tag the WO for manual/ilmarinen pickup instead of just failing
       const failuresList = failures.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
@@ -379,11 +379,11 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
         actor_id: 'auto-qa-circuit-breaker',
         target_type: 'work_order',
         target_id: parentWo.id,
-        action: `Circuit breaker tripped for ${parentWo.slug} â escalated to ilmarinen`,
+        action: `Circuit breaker tripped for ${parentWo.slug}  --  escalated to ilmarinen`,
         payload: { attempts, max_attempts: MAX_ATTEMPTS, failures: failures.slice(0, 5), parent_slug: parentWo.slug }
       });
 
-      return { error: `Circuit breaker: ${MAX_ATTEMPTS} attempts exhausted â escalated to ilmarinen` };
+      return { error: `Circuit breaker: ${MAX_ATTEMPTS} attempts exhausted  --  escalated to ilmarinen` };
     }
 
     const attemptNum = attempts + 1;
@@ -420,15 +420,15 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
 
     if (hasEvidenceGaps && hasActualBugs) {
       objectiveText += `**MIXED FAILURE TYPES DETECTED:**\n\n`;
-      objectiveText += `Evidence Gaps (${evidenceGaps.length}) â Work may have been done but not logged:\n`;
+      objectiveText += `Evidence Gaps (${evidenceGaps.length})  --  Work may have been done but not logged:\n`;
       objectiveText += evidenceGaps.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
-      objectiveText += `\n\nActual Bugs (${actualBugs.length}) â Work not completed or incorrect:\n`;
+      objectiveText += `\n\nActual Bugs (${actualBugs.length})  --  Work not completed or incorrect:\n`;
       objectiveText += actualBugs.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
       objectiveText += `\n\n**REMEDIATION STRATEGY:**\n`;
       objectiveText += `1. For evidence gaps: Use resolve_qa_findings tool to clear false negatives, then update_qa_checklist tool to mark items as pass\n`;
       objectiveText += `2. For actual bugs: Complete the missing work using execute_sql/apply_migration, then log tool evidence\n`;
     } else if (hasEvidenceGaps) {
-      objectiveText += `**EVIDENCE GAP DETECTED (${evidenceGaps.length} failures)** â Work may have been completed but tool evidence is missing:\n\n`;
+      objectiveText += `**EVIDENCE GAP DETECTED (${evidenceGaps.length} failures)**  --  Work may have been completed but tool evidence is missing:\n\n`;
       objectiveText += evidenceGaps.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
       objectiveText += `\n\n**REMEDIATION STRATEGY:**\n`;
       objectiveText += `This is likely a false negative. Review the parent WO's execution log and summary. If work was actually completed:\n`;
@@ -436,7 +436,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       objectiveText += `2. Use update_qa_checklist tool (pass parent work_order_id, checklist_item_id, status='pass', evidence_summary) to update checklist\n`;
       objectiveText += `3. If work is genuinely missing, complete it using execute_sql/apply_migration\n`;
     } else {
-      objectiveText += `**ACTUAL BUGS (${actualBugs.length} failures)** â Work not completed or incorrect:\n\n`;
+      objectiveText += `**ACTUAL BUGS (${actualBugs.length} failures)**  --  Work not completed or incorrect:\n\n`;
       objectiveText += actualBugs.map((f: any) => `- ${f.id}: ${f.reason}`).join('\n');
       objectiveText += `\n\n**REMEDIATION STRATEGY:**\n`;
       objectiveText += `Complete the missing work. Ensure tool evidence (Edit/Write/Bash/deploy tools) is generated.\n`;
@@ -445,7 +445,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
     objectiveText += `\n\nParent WO objective: ${(parentWo.objective || '').slice(0, 1000)}`;
 
     // v61: Pass ALL 9 params explicitly to avoid PostgREST schema cache resolution issues
-    // (WO-0270 dropped the 7-param overload â PostgREST cache miss caused silent failures)
+    // (WO-0270 dropped the 7-param overload  --  PostgREST cache miss caused silent failures)
     const acText = hasEvidenceGaps
       ? `1. Use resolve_qa_findings tool to resolve false-negative findings on parent WO\n2. Use update_qa_checklist tool to mark parent checklist items as pass with evidence\n3. Verify parent WO ${parentWo.slug} QA gate is clear`
       : `1. Complete all missing work with tool evidence (execute_sql, apply_migration)\n2. Log progress with log_progress tool\n3. Verify parent WO ${parentWo.slug} passes auto-QA`;
@@ -476,7 +476,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       return { error: createError.message };
     }
 
-    // create_draft_work_order returns { id, name, slug, status } â extract UUID
+    // create_draft_work_order returns { id, name, slug, status }  --  extract UUID
     const woId = typeof newWoId === 'string' ? newWoId : newWoId?.id;
     const woSlug = typeof newWoId === 'object' ? newWoId?.slug : null;
 
@@ -504,7 +504,7 @@ async function createRemediationWO(supabase: any, parentWo: { id: string; slug: 
       console.error('[REMEDIATION] Failed to set depends_on:', depErr);
     }
 
-    // Auto-start: triggers handle draftâreadyâin_progress automatically.
+    // Auto-start: triggers handle draft -> ready -> in_progress automatically.
     // Only call start_work_order if WO is still in draft/ready (trigger may have already started it).
     try {
       const { data: woCheck } = await supabase.from('work_orders').select('status').eq('id', woId).single();
@@ -557,7 +557,7 @@ async function handleRemediationCompletion(supabase: any, wo: { id?: string; slu
       }
 
       if (parentWo.status === 'review') {
-        // Two-step: review â in_progress â review triggers trg_auto_run_qa_evaluation
+        // Two-step: review  ->  in_progress  ->  review triggers trg_auto_run_qa_evaluation
         await supabase.rpc('update_work_order_state', {
           p_work_order_id: parentWo.id,
           p_status: 'in_progress',
@@ -662,9 +662,9 @@ Deno.serve(async (req) => {
 
       await logPhase(supabase, work_order_id, "approved", "user-portal", { approved_by });
 
-      // WO-0240: Atomic approve-and-start â immediately transition readyâin_progress
+      // WO-0240: Atomic approve-and-start  --  immediately transition ready -> in_progress
       // Determine agent name for start_work_order
-      let agentNameForStart = 'builder'; // default â server-side execution
+      let agentNameForStart = 'builder'; // default  --  server-side execution
       if (wo.assigned_to) {
         const { data: agentData } = await supabase.from('agents').select('name').eq('id', wo.assigned_to).single();
         if (agentData?.name) agentNameForStart = agentData.name;
@@ -676,7 +676,7 @@ Deno.serve(async (req) => {
         });
         if (startError) {
           console.error('[APPROVE] Auto-start failed:', startError.message);
-          // Approval succeeded but start failed â return approval success with warning
+          // Approval succeeded but start failed  --  return approval success with warning
           return new Response(JSON.stringify({ approved: true, started: false, start_error: startError.message, work_order: data, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
         }
         return new Response(JSON.stringify({ approved: true, started: true, work_order: startResult, approved_at: new Date().toISOString() }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -702,7 +702,7 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify(err), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      // WO-0155: Guard against orphaned remediation WOs â if parent is already done, auto-complete
+      // WO-0155: Guard against orphaned remediation WOs  --  if parent is already done, auto-complete
       const tags: string[] = wo?.tags || [];
       if (tags.includes("remediation")) {
         const parentTag = tags.find((t: string) => t.startsWith("parent:"));
@@ -715,7 +715,7 @@ Deno.serve(async (req) => {
             .single();
 
           if (parentWo && parentWo.status === "done") {
-            const msg = `Parent ${parentSlug} already completed â remediation unnecessary`;
+            const msg = `Parent ${parentSlug} already completed  --  remediation unnecessary`;
             console.log(`[CLAIM] ${wo.slug}: ${msg}`);
 
             // Auto-complete the remediation WO immediately
@@ -900,7 +900,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ accepted: true, work_order: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /auto-qa â Automated QA evaluation using Sonnet + execution log evidence ===
+    // === POST /auto-qa  --  Automated QA evaluation using Sonnet + execution log evidence ===
     // v38: Upgraded from Haiku to Sonnet, added execution log context for evidence-based evaluation
     if (req.method === "POST" && action === "auto-qa") {
       const { work_order_id, execution_output } = body;
@@ -911,7 +911,7 @@ Deno.serve(async (req) => {
         .eq("id", work_order_id).single();
       if (woError || !wo) return new Response(JSON.stringify(buildStructuredError('ERR_WO_NOT_FOUND', 'Work order not found')), { status: 404, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
-      // v60: AC1 â Skip gracefully if WO already done/cancelled (race condition fix for WO-0234)
+      // v60: AC1  --  Skip gracefully if WO already done/cancelled (race condition fix for WO-0234)
       if (wo.status === 'done' || wo.status === 'cancelled') {
         await logPhase(supabase, work_order_id, "auto-qa-skipped", "qa-gate", {
           reason: 'stale_evaluation',
@@ -926,13 +926,13 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_INVALID_STATUS', `Not in review (current: ${wo.status})`), all_pass: false, accepted: false }), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      // v50: Dedup guard â prevent concurrent auto-QA calls (DB trigger + daemon race)
+      // v50: Dedup guard  --  prevent concurrent auto-QA calls (DB trigger + daemon race)
       // If last_qa_run_at is within 10 seconds, skip this call (another caller is handling it)
       if (wo.last_qa_run_at) {
         const lastRun = new Date(wo.last_qa_run_at).getTime();
         const now = Date.now();
         if (now - lastRun < 10000) {
-          console.log(`[AUTO-QA] Dedup guard: skipping ${wo.slug} â last run ${Math.round((now - lastRun)/1000)}s ago`);
+          console.log(`[AUTO-QA] Dedup guard: skipping ${wo.slug}  --  last run ${Math.round((now - lastRun)/1000)}s ago`);
           return new Response(JSON.stringify({ skipped: true, reason: 'dedup_guard', last_qa_run_seconds_ago: Math.round((now - lastRun)/1000) }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
         }
       }
@@ -956,7 +956,7 @@ Deno.serve(async (req) => {
       }
 
       if (checklist.length === 0) {
-        // v51: Auto-accept fallback â if no checklist items AND no unresolved fail findings AND summary exists, auto-accept
+        // v51: Auto-accept fallback  --  if no checklist items AND no unresolved fail findings AND summary exists, auto-accept
         const { count: failCount } = await supabase.from('qa_findings')
           .select('id', { count: 'exact', head: true })
           .eq('work_order_id', work_order_id)
@@ -983,7 +983,7 @@ Deno.serve(async (req) => {
       // v38: Build rich evaluation context from multiple sources
       const summaryText = execution_output || wo.summary || wo.client_info?.summary || wo.client_info?.output || '';
 
-      // v38: Pull execution log evidence â tool usage, deployment records, stream events
+      // v38: Pull execution log evidence  --  tool usage, deployment records, stream events
       let executionEvidence = '';
       try {
         const { data: execLogs } = await supabase.from('work_order_execution_log')
@@ -995,7 +995,7 @@ Deno.serve(async (req) => {
         if (execLogs && execLogs.length > 0) {
           const evidenceParts: string[] = [];
 
-          // Extract the result event (daemon's final summary â most authoritative)
+          // Extract the result event (daemon's final summary  --  most authoritative)
           const resultEvent = execLogs.find((l: any) => l.detail?.event_type === 'result');
           if (resultEvent?.detail?.content) {
             evidenceParts.push(`DAEMON FINAL OUTPUT:\n${(resultEvent.detail.content as string).slice(0, 8000)}`);
@@ -1028,7 +1028,7 @@ Deno.serve(async (req) => {
         console.error('[AUTO-QA] Failed to fetch execution logs:', logErr);
       }
 
-      // v47: Check audit_log for deployment records â EXCLUDE auto-QA metadata events
+      // v47: Check audit_log for deployment records  --  EXCLUDE auto-QA metadata events
       // to prevent feedback loop where previous failure messages poison the next evaluation
       let deploymentEvidence = '';
       try {
@@ -1049,7 +1049,7 @@ Deno.serve(async (req) => {
         console.error('[AUTO-QA] Failed to fetch audit logs:', auditErr);
       }
 
-      // Build combined context â prefer execution evidence over bare summary
+      // Build combined context  --  prefer execution evidence over bare summary
       const fullContext = [
         summaryText ? `WORK ORDER SUMMARY:\n${summaryText.slice(0, 5000)}` : '',
         executionEvidence ? `\n\nEXECUTION EVIDENCE:\n${executionEvidence}` : '',
@@ -1073,7 +1073,7 @@ Deno.serve(async (req) => {
             max_tokens: 4096,
             messages: [{
               role: "user",
-              content: `You are a strict QA evaluator for a software build system. You must evaluate whether each acceptance criterion was ACTUALLY met based on concrete evidence â not just claims in the summary.
+              content: `You are a strict QA evaluator for a software build system. You must evaluate whether each acceptance criterion was ACTUALLY met based on concrete evidence  --  not just claims in the summary.
 
 WORK ORDER: ${wo.slug}
 OBJECTIVE: ${wo.objective || 'N/A'}
@@ -1087,7 +1087,7 @@ EVALUATION RULES:
 1. "pass" = You can cite SPECIFIC evidence: tool calls that executed, deployment records, code changes, test results
 2. "fail" = No concrete evidence found, OR evidence contradicts the claim, OR only vague summary claims without proof
 3. "na" = Criterion is clearly not applicable to this type of work order
-4. A summary CLAIMING something was done is NOT sufficient evidence by itself â look for tool usage, deployment records, or execution logs that PROVE it
+4. A summary CLAIMING something was done is NOT sufficient evidence by itself  --  look for tool usage, deployment records, or execution logs that PROVE it
 5. STRONG DEPLOYMENT EVIDENCE (any of these count):
    - mcp__supabase__deploy_edge_function tool call
    - Bash tool containing "supabase functions deploy" (CLI deploy)
@@ -1098,7 +1098,7 @@ EVALUATION RULES:
    - mcp__supabase__execute_sql or execute_sql tool call with DDL
    - Edit/Write/Read tool calls (code modification evidence)
    - Bash tool containing "supabase" or "migration" commands
-7. Be especially skeptical of claims without matching tool usage â but CLI tools (Bash) are equally valid as MCP tools
+7. Be especially skeptical of claims without matching tool usage  --  but CLI tools (Bash) are equally valid as MCP tools
 
 Respond with ONLY a JSON array:
 [
@@ -1126,7 +1126,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         return new Response(JSON.stringify({ ...buildStructuredError('ERR_QA_VALIDATION_FAILED', 'Failed to parse QA evaluation response'), all_pass: false, accepted: false }), { status: 502, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      // v60: AC2 â Re-check WO status before writing findings (race condition fix for WO-0234)
+      // v60: AC2  --  Re-check WO status before writing findings (race condition fix for WO-0234)
       // If WO transitioned to done/cancelled during LLM evaluation, skip writing findings
       const { data: freshWo } = await supabase.from("work_orders")
         .select("status, slug")
@@ -1149,7 +1149,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       for (const criterion of evaluations) {
         if (!criterion.id || !criterion.status) continue;
         try {
-          // update_checklist_item RPC creates a qa_finding automatically â pass rich evidence
+          // update_checklist_item RPC creates a qa_finding automatically  --  pass rich evidence
           await supabase.rpc('update_checklist_item', {
             p_work_order_id: work_order_id,
             p_item_id: criterion.id,
@@ -1203,7 +1203,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       if (!allPass && failures.length > 0) {
         const isAutoQaLoop = (wo.tags || []).includes('auto-qa-loop');
         if (!isAutoQaLoop) {
-          // Regular WO (including remediation-tagged batch WOs) â create sub-WO
+          // Regular WO (including remediation-tagged batch WOs)  ->  create sub-WO
           try {
             const remResult = await createRemediationWO(supabase, wo, failures);
             remediation_wo_id = remResult.remediation_wo_id;
@@ -1211,8 +1211,8 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
             console.error('[AUTO-QA] Remediation WO creation failed:', remErr);
           }
         } else {
-          // Auto-QA-generated sub-WO failed â move to failed and re-check parent circuit breaker
-          console.log(`[AUTO-QA] auto-qa-loop WO ${wo.slug} failed â escalating to failed`);
+          // Auto-QA-generated sub-WO failed  ->  move to failed and re-check parent circuit breaker
+          console.log(`[AUTO-QA] auto-qa-loop WO ${wo.slug} failed  --  escalating to failed`);
           try {
             await supabase.rpc('update_work_order_state', {
               p_work_order_id: work_order_id,
@@ -1224,7 +1224,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
               p_summary: `Remediation sub-WO failed auto-QA: ${failures.map((f: any) => f.id + ': ' + f.reason).join('; ').slice(0, 500)}`
             });
             // Trigger parent circuit breaker check by calling createRemediationWO on parent
-            // This increments the attempt counter â if >= MAX, parent moves to failed
+            // This increments the attempt counter  --  if >= MAX, parent moves to failed
             const parentTag = (wo.tags || []).find((t: string) => t.startsWith('parent:'));
             if (parentTag) {
               const parentSlug = parentTag.replace('parent:', '');
@@ -1259,7 +1259,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /refine-stale â Standalone LLM staleness refinement ===
+    // === POST /refine-stale  --  Standalone LLM staleness refinement ===
     if (req.method === "POST" && action === "refine-stale") {
       const { work_order_id } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -1291,9 +1291,9 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       }
     }
 
-    // === POST /consolidate â AI gap analysis + refine OR bulk cancel ===
+    // === POST /consolidate  --  AI gap analysis + refine OR bulk cancel ===
     if (req.method === "POST" && action === "consolidate") {
-      // UI contract: { work_order_id, duplicates } â AI gap analysis
+      // UI contract: { work_order_id, duplicates }  ->  AI gap analysis
       if (body.work_order_id && body.duplicates) {
         const { work_order_id, duplicates } = body;
         const { data: wo } = await supabase.from("work_orders").select("id, slug, name, objective").eq("id", work_order_id).single();
@@ -1320,7 +1320,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         }
       }
 
-      // Legacy contract: { work_order_ids, primary_id } â bulk cancel secondaries
+      // Legacy contract: { work_order_ids, primary_id }  ->  bulk cancel secondaries
       const { work_order_ids, primary_id, reason } = body;
       if (!work_order_ids || !primary_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_ids and primary_id required, or work_order_id and duplicates for gap analysis')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
 
@@ -1338,7 +1338,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ consolidated, primary_id, cancelled_ids: secondaryIds, errors: errors.length > 0 ? errors : undefined }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /reject â Reject a WO in review, back to in_progress ===
+    // === POST /reject  --  Reject a WO in review, back to in_progress ===
     if (req.method === "POST" && action === "reject") {
       const { work_order_id, reason } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -1360,7 +1360,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ rejected: true, work_order: data, reason }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /fail â Fail an in-progress WO ===
+    // === POST /fail  --  Fail an in-progress WO ===
     if (req.method === "POST" && action === "fail") {
       const { work_order_id, reason } = body;
       if (!work_order_id) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -1381,7 +1381,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ failed: true, work_order: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /phase â Log an execution phase entry ===
+    // === POST /phase  --  Log an execution phase entry ===
     if (req.method === "POST" && action === "phase") {
       const { work_order_id, phase, agent_name, detail, iteration } = body;
       if (!work_order_id || !phase) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'work_order_id and phase required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -1389,7 +1389,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ logged: true, phase, work_order_id }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === GET /poll â Return ready/in_progress WOs for daemon ===
+    // === GET /poll  --  Return ready/in_progress WOs for daemon ===
     if (req.method === "GET" && action === "poll") {
       const { data: workOrders, error: pollError } = await supabase
         .from("work_orders")
@@ -1439,7 +1439,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ work_orders: enriched, count: enriched.length, version: "v49" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === GET /status â System status ===
+    // === GET /status  --  System status ===
     if (req.method === "GET" && action === "status") {
       const { data: recentWOs } = await supabase.from("work_orders")
         .select("slug, name, status, priority, updated_at")
@@ -1462,7 +1462,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === GET /logs â Recent execution logs ===
+    // === GET /logs  --  Recent execution logs ===
     if (req.method === "GET" && action === "logs") {
       const woId = url.searchParams.get("work_order_id");
       let query = supabase.from("work_order_execution_log")
@@ -1475,15 +1475,15 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       return new Response(JSON.stringify({ logs: data }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === GET /manifest â System manifest ===
+    // === GET /manifest  --  System manifest ===
     if (req.method === "GET" && action === "manifest") {
       const { data, error: manifestError } = await supabase.from("system_manifest").select("*").eq("status", "active");
       if (manifestError) return new Response(JSON.stringify({ error: manifestError.message, error_code: "ERR_INTERNAL" }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
       return new Response(JSON.stringify({ manifest: data, version: "v32" }), { headers: {...corsHeaders,"Content-Type":"application/json"} });
     }
 
-    // === POST /rollback â Generate rollback plan (read-only planner, no execution) ===
-    // v39: Rewrite as planner â returns rollback_plan JSON instead of executing
+    // === POST /rollback  --  Generate rollback plan (read-only planner, no execution) ===
+    // v39: Rewrite as planner  --  returns rollback_plan JSON instead of executing
     if (req.method === "POST" && action === "rollback") {
       const { function_slug, target_version } = body;
       if (!function_slug) return new Response(JSON.stringify(buildStructuredError('ERR_DATA_VALIDATION', 'function_slug required')), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
@@ -1566,7 +1566,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
       }
     }
 
-    // === POST /reprioritize â Dynamic queue re-scoring ===
+    // === POST /reprioritize  --  Dynamic queue re-scoring ===
     if (req.method === "POST" && action === "reprioritize") {
       const trigger = body.trigger || "manual";
 

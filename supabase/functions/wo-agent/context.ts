@@ -1,10 +1,10 @@
 // wo-agent/context.ts v8
-// v8: WO-0405 — per-agent lesson filtering, ROLE_LESSON_CATEGORIES
-// v7: WO-0245 â delegate_subtask + github_edit_file tool descriptions, restored v6 features
-// v6: WO-0253 â use parent_id for remediation context (fallback to parent: tag)
-// v5: WO-0252 â per-agent model selection from agents.model column
-// v4: WO-0164 â tag-filtered directive loading
-// v3: WO-0165 â concurrent WO awareness in agent context
+// v8: WO-0405 -- per-agent lesson filtering, ROLE_LESSON_CATEGORIES
+// v7: WO-0245  --  delegate_subtask + github_edit_file tool descriptions, restored v6 features
+// v6: WO-0253  --  use parent_id for remediation context (fallback to parent: tag)
+// v5: WO-0252  --  per-agent model selection from agents.model column
+// v4: WO-0164  --  tag-filtered directive loading
+// v3: WO-0165  --  concurrent WO awareness in agent context
 // v2: Agent name from DB (builder) instead of generated
 
 import {
@@ -166,7 +166,7 @@ export async function buildAgentContext(
   }
 
   // WO-0569: Remediation WOs now route to ilmarinen CLI (configurable via system_settings.remediation_default_agent)
-  // Model override removed — remediation handled by CLI session, not server-side API
+  // Model override removed -- remediation handled by CLI session, not server-side API
 
   // Add agent-specific instructions
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
@@ -177,7 +177,7 @@ export async function buildAgentContext(
   if (agentProfile) {
     systemPrompt += `## Agent Profile\n`;
     systemPrompt += `**Mission**: ${agentProfile.mission}\n`;
-    systemPrompt += `**Pace**: ${agentProfile.pace} — `;
+    systemPrompt += `**Pace**: ${agentProfile.pace} -- `;
     if (agentProfile.pace === "aggressive") {
       systemPrompt += `Prioritize speed and iteration velocity. Implement fast, verify incrementally.\n`;
     } else if (agentProfile.pace === "measured") {
@@ -185,7 +185,7 @@ export async function buildAgentContext(
     } else {
       systemPrompt += `Prioritize correctness over speed. Verify before mutating.\n`;
     }
-    systemPrompt += `**Error Handling**: ${agentProfile.error_style} — `;
+    systemPrompt += `**Error Handling**: ${agentProfile.error_style} -- `;
     if (agentProfile.error_style === "retry-then-escalate") {
       systemPrompt += `Classify errors (retriable vs non-retriable), retry up to ${agentProfile.escalation_rules?.max_retries || 3}x on retriable errors, escalate non-retriable.\n`;
     } else if (agentProfile.error_style === "fail-fast") {

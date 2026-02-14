@@ -96,11 +96,11 @@ serve(async (req) => {
 
     // Create alert WO if threshold exceeded
     if (failuresLastHour >= 3) {
-      console.log(`ÃÂ¢ÃÂÃÂ ÃÂ¯ÃÂ¸ÃÂ HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
+      console.log(` -- HIGH FAILURE RATE: ${failuresLastHour} failures in last hour`);
       
       const { error: alertError } = await supabase.rpc('create_draft_work_order', {
         p_slug: null,
-        p_name: `ÃÂ°ÃÂÃÂÃÂ¨ High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
+        p_name: ` -- High Failure Rate Alert: ${failuresLastHour} failures in 1 hour`,
         p_objective: `Investigate spike in work order failures. ${failuresLastHour} WOs failed in the last hour (trending ${trending}). Recent failures: ${recentFailures?.slice(0, 5).map(f => f.slug).join(', ')}`,
         p_priority: 'p0_critical',
         p_source: 'daemon',
@@ -204,7 +204,7 @@ serve(async (req) => {
             needs_decomposition: true
           });
 
-          console.log(`ÃÂ¢ÃÂÃÂ ÃÂ¯ÃÂ¸ÃÂ DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
+          console.log(` -- DEEP DEPENDENCY CHAIN: ${wo.slug} has depth ${depth}`);
         }
       }
     }
@@ -241,12 +241,12 @@ serve(async (req) => {
           needs_escalation: true
         });
 
-        console.log(`ÃÂ°ÃÂÃÂÃÂ¨ SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
+        console.log(` -- SELF-HEAL FAILURE: ${parent?.slug} failed ${failCount} remediation attempts`);
 
         // Create escalation WO
         const { error: escalateError } = await supabase.rpc('create_draft_work_order', {
           p_slug: null,
-          p_name: `ÃÂ°ÃÂÃÂÃÂ Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
+          p_name: ` -- Escalation: ${parent?.slug} failed ${failCount} self-heal attempts`,
           p_objective: `Manual intervention required. Work order ${parent?.slug} (${parentId}) has failed ${failCount} automated remediation attempts. Review execution logs and determine root cause.`,
           p_priority: 'p0_critical',
           p_source: 'daemon',
