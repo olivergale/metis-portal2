@@ -770,12 +770,14 @@ async function handleExecute(req: Request): Promise<Response> {
   const backgroundExecution = async () => {
     try {
       // WO-0401: Pass config-driven model from agent profile
+      // WO-0590: Pass config-driven max_tokens from agent profile
       const result = await runAgentLoop(
         agentContext.systemPrompt,
         finalUserMessage,
         toolCtx,
         wo.tags || [],
-        agentContext.model
+        agentContext.model,
+        agentContext.maxTokens
       );
 
       console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);

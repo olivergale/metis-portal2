@@ -310,7 +310,8 @@ export async function buildAgentContext(
 
   userMessage += `\n---\nExecute this work order now. Start by logging your plan, then proceed step by step.`;
 
-  return { systemPrompt, userMessage, agentName, model: agentModel };
+  const maxTokens = agentProfile?.max_tokens || 16384;
+  return { systemPrompt, userMessage, agentName, model: agentModel, maxTokens };
 }
 
 /**

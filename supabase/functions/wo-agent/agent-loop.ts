@@ -50,6 +50,7 @@ async function callOpenRouter(
   messages: Array<{ role: string; content: any }>,
   tools: any[],
   ctx: ToolContext,
+  maxTokens: number = 16384,
 ): Promise<any> {
   const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
   if (!openrouterKey) throw new Error("OPENROUTER_API_KEY not set");
@@ -61,7 +62,7 @@ async function callOpenRouter(
   const requestBody: any = {
     model,
     messages: openAIMessages,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     // WO-0562: Provider fallback -- if primary model provider is down, try alternatives
     provider: {
       order: ["MiniMax", "DeepSeek", "OpenAI"],
@@ -240,7 +241,8 @@ export async function runAgentLoop(
   userMessage: string,
   ctx: ToolContext,
   tags?: string[],
-  model?: string
+  model?: string,
+  maxTokens?: number
 ): Promise<AgentLoopResult> {
   const isRemediation = (tags || []).some((t: string) =>
     t === 'remediation' || t === 'auto-qa-loop' || t.startsWith('parent:')
@@ -259,6 +261,8 @@ export async function runAgentLoop(
   // WO-0401: Config-driven model  -- profile > WO override > default
   const resolvedModel = model || DEFAULT_MODEL;
   const useAnthropic = isAnthropicModel(resolvedModel);
+  // WO-0590: Config-driven max_tokens from agent_execution_profiles
+  const resolvedMaxTokens = maxTokens || 16384;
 
   // WO-0551: Validate required API key based on provider
   if (useAnthropic) {
@@ -470,7 +474,7 @@ export async function runAgentLoop(
       if (useAnthropic && client) {
         response = await client.messages.create({
           model: resolvedModel,
-          max_tokens: 4096,
+          max_tokens: resolvedMaxTokens,
           system: [
             {
               type: "text" as const,
@@ -483,7 +487,7 @@ export async function runAgentLoop(
         });
       } else {
         // OpenRouter path -- converts to OpenAI format, calls API, converts response back
-        response = await callOpenRouter(resolvedModel, systemPrompt, messages, tools, ctx);
+        response = await callOpenRouter(resolvedModel, systemPrompt, messages, tools, ctx, resolvedMaxTokens);
       }
 
       // Successful API call  -- reset error counter
