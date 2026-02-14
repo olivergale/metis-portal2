@@ -1,4 +1,5 @@
-// work-order-executor/index.ts v61
+// work-order-executor/index.ts v62
+// v62: WO-0609  --  Migrate simple endpoints to wo_transition: approve, claim, complete, accept, reject, fail
 // v61: WO-0389  --  Add deployment verification gate: Block /complete if deployment activity without verification record
 // v60: WO-0234  --  Fix auto-QA race: check WO status before evaluation AND before writing findings, skip gracefully if done/cancelled
 // v56: Agent rename  --  sentinel -> qa-gate in all logging
