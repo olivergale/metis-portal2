@@ -1,0 +1,1 @@
+const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree", "read_full_file", "git_log", "git_diff", "git_blame", "patch_file"];
