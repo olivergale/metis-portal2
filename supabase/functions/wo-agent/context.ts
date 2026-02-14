@@ -165,11 +165,11 @@ export async function buildAgentContext(
     // Profile not found, continue with defaults
   }
 
-  // WO-0551: Remediation WOs always use Opus for high-quality fixes
-  const isRemediation = (workOrder.tags || []).some((t: string) =>
+  // WO-0551: Remediation WOs force Opus for high-quality fixes
+  const forceOpusForRemediation = (workOrder.tags || []).some((t: string) =>
     t === 'remediation' || t === 'auto-qa-loop'
   );
-  if (isRemediation) {
+  if (forceOpusForRemediation) {
     agentModel = "claude-opus-4-6";
   }
 

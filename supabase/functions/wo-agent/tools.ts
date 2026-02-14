@@ -8,7 +8,8 @@
 // Tool definitions for the agentic work order executor
 // Each tool maps to an Anthropic tool_use schema + a dispatch handler
 
-import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
+// Tool type from Anthropic SDK — inlined to avoid deep npm sub-path import that breaks Deno edge runtime
+type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
 import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree } from "./tool-handlers/github.ts";

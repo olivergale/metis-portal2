@@ -2,12 +2,10 @@
 // WO-0551: Format conversion utilities for OpenRouter/OpenAI compatibility
 // Converts between Anthropic and OpenAI tool/message formats
 
-import type { Tool } from "npm:@anthropic-ai/sdk@0.39.0/resources/messages.mjs";
-
 /**
  * Convert Anthropic tool definitions to OpenAI function calling format
  */
-export function anthropicToolsToOpenAI(anthropicTools: Tool[]): any[] {
+export function anthropicToolsToOpenAI(anthropicTools: any[]): any[] {
   return anthropicTools.map((tool) => ({
     type: "function",
     function: {
@@ -85,14 +83,7 @@ export function anthropicMessagesToOpenAI(
             openAIMessages.push({
               role: "tool",
               tool_call_id: block.tool_use_id,
-              content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
-            });
-          }
-          // Also emit any text blocks as a user message (e.g. error guidance)
-          if (textBlocks.length > 0) {
-            openAIMessages.push({
-              role: "user",
-              content: textBlocks.map((b: any) => b.text).join("\n"),
+              content: block.content,
             });
           }
         } else {
