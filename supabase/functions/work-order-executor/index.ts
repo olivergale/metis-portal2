@@ -653,7 +653,7 @@ Deno.serve(async (req) => {
         if (assignError) return new Response(JSON.stringify({ error: `Failed to auto-assign: ${assignError.message}` }), { status: 500, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'ready', p_approved_at: new Date().toISOString(), p_approved_by: approved_by, p_started_at: null, p_completed_at: null, p_summary: null });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'approve', p_payload: { approved_by }, p_actor: approved_by, p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -799,7 +799,7 @@ Deno.serve(async (req) => {
       try { const { data: traceData } = await supabase.rpc('start_wo_trace', { p_work_order_id: work_order_id, p_session_id: session_id || headers['x-session-id'] || null }); woTraceId = traceData; }
       catch (traceErr) { console.error('[TRACE] Failed:', traceErr); }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_approved_at: null, p_approved_by: null, p_started_at: new Date().toISOString(), p_completed_at: null, p_summary: null });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'start_work', p_actor: 'ilmarinen', p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -860,7 +860,7 @@ Deno.serve(async (req) => {
       }
 
       const newStatus = wo?.requires_approval ? "review" : "done";
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: newStatus, p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: summary });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'mark_done', p_payload: { summary }, p_actor: 'ilmarinen', p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -911,7 +911,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'done', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: null });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'mark_done', p_actor: 'auto-qa', p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const firstError = data.errors?.[0];
@@ -1376,7 +1376,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
         return new Response(JSON.stringify(err), { status: 400, headers: {...corsHeaders,"Content-Type":"application/json"} });
       }
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'in_progress', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: null, p_summary: `Rejected: ${reason || 'Needs changes'}` });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'reopen', p_payload: { reason }, p_actor: 'ilmarinen', p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const errorCode = data.errors?.[0]?.code || 'ERR_TRANSITION_REJECTED';
@@ -1396,7 +1396,7 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
 
       await checkAndTripCircuitBreaker(supabase, work_order_id);
 
-      const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: 'failed', p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: reason });
+      const { data, error } = await supabase.rpc('wo_transition', { p_wo_id: work_order_id, p_event: 'mark_failed', p_payload: { reason }, p_actor: 'ilmarinen', p_depth: 0 });
       if (error) throw error;
       if (data && data.error) {
         const errorCode = data.errors?.[0]?.code || 'ERR_TRANSITION_REJECTED';
