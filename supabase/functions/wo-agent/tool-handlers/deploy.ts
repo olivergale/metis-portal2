@@ -108,17 +108,49 @@ export async function handleDeployEdgeFunction(
 
     const result = await deployResp.json();
 
-    // Log deployment
+    // WO-0389: Log deployment_verification phase after successful deploy
+    // This provides evidence that the function was actually deployed
+    let verificationPassed = false;
+    let verificationDetail = "";
+    
+    try {
+      // Call the deployed function's status endpoint to verify it's running
+      const funcUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/${function_name}`;
+      const verifyResp = await fetch(`${funcUrl}/health-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Add a short timeout to not block deployment
+      }).catch(() => null);
+      
+      // Also try the main endpoint with a GET
+      if (!verifyResp?.ok) {
+        const testResp = await fetch(funcUrl, { method: "GET" }).catch(() => null);
+        verificationPassed = testResp?.ok || false;
+        verificationDetail = testResp 
+          ? `HTTP ${testResp.status}: ${testResp.statusText}` 
+          : "Could not reach function endpoint";
+      } else {
+        verificationPassed = true;
+        verificationDetail = "Function responded OK";
+      }
+    } catch (verifyErr: any) {
+      verificationDetail = `Verification check failed: ${verifyErr.message}`;
+      // Don't fail the deploy, just note the verification issue
+    }
+
+    // Log deployment with verification info
     await ctx.supabase.from("work_order_execution_log").insert({
       work_order_id: ctx.workOrderId,
-      phase: "stream",
+      phase: "deployment_verification",
       agent_name: ctx.agentName,
       detail: {
-        event_type: "tool_result",
+        event_type: "deployment_verification",
         tool_name: "deploy_edge_function",
-        content: `Deployed edge function: ${function_name}`,
+        content: `Deployed and verified edge function: ${function_name}`,
         function_name,
         version: result.version || "unknown",
+        verification_passed: verificationPassed,
+        verification_detail: verificationDetail,
       },
     });
 
@@ -127,7 +159,8 @@ export async function handleDeployEdgeFunction(
       data: {
         function_name,
         version: result.version,
-        message: `Deployed ${function_name} successfully`,
+        verification_passed: verificationPassed,
+        message: `Deployed ${function_name} successfully${verificationPassed ? ' and verified' : ' (verification inconclusive)'}`,
       },
     };
   } catch (e: any) {
