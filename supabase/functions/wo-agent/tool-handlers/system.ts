@@ -193,7 +193,7 @@ export async function handleMarkComplete(
 
     // Transition to review using wo_transition (handles all enforcement uniformly)
     const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
-      p_work_order_id: ctx.workOrderId,
+      p_wo_id: ctx.workOrderId,
       p_event: "submit_for_review",
       p_actor: ctx.agentName,
       p_payload: { summary: summary + overlapWarning },
