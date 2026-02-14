@@ -263,26 +263,15 @@ export async function handleMarkFailed(
       },
     });
 
-    // Transition to failed -- non-master agents use enforcement RPC, master uses bypass
-    const MASTER_FAIL = new Set(["ilmarinen"]);
-    if (MASTER_FAIL.has(ctx.agentName)) {
-      await ctx.supabase.rpc("run_sql_void", {
-        sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${reason.replace(/'/g, "''")}' WHERE id = '${ctx.workOrderId}';`,
-      });
-    } else {
-      // WO-0236: Correct 7-param RPC signature (summary set via RPC param)
-      const { error: rpcErr } = await ctx.supabase.rpc("update_work_order_state", {
-        p_work_order_id: ctx.workOrderId,
-        p_status: "failed",
-        p_approved_at: null,
-        p_approved_by: null,
-        p_started_at: null,
-        p_completed_at: new Date().toISOString(),
-        p_summary: reason,
-      });
-      if (rpcErr) {
-        return { success: false, error: `mark_failed state transition failed: ${rpcErr.message}` };
-      }
+    // Transition to failed using wo_transition (handles all enforcement uniformly)
+    const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
+      p_work_order_id: ctx.workOrderId,
+      p_event: "mark_failed",
+      p_actor: ctx.agentName,
+      p_payload: { reason },
+    });
+    if (rpcErr) {
+      return { success: false, error: `mark_failed state transition failed: ${rpcErr.message}` };
     }
 
     return { success: true, data: "Work order marked as failed", terminal: true };
