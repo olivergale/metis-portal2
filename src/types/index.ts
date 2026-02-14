@@ -2,7 +2,7 @@ export interface WorkOrder {
   id: string;
   slug: string;
   name: string;
-  status: 'draft' | 'ready' | 'pending_approval' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled' | 'failed';
+  status: 'draft' | 'ready' | 'pending_approval' | 'in_progress' | 'blocked' | 'blocked_on_input' | 'review' | 'done' | 'cancelled' | 'failed';
   priority: 'p0_critical' | 'p1_high' | 'p2_medium' | 'p3_low';
   complexity?: string;
   summary?: string;
