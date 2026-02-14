@@ -106,10 +106,7 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
 
 function closePanel(overlay: HTMLElement, panel: HTMLElement) {
   // Clear auto-refresh interval
-  if (autoRefreshInterval !== null) {
-    clearInterval(autoRefreshInterval);
-    autoRefreshInterval = null;
-  }
+  clearAutoRefresh();
 
   overlay.classList.remove('open');
   panel.classList.remove('open');
