@@ -1,4 +1,5 @@
-// work-order-executor/index.ts v60
+// work-order-executor/index.ts v61
+// v61: WO-0389  --  Add deployment verification gate: Block /complete if deployment activity without verification record
 // v60: WO-0234  --  Fix auto-QA race: check WO status before evaluation AND before writing findings, skip gracefully if done/cancelled
 // v56: Agent rename  --  sentinel -> qa-gate in all logging
 // v54: WO-0151  --  Fix /reprioritize to include 'review' status WOs in queue evaluation (AC7 compliance)
