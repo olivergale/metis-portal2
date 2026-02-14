@@ -688,6 +688,227 @@
   text-align: center;
 }
 
+/* WO Events Timeline */
+.wo-events-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.wo-event-entry {
+  display: grid;
+  grid-template-columns: 90px 20px 1fr;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 12px;
+  align-items: start;
+  position: relative;
+}
+
+.wo-event-entry:last-child {
+  border-bottom: none;
+}
+
+.wo-event-entry:last-child .wo-event-marker::after {
+  display: none;
+}
+
+.wo-event-entry:hover {
+  background: var(--bg-hover);
+}
+
+.wo-event-timestamp {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+
+.wo-event-time {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wo-event-date {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.wo-event-marker {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-surface);
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.wo-event-marker::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: calc(100% + 24px);
+  background: var(--border-default);
+}
+
+.wo-event-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wo-event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wo-event-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  background: rgba(96, 165, 250, 0.2);
+  color: #60A5FA;
+}
+
+.wo-event-type.wo_created,
+.wo-event-type.wo_approved {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34D399;
+}
+
+.wo-event-type.wo_started,
+.wo-event-type.wo_resumed {
+  background: rgba(96, 165, 250, 0.2);
+  color: #60A5FA;
+}
+
+.wo-event-type.wo_transitioned {
+  background: rgba(251, 191, 36, 0.2);
+  color: #FBBF24;
+}
+
+.wo-event-type.wo_completed {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34D399;
+}
+
+.wo-event-type.wo_failed,
+.wo-event-type.wo_cancelled {
+  background: rgba(220, 38, 38, 0.2);
+  color: #DC2626;
+}
+
+.wo-event-type.wo_blocked {
+  background: rgba(248, 113, 113, 0.2);
+  color: #F87171;
+}
+
+.wo-event-effects-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(167, 139, 250, 0.2);
+  color: #A78BFA;
+}
+
+.wo-event-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wo-event-status-transition {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.wo-event-actor {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.wo-event-detail-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+
+.wo-event-detail-toggle:hover {
+  text-decoration: underline;
+}
+
+.wo-event-detail {
+  display: none;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.wo-event-detail.expanded {
+  display: block;
+}
+
+.wo-event-detail-section {
+  margin-bottom: 8px;
+}
+
+.wo-event-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.wo-event-detail-section strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.wo-event-json {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.wo-events-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+}
+
 @media (max-width: 1200px) {
   .wo-detail-panel { width: 70vw; }
 }
