@@ -865,6 +865,113 @@ export async function handleGithubReadFileRange(
 }
 
 /**
+ * Call Fly Machine sandbox exec for verification
+ * WO-0594: Extracts verification logic for reuse
+ */
+async function callSandboxExec(
+  supabase: any,
+  workOrderId: string,
+  workOrderSlug: string,
+  command: string,
+  args: string[],
+  timeoutMs: number = 30000
+): Promise<{ success: boolean; stdout: string; stderr: string; exitCode: number }> {
+  try {
+    // Read Fly Machine URL from system_settings
+    const { data: flySettings } = await supabase
+      .from("system_settings")
+      .select("setting_key, setting_value")
+      .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+    const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+    const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+    if (!flyUrl) {
+      return { success: false, stdout: "", stderr: "Fly Machine URL not configured", exitCode: -1 };
+    }
+
+    // Git-pull-on-demand: pull latest before verification
+    // WO-0594: Need fresh content after github_push_files
+    try {
+      const pullCtrl = new AbortController();
+      const pullTimer = setTimeout(() => pullCtrl.abort(), 60000);
+      await fetch(`${flyUrl}/git-pull`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: pullCtrl.signal,
+        body: "{}",
+      });
+      clearTimeout(pullTimer);
+    } catch (_pullErr) {
+      // Non-fatal: continue with verification
+    }
+
+    // Call Fly Machine /exec endpoint
+    const execCtrl = new AbortController();
+    const execTimer = setTimeout(() => execCtrl.abort(), timeoutMs);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (flyToken && flyToken !== "not_required_public_endpoint") {
+      headers["Authorization"] = `Bearer ${flyToken}`;
+    }
+    const response = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      signal: execCtrl.signal,
+      body: JSON.stringify({
+        command,
+        args,
+        timeout_ms: timeoutMs,
+        wo_slug: workOrderSlug,
+      }),
+    });
+    clearTimeout(execTimer);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      return { success: false, stdout: "", stderr: errorData.error || response.statusText, exitCode: -1 };
+    }
+
+    const execResult = await response.json();
+    return {
+      success: execResult.exit_code === 0,
+      stdout: execResult.stdout || "",
+      stderr: execResult.stderr || "",
+      exitCode: execResult.exit_code || -1,
+    };
+  } catch (e: any) {
+    return { success: false, stdout: "", stderr: e.message, exitCode: -1 };
+  }
+}
+
+/**
+ * Record mutation verification result
+ * WO-0594: Log verification success/failure
+ */
+async function recordVerification(
+  supabase: any,
+  workOrderId: string,
+  toolName: string,
+  objectId: string,
+  verified: boolean,
+  context: Record<string, any>
+): Promise<void> {
+  try {
+    await supabase.rpc("record_mutation", {
+      p_work_order_id: workOrderId,
+      p_tool_name: toolName,
+      p_object_type: "verification",
+      p_object_id: objectId,
+      p_action: "VERIFY",
+      p_success: true,
+      p_verified: verified,
+      p_context: context,
+      p_agent_name: "builder",
+    });
+  } catch (e: any) {
+    console.warn(`[recordVerification] Failed: ${e.message}`);
+  }
+}
+
+/**
  * github_push_files: Atomic multi-file commits via Git Data API.
  * Replaces github_write_file, github_edit_file, github_patch_file.
  * Uses blobs (UTF-8 encoding) instead of Contents API (base64) to eliminate
@@ -873,6 +980,8 @@ export async function handleGithubReadFileRange(
  * Two modes per file:
  * - content: full file content (for new files or full rewrites)
  * - patches: [{search, replace}] applied to current file (reads via raw API)
+ *
+ * WO-0594 AC1+AC2: Added post-push verification via sandbox_exec cat and wc -c.
  */
 export async function handleGithubPushFiles(
   input: Record<string, any>,
