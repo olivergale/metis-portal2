@@ -36,6 +36,20 @@ export interface QAFinding {
   created_at: string;
 }
 
+export interface WOEvent {
+  id: string;
+  work_order_id: string;
+  event_type: string;
+  previous_status: string | null;
+  new_status: string | null;
+  payload: any;
+  actor: string;
+  depth: number | null;
+  status: string | null;
+  created_at: string;
+  processed_at: string | null;
+}
+
 export interface Project {
   id: string;
   code: string;
