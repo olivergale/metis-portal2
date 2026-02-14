@@ -62,6 +62,11 @@ async function callOpenRouter(
     model,
     messages: openAIMessages,
     max_tokens: 4096,
+    // WO-0562: Provider fallback -- if primary model provider is down, try alternatives
+    provider: {
+      order: ["MiniMax", "DeepSeek", "OpenAI"],
+      allow_fallbacks: true,
+    },
   };
   if (openAITools.length > 0) requestBody.tools = openAITools;
 
