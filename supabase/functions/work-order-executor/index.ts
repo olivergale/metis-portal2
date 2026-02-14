@@ -724,14 +724,12 @@ Deno.serve(async (req) => {
             });
 
             // Transition directly to done
-            await supabase.rpc('update_work_order_state', {
-              p_work_order_id: work_order_id,
-              p_status: 'done',
-              p_approved_at: null,
-              p_approved_by: null,
-              p_started_at: null,
-              p_completed_at: new Date().toISOString(),
-              p_summary: msg
+            await supabase.rpc('wo_transition', {
+              p_wo_id: work_order_id,
+              p_event: 'mark_done',
+              p_payload: { summary: msg },
+              p_actor: 'ilmarinen',
+              p_depth: 0
             });
 
             return new Response(JSON.stringify({
