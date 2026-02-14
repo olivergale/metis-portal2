@@ -1301,7 +1301,8 @@ export async function handleGithubPushFiles(
         tree_sha: newTreeSha,
         files_committed: processedFiles,
         file_count: processedFiles.length,
-        message: `Committed ${processedFiles.length} file(s) to ${repo}/${ref}: ${processedFiles.join(", ")}`,
+        verification: verificationResults,
+        message: `Committed ${processedFiles.length} file(s) to ${repo}/${ref}: ${processedFiles.join(", ")}${verificationMessage}`,
       },
     };
   } catch (e: any) {
