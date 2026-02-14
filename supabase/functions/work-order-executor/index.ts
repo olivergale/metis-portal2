@@ -832,6 +832,31 @@ Deno.serve(async (req) => {
         }
       }
 
+      // WO-0389: Verify deployment_verification entries exist for deployments
+      // Check execution_log for deployment tool calls without verification records
+      if (!body.skip_verification_check) {
+        const { data: execLogs } = await supabase.from('work_order_execution_log')
+          .select('phase, detail')
+          .eq('work_order_id', work_order_id)
+          .in('phase', ['deploying', 'deployment', 'deployment_validation']);
+
+        const hasDeploymentActivity = execLogs && execLogs.length > 0;
+        
+        if (hasDeploymentActivity) {
+          // Check for deployment_verification phase entries
+          const { data: verificationLogs } = await supabase.from('work_order_execution_log')
+            .select('id')
+            .eq('work_order_id', work_order_id)
+            .eq('phase', 'deployment_verification')
+            .limit(1);
+
+          if (!verificationLogs || verificationLogs.length === 0) {
+            const err = buildStructuredError('ERR_DEPLOYMENT_NOT_VERIFIED', 'Deployment activity detected but no deployment_verification record found. You must verify the deployment before completing.');
+            return new Response(JSON.stringify({ ...err, verification_gate_blocked: true, message: 'Call log_progress with phase=deployment_verification after any deployment to verify it succeeded.' }), { status: 422, headers: {...corsHeaders,"Content-Type":"application/json"} });
+          }
+        }
+      }
+
       const newStatus = wo?.requires_approval ? "review" : "done";
       const { data, error } = await supabase.rpc('update_work_order_state', { p_work_order_id: work_order_id, p_status: newStatus, p_approved_at: null, p_approved_by: null, p_started_at: null, p_completed_at: new Date().toISOString(), p_summary: summary });
       if (error) throw error;
