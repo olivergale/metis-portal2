@@ -16,7 +16,7 @@ interface Column {
 
 const columns: Column[] = [
   { id: 'inbox', title: 'Inbox', statuses: ['draft', 'ready'] },
-  { id: 'progress', title: 'In Progress', statuses: ['pending_approval', 'in_progress'] },
+  { id: 'progress', title: 'In Progress', statuses: ['pending_approval', 'in_progress', 'blocked_on_input'] },
   { id: 'review', title: 'Review', statuses: ['review', 'blocked'] },
   { id: 'done', title: 'Done', statuses: ['done'] },
 ];
@@ -189,11 +189,13 @@ class WorkspaceApp {
   private renderCard(wo: WorkOrder): string {
     const priorityClass = wo.priority?.replace('_', '-') || 'medium';
     const statusClass = wo.status.replace('_', '-');
+    const blockedOnInput = wo.status === 'blocked_on_input';
 
     return `
       <div class="card" data-wo-id="${wo.id}">
         <div class="card-header">
           <span class="card-slug">${escapeHtml(wo.slug)}</span>
+          ${blockedOnInput ? '<span class="card-clarification-icon" title="Waiting for clarification">⏸️</span>' : ''}
           <span class="card-priority ${priorityClass}"></span>
         </div>
         <div class="card-title">${escapeHtml(wo.name || 'Untitled')}</div>
@@ -208,9 +210,9 @@ class WorkspaceApp {
 
   private updateStats() {
     const active = this.workOrders.filter(wo =>
-      ['pending_approval', 'in_progress'].includes(wo.status)
+      ['pending_approval', 'in_progress', 'blocked_on_input'].includes(wo.status)
     ).length;
-    const blocked = this.workOrders.filter(wo => wo.status === 'blocked').length;
+    const blocked = this.workOrders.filter(wo => ['blocked', 'blocked_on_input'].includes(wo.status)).length;
     const done = this.workOrders.filter(wo => wo.status === 'done').length;
 
     const statActive = document.getElementById('stat-active');
