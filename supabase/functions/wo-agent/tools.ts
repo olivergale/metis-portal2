@@ -8,7 +8,7 @@
 // Tool definitions for the agentic work order executor
 // Each tool maps to an Anthropic tool_use schema + a dispatch handler
 
-// Tool type from Anthropic SDK Ã¢ÂÂ inlined to avoid deep npm sub-path import that breaks Deno edge runtime
+// Tool type from Anthropic SDK ÃÂ¢ÃÂÃÂ inlined to avoid deep npm sub-path import that breaks Deno edge runtime
 type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
@@ -1098,6 +1098,9 @@ export async function dispatchTool(
       break;
     case "github_patch_file":
       result = await handleGithubPatchFile(toolInput, ctx);
+      break;
+    case "patch_file":
+      result = await handlePatchFile(toolInput, ctx);
       break;
     case "github_push_files":
       result = await handleGithubPushFiles(toolInput, ctx);
