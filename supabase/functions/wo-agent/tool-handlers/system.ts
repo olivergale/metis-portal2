@@ -265,7 +265,7 @@ export async function handleMarkFailed(
 
     // Transition to failed using wo_transition (handles all enforcement uniformly)
     const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
-      p_work_order_id: ctx.workOrderId,
+      p_wo_id: ctx.workOrderId,
       p_event: "mark_failed",
       p_actor: ctx.agentName,
       p_payload: { reason },
