@@ -1244,14 +1244,12 @@ Keep evidence summaries under 250 characters. Cite specific tool names or log en
           // Auto-QA-generated sub-WO failed  ->  move to failed and re-check parent circuit breaker
           console.log(`[AUTO-QA] auto-qa-loop WO ${wo.slug} failed  --  escalating to failed`);
           try {
-            await supabase.rpc('update_work_order_state', {
-              p_work_order_id: work_order_id,
-              p_status: 'failed',
-              p_approved_at: null,
-              p_approved_by: null,
-              p_started_at: null,
-              p_completed_at: new Date().toISOString(),
-              p_summary: `Remediation sub-WO failed auto-QA: ${failures.map((f: any) => f.id + ': ' + f.reason).join('; ').slice(0, 500)}`
+            await supabase.rpc('wo_transition', {
+              p_wo_id: work_order_id,
+              p_event: 'qa_failed',
+              p_payload: { summary: `Remediation sub-WO failed auto-QA: ${failures.map((f: any) => f.id + ': ' + f.reason).join('; ').slice(0, 500)}` },
+              p_actor: 'auto-qa',
+              p_depth: 0
             });
             // Trigger parent circuit breaker check by calling createRemediationWO on parent
             // This increments the attempt counter  --  if >= MAX, parent moves to failed
