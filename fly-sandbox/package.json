@@ -1,0 +1,13 @@
+{
+  "name": "fly-sandbox-exec",
+  "version": "1.0.0",
+  "main": "exec-server.js",
+  "description": "Sandbox execution server for Fly Machine",
+  "scripts": {
+    "start": "node exec-server.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
