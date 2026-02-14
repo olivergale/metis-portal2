@@ -70,6 +70,7 @@ function buildStructuredError(code: string, messageOverride?: string, templateVa
     ERR_ACTION_DENIED: { severity: 'error', category: 'permission', retry_allowed: false },
     ERR_WO_NOT_FOUND: { severity: 'error', category: 'data_integrity', retry_allowed: false },
     ERR_INVALID_STATUS: { severity: 'error', category: 'data_integrity', retry_allowed: false },
+    ERR_DEPLOYMENT_NOT_VERIFIED: { severity: 'error', category: 'deployment', retry_allowed: false },
   };
   const def = defaults[code] || { severity: 'error', category: 'unknown', retry_allowed: false };
   let message = messageOverride || code;
