@@ -238,6 +238,7 @@ export async function buildAgentContext(
     transition_state: "Transition WO status via enforcement RPC",
     delegate_subtask: "Create a child WO with model assignment and dispatch it (always non-blocking)",
     check_child_status: "Check status/summary of a delegated child WO",
+    sandbox_exec: "Execute command in sandboxed env (deno check, deno test, grep, etc.) to verify work before submitting",
   };
   systemPrompt += `## Available Tools (${availableTools.length} for ${agentName})\n`;
   for (const tool of availableTools) {
@@ -255,6 +256,18 @@ export async function buildAgentContext(
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
   systemPrompt += `9. For file edits, prefer github_patch_file (multi-edit, one commit) over github_edit_file (single edit) over github_write_file (full rewrite)\n`;
   systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
+
+  // WO-0553: Mandatory sandbox verification instructions for builder
+  if (agentName === "builder") {
+    systemPrompt += `\n## Sandbox Verification (MANDATORY for TypeScript/JavaScript)\n`;
+    systemPrompt += `After writing or editing any .ts/.js file, you MUST verify it compiles:\n`;
+    systemPrompt += `1. Call sandbox_exec with command="deno" args=["check", "<filename>"] and include the file content in files array\n`;
+    systemPrompt += `2. If exit_code != 0, fix the errors and re-check (MAXIMUM 3 attempts per file)\n`;
+    systemPrompt += `3. If tests exist for the file, run sandbox_exec with command="deno" args=["test", "--no-run", "<test_file>"] to verify test compilation\n`;
+    systemPrompt += `4. Only mark the deliverable complete when deno check passes\n`;
+    systemPrompt += `5. After 3 failed verification attempts: call request_clarification with the error output -- do NOT submit broken code\n`;
+    systemPrompt += `6. Do NOT spawn fix work orders after verification failures -- escalate via request_clarification instead\n`;
+  }
 
   // Build user message with WO details
   let userMessage = `# Work Order: ${workOrder.slug}\n\n`;

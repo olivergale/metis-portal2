@@ -782,9 +782,46 @@ export const TOOL_DEFINITIONS: Tool[] = [
       },
     },
   },
+  {
+    name: "sandbox_exec",
+    description:
+      "Execute a command in sandboxed environment to verify work. Available: deno check, deno test, deno lint, grep, find, cat, diff, jq. Use after writing TypeScript to validate before submitting.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        command: {
+          type: "string",
+          description: "Command to execute (e.g. 'deno', 'grep', 'find', 'cat', 'diff', 'jq')",
+        },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of command arguments (e.g. ['check', 'main.ts'] for deno check)",
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "File path in sandbox" },
+              content: { type: "string", description: "File content" },
+            },
+            required: ["path", "content"],
+          },
+          description: "Optional files to write into sandbox before running command",
+        },
+        timeout_ms: {
+          type: "number",
+          description: "Timeout in milliseconds (default: 30000)",
+        },
+      },
+      required: ["command", "args"],
+    },
+  },
 ];
 
 // Tool categories for filtering
+export const SANDBOX_TOOLS = ["sandbox_exec"];
 const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
@@ -1049,6 +1086,64 @@ export async function dispatchTool(
         }
       } catch (e: any) {
         result = { success: false, error: `Failed to check clarification: ${e.message}` };
+      }
+      break;
+    }
+    case "sandbox_exec": {
+      try {
+        const sandboxUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/sandbox-exec`;
+        const response = await fetch(sandboxUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            command: toolInput.command,
+            args: toolInput.args || [],
+            files: toolInput.files,
+            timeout_ms: toolInput.timeout_ms || 30000,
+            work_order_id: ctx.workOrderId,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          result = { success: false, error: `Sandbox exec failed: ${errorData.error || response.statusText}` };
+        } else {
+          const execResult = await response.json();
+          const success = execResult.exit_code === 0;
+          result = {
+            success,
+            data: {
+              stdout: execResult.stdout,
+              stderr: execResult.stderr,
+              exit_code: execResult.exit_code,
+              timed_out: execResult.timed_out,
+              duration_ms: execResult.duration_ms,
+            },
+          };
+        }
+
+        // Record mutation with verification_attempts tracking
+        const cmdStr = `${toolInput.command} ${(toolInput.args || []).join(" ")}`;
+        await recordMutation(
+          ctx,
+          "sandbox_exec",
+          "sandbox",
+          cmdStr.substring(0, 100),
+          "EXEC",
+          result.success,
+          result.error,
+          {
+            command: toolInput.command,
+            args: toolInput.args,
+            exit_code: result.data?.exit_code,
+            verification_attempts: 1,
+          }
+        );
+      } catch (e: any) {
+        result = { success: false, error: `Sandbox exec error: ${e.message}` };
       }
       break;
     }
