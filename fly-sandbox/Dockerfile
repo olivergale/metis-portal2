@@ -2,6 +2,7 @@ FROM node:20-slim
 
 # Install system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     git \
     grep \
     sed \
@@ -16,11 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install TypeScript globally
 RUN npm install -g typescript
 
-# Create workspace directory
+# Create workspace directory (repo cloned at runtime via /git-pull endpoint)
 RUN mkdir -p /workspace
-
-# Clone metis-portal2 repository
-RUN git clone https://github.com/olivergale/metis-portal2.git /workspace/main
 
 # Set working directory
 WORKDIR /app

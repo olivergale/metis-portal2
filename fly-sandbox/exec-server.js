@@ -111,14 +111,33 @@ function handleGitPull(req, res) {
   req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
     try {
-      execFile('git', ['pull'], { 
-        cwd: MAIN_WORKSPACE, 
+      // If workspace/main doesn't exist, clone first
+      if (!fs.existsSync(MAIN_WORKSPACE)) {
+        const token = process.env.GITHUB_TOKEN;
+        const repoUrl = token
+          ? `https://x-access-token:${token}@github.com/olivergale/metis-portal2.git`
+          : 'https://github.com/olivergale/metis-portal2.git';
+        execFile('git', ['clone', repoUrl, MAIN_WORKSPACE], {
+          timeout: 120000,
+          maxBuffer: 10 * 1024 * 1024
+        }, (error, stdout, stderr) => {
+          const output = (stdout || '') + (stderr || '');
+          sendJson(res, 200, {
+            success: !error,
+            output: error ? output : 'Repository cloned successfully',
+            exit_code: error ? (error.code || 1) : 0
+          });
+        });
+        return;
+      }
+      execFile('git', ['pull'], {
+        cwd: MAIN_WORKSPACE,
         timeout: 60000,
         maxBuffer: 1024 * 1024
       }, (error, stdout, stderr) => {
         const output = (stdout || '') + (stderr || '');
-        sendJson(res, 200, { 
-          success: !error, 
+        sendJson(res, 200, {
+          success: !error,
           output: output,
           exit_code: error ? (error.code || 1) : 0
         });

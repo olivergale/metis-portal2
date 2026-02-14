@@ -1,4 +1,4 @@
-app = "metis-sandbox"
+app = "endgame-sandbox"
 primary_region = "iad"
 
 [build]
