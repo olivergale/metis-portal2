@@ -382,16 +382,20 @@ export async function handleTransitionState(
       await ctx.supabase.from("work_orders").update({ summary }).eq("id", woId);
     }
 
-    // WO-0236: Correct 7-param RPC signature
-    // WO-0352: Capture both data and error from RPC call
-    const { data: rpcData, error: rpcError } = await ctx.supabase.rpc("update_work_order_state", {
+    // Map new_status to wo_transition event
+    const EVENT_MAP: Record<string, string> = {
+      review: "submit_for_review",
+      done: "mark_done",
+      failed: "mark_failed",
+    };
+    const event = EVENT_MAP[new_status];
+
+    // Use wo_transition for state changes
+    const { data: rpcData, error: rpcError } = await ctx.supabase.rpc("wo_transition", {
       p_work_order_id: woId,
-      p_status: new_status,
-      p_approved_at: null,
-      p_approved_by: null,
-      p_started_at: null,
-      p_completed_at: new_status === "failed" ? new Date().toISOString() : null,
-      p_summary: summary || null,
+      p_event: event,
+      p_actor: ctx.agentName,
+      p_payload: { summary: summary || null },
     });
 
     // WO-0352: Check for RPC error and log it
