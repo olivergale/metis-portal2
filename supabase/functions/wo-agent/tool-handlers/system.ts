@@ -392,7 +392,7 @@ export async function handleTransitionState(
 
     // Use wo_transition for state changes
     const { data: rpcData, error: rpcError } = await ctx.supabase.rpc("wo_transition", {
-      p_work_order_id: woId,
+      p_wo_id: woId,
       p_event: event,
       p_actor: ctx.agentName,
       p_payload: { summary: summary || null },
