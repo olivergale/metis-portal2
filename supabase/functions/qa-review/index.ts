@@ -164,9 +164,10 @@ function checkCodePatternsInFile(fileContent: string, acText: string): { matched
 interface SystemStateEvidence {
   text: string;
   github_file_evidence: GitHubFileEvidence[];
+  github_grep_evidence: any[];
 }
 
-async function gatherSystemStateEvidence(supabase: any, acText: string, summary: string, objective?: string): Promise<SystemStateEvidence> {
+async function gatherSystemStateEvidence(supabase: any, acText: string, summary: string, objective?: string, execLog?: any[]): Promise<SystemStateEvidence> {
   const combined = `${acText}\n${summary || ''}`;
   const evidence: string[] = [];
 
@@ -201,7 +202,7 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
             evidence.push(`Referenced WO ${wo.slug}: status=${wo.status}, qa_checklist_items=${Array.isArray(wo.qa_checklist) ? wo.qa_checklist.length : 0}`);
             
             // If AC claims transition to specific status, verify it
-            const targetStatus = combined.match(new RegExp(`${wo.slug}.*(?:to|→|->)\\s*(\\w+)`, 'i'));
+            const targetStatus = combined.match(new RegExp(`${wo.slug}.*(?:to|â|->)\\s*(\\w+)`, 'i'));
             if (targetStatus && targetStatus[1]) {
               const matches = wo.status === targetStatus[1].toLowerCase();
               evidence.push(`  Status transition claim: ${matches ? 'VERIFIED' : `MISMATCH (expected ${targetStatus[1]}, got ${wo.status})`}`);
@@ -337,13 +338,77 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
     evidence.push(`E2E evidence gathering error: ${e.message}`);
   }
 
-  // GitHub file verification (AC#4)
+  // GitHub file verification (AC#4) and GitHub grep fallback for sparse execution logs (WO-0598 AC7)
+  // When WO has fewer than 5 stream-phase entries, also grep for function names from ACs
   let githubEvidence: GitHubFileEvidence[] = [];
+  let githubGrepEvidence: any[] = [];
+  
+  // Count stream-phase entries in execution log
+  const streamPhaseCount = (execLog || []).filter((e: any) => e.phase === 'stream').length;
+  const hasSparseLog = streamPhaseCount < 5;
+  
   try {
     const filePaths = extractFilePathsFromACs(acText, objective || '');
     if (filePaths.length > 0) {
       // Pattern matching runs on full file content inside fetchGitHubFileEvidence
       githubEvidence = await fetchGitHubFileEvidence(filePaths, supabase, acText);
+    }
+    
+    // AC7: When execution log has fewer than 5 stream-phase entries, also grep for function names
+    if (hasSparseLog && acText) {
+      // Extract function names from ACs for grep search
+      const funcNamePattern = /\b([a-z][a-z0-9_]{2,50})\s*\(/g;
+      const funcNames: string[] = [];
+      let match;
+      while ((match = funcNamePattern.exec(acText)) !== null) {
+        const name = match[1];
+        // Filter out common SQL keywords and English words
+        if (!['select', 'insert', 'update', 'delete', 'create', 'drop', 'alter', 'grant', 'revoke',
+          'return', 'join', 'where', 'order', 'group', 'limit', 'offset', 'from', 'into',
+          'table', 'index', 'view', 'trigger', 'function', 'procedure', 'begin', 'end',
+          'if', 'else', 'case', 'when', 'then', 'null', 'true', 'false', 'and', 'or', 'not',
+          'in', 'exists', 'like', 'between', 'is', 'as', 'on', 'to', 'for', 'with', 'using',
+          'set', 'reset', 'show', 'describe', 'explain', 'analyze'].includes(name.toLowerCase())) {
+          funcNames.push(name);
+        }
+      }
+      
+      // Get GITHUB_TOKEN
+      let token: string | null = null;
+      try {
+        const { data: secretRow } = await supabase
+          .from('vault.decrypted_secrets' as any)
+          .select('decrypted_secret')
+          .eq('name', 'GITHUB_TOKEN')
+          .single();
+        if (secretRow?.decrypted_secret) token = secretRow.decrypted_secret;
+      } catch (_e) {}
+      if (!token) token = Deno.env.get('GITHUB_TOKEN') || null;
+      
+      if (token && funcNames.length > 0) {
+        // Grep for each function name in the codebase
+        for (const funcName of [...new Set(funcNames)].slice(0, 10)) {
+          try {
+            const searchResp = await fetch(
+              `https://api.github.com/search/code?q=${encodeURIComponent(funcName)}+repo:olivergale/metis-portal2`,
+              { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'qa-review-lie-detector' } }
+            );
+            if (searchResp.ok) {
+              const searchData = await searchResp.json();
+              githubGrepEvidence.push({
+                pattern: funcName,
+                found: searchData.total_count > 0,
+                matches: searchData.items?.slice(0, 5).map((item: any) => ({
+                  path: item.path,
+                  repository: item.repository.full_name
+                })) || []
+              });
+            }
+          } catch (e: any) {
+            githubGrepEvidence.push({ pattern: funcName, found: false, error: e.message });
+          }
+        }
+      }
     }
   } catch (e: any) {
     githubEvidence = [{ path: 'N/A', exists: false, size: 0, content_snippet: '', error: `GitHub evidence error: ${e.message}` }];
@@ -352,6 +417,7 @@ async function gatherSystemStateEvidence(supabase: any, acText: string, summary:
   return {
     text: evidence.length > 0 ? evidence.join('\n') : 'No system state evidence gathered',
     github_file_evidence: githubEvidence,
+    github_grep_evidence: githubGrepEvidence,
   };
 }
 
