@@ -1,4 +1,5 @@
-// wo-agent/context.ts v8
+// wo-agent/context.ts v9
+// v9: WO-MF-P25 -- pipeline_phase-aware adversarial prompt injection (red-team, blue-team)
 // v8: WO-0405 -- per-agent lesson filtering, ROLE_LESSON_CATEGORIES
 // v7: WO-0245  --  delegate_subtask + github_edit_file tool descriptions, restored v6 features
 // v6: WO-0253  --  use parent_id for remediation context (fallback to parent: tag)
@@ -308,6 +309,25 @@ export async function buildAgentContext(
 
   // WO-0165: Add concurrent WO awareness
   userMessage += await buildConcurrentWOContext(supabase, workOrder.id);
+
+  // WO-MF-P25: Pipeline-phase aware adversarial prompt injection
+  const woPipelinePhase = workOrder.pipeline_phase || "";
+  const woTags2 = workOrder.tags || [];
+  
+  if (woPipelinePhase === "harden") {
+    if (woTags2.includes("red-team")) {
+      // Adversarial red-team testing mode
+      systemPrompt += `\n\n## ADVERSARIAL RED-TEAM MODE\n`;
+      systemPrompt += `You are performing adversarial red-team testing. Execute test queries against all modified objects. `;
+      systemPrompt += `Check edge cases, invalid inputs, missing RLS, type coercion failures. `;
+      systemPrompt += `Record every failure as a wo_mutation with success=false.\n`;
+    } else if (woTags2.includes("blue-team")) {
+      // Defensive blue-team mode - respond to red-team findings
+      systemPrompt += `\n\n## DEFENSIVE BLUE-TEAM MODE\n`;
+      systemPrompt += `Address all red-team findings. Each finding must have a corresponding fix mutation. `;
+      systemPrompt += `Verify each fix by re-running the adversarial test.\n`;
+    }
+  }
 
   userMessage += `\n---\nExecute this work order now. Start by logging your plan, then proceed step by step.`;
 
