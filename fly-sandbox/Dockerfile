@@ -17,9 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://deno.land/install.sh | sh
 
-# Add deno to PATH
-ENV DENO_INSTALL="$HOME/.deno"
-ENV PATH="$DENO_INSTALL/bin:$PATH"
+# Add deno to PATH (hardcoded — Docker ENV doesn't expand $HOME)
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="/root/.deno/bin:$PATH"
 
 # Install TypeScript globally
 RUN npm install -g typescript
