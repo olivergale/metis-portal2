@@ -65,6 +65,9 @@ class ManifoldDashboard {
     }
     this.container.appendChild(header);
 
+    // Setup cleanup on page unload to prevent memory leak (LOW finding #6)
+    this.setupCleanup();
+
     // Create dashboard layout
     const dashboard = document.createElement('div');
     dashboard.className = 'manifold-dashboard';
