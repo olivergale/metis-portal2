@@ -40,6 +40,7 @@ interface WorkOrder {
   depends_on: string[] | null;
   assigned_to: string | null;
   parent_id: string | null;
+  pipeline_phase: string | null;
 }
 
 /**
