@@ -2,7 +2,7 @@
 // WO-0153: Fixed imports for Deno Deploy compatibility
 // WO-0166: Role-based tool filtering per agent identity
 // WO-0245: delegate_subtask tool for WO tree execution
-// WO-0257: github_edit_file patch-based editing
+// WO-0257: github_edit_file removed — replaced by github_push_files (Git Data API)
 // WO-0485: Mutation recording in all mutating tool handlers
 // WO-0491: Remediation - trigger re-deploy to confirm instrumentation
 // Tool definitions for the agentic work order executor
@@ -12,7 +12,7 @@
 type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
-import { handleGithubReadFile, handleGithubWriteFile, handleGithubEditFile, handleGithubPatchFile, handlePatchFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree, handleReadFullFile, handleGitLog, handleGitDiff, handleGitBlame } from "./tool-handlers/github.ts";
+import { handleGithubReadFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree, handleReadFullFile, handleGitLog, handleGitDiff, handleGitBlame } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
 import { handleWebFetch } from "./tool-handlers/web.ts";
 import {
@@ -444,80 +444,6 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
       },
       required: ["path", "start_line", "end_line"],
-    },
-  },
-  {
-    name: "github_patch_file",
-    description:
-      "Apply surgical patches to a file using search/replace. Reads full file content via Git Data API, applies patches sequentially, and commits. Use when you need to make multiple replacements in one file (unlike github_edit_file which only does one replacement).",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "File path within the repo, e.g. src/App.ts",
-        },
-        patches: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              search: { type: "string", description: "Exact string to find in file" },
-              replace: { type: "string", description: "Replacement string" },
-            },
-            required: ["search", "replace"],
-          },
-          description: "Array of search/replace patches applied sequentially. Fails if any search string not found or appears more than once.",
-        },
-        message: {
-          type: "string",
-          description: "Commit message",
-        },
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
-        },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
-        },
-      },
-      required: ["path", "patches", "message"],
-    },
-  },
-  {
-    name: "patch_file",
-    description:
-      "Apply a simple patch to a single file using old_string/new_string parameters. This is a convenience wrapper around github_patch_file for single-replacement use cases. Fails if the old_string is not found or appears more than once.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        path: {
-          type: "string",
-          description: "File path within the repo, e.g. src/App.ts",
-        },
-        old_string: {
-          type: "string",
-          description: "Exact string to find in the file (old content)",
-        },
-        new_string: {
-          type: "string",
-          description: "Replacement string (new content)",
-        },
-        repo: {
-          type: "string",
-          description: "Repository in owner/repo format (default: olivergale/metis-portal2)",
-        },
-        branch: {
-          type: "string",
-          description: "Branch name (default: main)",
-        },
-        commit_message: {
-          type: "string",
-          description: "Commit message",
-        },
-      },
-      required: ["path", "old_string", "new_string", "commit_message"],
     },
   },
   {
@@ -1039,7 +965,7 @@ const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
 const SYSTEM_TOOLS = ["log_progress", "read_execution_log", "get_schema", "mark_complete", "mark_failed", "resolve_qa_findings", "update_qa_checklist", "transition_state", "search_knowledge_base", "search_lessons"];
 const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
-const GITHUB_TOOLS = ["github_read_file", "github_patch_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree", "read_full_file", "git_log", "git_diff", "git_blame"];
+const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree", "read_full_file", "git_log", "git_diff", "git_blame"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 const WEB_TOOLS = ["web_fetch"];
 
@@ -1111,9 +1037,6 @@ export async function dispatchTool(
     "execute_sql",
     "apply_migration",
     "github_push_files",
-    "github_write_file",   // deprecated, kept for in-flight WO compat
-    "github_edit_file",    // deprecated, kept for in-flight WO compat
-    "github_patch_file",   // deprecated, kept for in-flight WO compat
   ]);
 
   let result: ToolResult;
@@ -1130,18 +1053,6 @@ export async function dispatchTool(
       break;
     case "github_read_file":
       result = await handleGithubReadFile(toolInput, ctx);
-      break;
-    case "github_write_file":
-      result = await handleGithubWriteFile(toolInput, ctx);
-      break;
-    case "github_edit_file":
-      result = await handleGithubEditFile(toolInput, ctx);
-      break;
-    case "github_patch_file":
-      result = await handleGithubPatchFile(toolInput, ctx);
-      break;
-    case "patch_file":
-      result = await handlePatchFile(toolInput, ctx);
       break;
     case "github_push_files":
       result = await handleGithubPushFiles(toolInput, ctx);
@@ -1662,11 +1573,6 @@ export async function dispatchTool(
         })),
         message: toolInput.message
       };
-    } else if (toolName === "github_write_file" || toolName === "github_edit_file" || toolName === "github_patch_file") {
-      objectType = "github_file";
-      objectId = toolInput.path || "unknown";
-      action = toolName === "github_write_file" ? "WRITE" : toolName === "github_edit_file" ? "EDIT" : "PATCH";
-      context = { path: toolInput.path };
     }
 
     // Skip recording SELECT queries (reads, not mutations)
