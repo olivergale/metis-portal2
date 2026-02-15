@@ -21,6 +21,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0"
+  },
   "bugs": {
     "url": "https://github.com/olivergale/metis-portal2/issues"
   },
