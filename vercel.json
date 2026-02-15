@@ -4,6 +4,8 @@
   "framework": null,
   "installCommand": "npm install",
   "rewrites": [
-    { "source": "/workspace", "destination": "/workspace-new.html" }
+    { "source": "/workspace", "destination": "/workspace-new.html" },
+    { "source": "/manifold", "destination": "/manifold.html" },
+    { "source": "/regression", "destination": "/regression.html" }
   ]
 }
