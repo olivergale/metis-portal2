@@ -52,10 +52,21 @@ jobs:
             fi
 
             echo "Deploying: $func"
-            supabase functions deploy "$func" \
-              --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
-              --no-verify-jwt \
-              || echo "WARNING: Failed to deploy $func"
+
+            # WO-0390: Public functions need --no-verify-jwt for anonymous access
+            # All other functions deploy with JWT verification enabled (default)
+            PUBLIC_FUNCTIONS="portal-chat"
+            if echo "$PUBLIC_FUNCTIONS" | grep -qw "$func"; then
+              echo "  (public function — JWT verification disabled)"
+              supabase functions deploy "$func" \
+                --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+                --no-verify-jwt \
+                || echo "WARNING: Failed to deploy $func"
+            else
+              supabase functions deploy "$func" \
+                --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+                || echo "WARNING: Failed to deploy $func"
+            fi
           done
 
       - name: Summary
