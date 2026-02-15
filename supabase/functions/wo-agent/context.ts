@@ -1,4 +1,5 @@
-// wo-agent/context.ts v9
+// wo-agent/context.ts v10
+// v10: Add custom_instructions injection from agent_execution_profiles, frontend agent rules
 // v9: WO-MF-P25 -- pipeline_phase-aware adversarial prompt injection (red-team, blue-team)
 // v8: WO-0405 -- per-agent lesson filtering, ROLE_LESSON_CATEGORIES
 // v7: WO-0245  --  delegate_subtask + github_edit_file tool descriptions, restored v6 features
@@ -129,7 +130,7 @@ export async function buildAgentContext(
     "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
     ops: ["operational", "monitoring", "failure_archetype", "execution"],
     security: ["security", "enforcement", "approval_flow"],
-    frontend: ["execution", "deployment", "scope_creep"],
+    frontend: ["execution", "deployment", "scope_creep", "schema_gotcha", "hallucination", "testing"],
     ilmarinen: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "operational", "scope_creep", "hallucination"],
     "user-portal": ["approval_flow", "scope_creep"],
   };
@@ -225,6 +226,13 @@ export async function buildAgentContext(
       }
     }
     systemPrompt += `\n`;
+
+    // v10: Inject custom_instructions from profile (agent-specific domain knowledge)
+    if (agentProfile.custom_instructions) {
+      systemPrompt += `## Agent-Specific Instructions\n`;
+      systemPrompt += agentProfile.custom_instructions;
+      systemPrompt += `\n\n`;
+    }
   }
 
   // WO-0166: Dynamic tool list based on agent role
@@ -249,6 +257,19 @@ export async function buildAgentContext(
     delegate_subtask: "Create a child WO with model assignment and dispatch it (always non-blocking)",
     check_child_status: "Check status/summary of a delegated child WO",
     sandbox_exec: "Execute command in sandboxed env (deno check, deno test, grep, etc.) to verify work before submitting",
+    github_push_files: "Atomic multi-file commit via Git Data API (blobs→tree→commit→ref). Preferred for all file changes.",
+    github_list_files: "List files in a directory of a GitHub repo",
+    github_search_code: "Search code across a GitHub repo by keyword/pattern",
+    github_grep: "Grep file contents in a GitHub repo",
+    github_read_file_range: "Read specific line range of a file in GitHub",
+    github_tree: "Get full file tree of a GitHub repo (recursive listing)",
+    search_knowledge_base: "Search the agent knowledge base for patterns, gotchas, and institutional knowledge",
+    web_fetch: "Fetch a URL and return its content (for verifying deployed pages)",
+    save_memory: "Save a pattern/gotcha/preference to agent memory for future sessions",
+    recall_memory: "Recall saved memories relevant to current work",
+    run_tests: "Run test suite in sandbox",
+    sandbox_write_file: "Write a file into the sandbox for testing/verification",
+    sandbox_pipeline: "Run multi-step pipeline in sandbox (build, test, verify)",
   };
   systemPrompt += `## Available Tools (${availableTools.length} for ${agentName})\n`;
   for (const tool of availableTools) {
@@ -266,6 +287,20 @@ export async function buildAgentContext(
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
   systemPrompt += `9. For file edits, prefer github_patch_file (multi-edit, one commit) over github_edit_file (single edit) over github_write_file (full rewrite)\n`;
   systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
+
+  // v10: Frontend agent verification and build rules
+  if (agentName === "frontend") {
+    systemPrompt += `\n## Frontend Verification (MANDATORY)\n`;
+    systemPrompt += `After writing or editing any .ts/.js/.html/.css file:\n`;
+    systemPrompt += `1. Read the file back with github_read_file to confirm changes applied correctly\n`;
+    systemPrompt += `2. For TypeScript files: use sandbox_exec with command="npx" args=["tsc", "--noEmit"] to verify compilation\n`;
+    systemPrompt += `3. For new pages: verify the HTML file is added to vite.config.ts rollupOptions.input\n`;
+    systemPrompt += `4. For new routes: verify vercel.json has the rewrite rule\n`;
+    systemPrompt += `5. Use github_search_code to verify new exports/imports are properly connected\n`;
+    systemPrompt += `6. After ALL file changes: use sandbox_exec to run "npx vite build" and verify 0 errors\n`;
+    systemPrompt += `7. If build fails 3 times: escalate via log_progress, do NOT submit broken code\n`;
+    systemPrompt += `8. Commit all related files atomically via github_push_files (NEVER commit files one at a time)\n`;
+  }
 
   // WO-0553: Mandatory sandbox verification instructions for builder
   if (agentName === "builder") {
