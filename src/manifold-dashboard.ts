@@ -23,6 +23,16 @@ interface PipelinePhase {
   completed_at?: string;
 }
 
+interface ScaffoldContract {
+  id: string;
+  object_name: string;
+  operation_type: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  preconditions: Record<string, unknown>;
+  postconditions: Record<string, unknown>;
+}
+
 interface WOExecutionManifest {
   work_order_id: string;
   ac_number: number;
@@ -40,11 +50,23 @@ interface PipelineStats {
   failed: number;
 }
 
+interface OntologySummary {
+  total_objects: number;
+  objects_with_properties: number;
+  total_links: number;
+}
+
+interface DashboardData {
+  pipeline_runs: PipelineRun[];
+  ontology_summary: OntologySummary;
+}
+
 class ManifoldDashboard {
   private container: HTMLElement;
   private pipelines: PipelineRun[] = [];
   private selectedPipeline: PipelineRun | null = null;
   private manifest: WOExecutionManifest[] = [];
+  private contracts: ScaffoldContract[] = [];
   private pollInterval: number | null = null;
 
   constructor() {
@@ -155,17 +177,16 @@ class ManifoldDashboard {
 
   private async loadPipelines(showLoading = true) {
     try {
-      // FIXED: Use RPC instead of non-existent edge function (HIGH finding #3)
-      const data = await apiFetch<PipelineRun[]>(
-        '/rest/v1/pipeline_runs?select=*&order=created_at.desc',
-        'GET'
+      // AC8 FIX: Call get_manifold_dashboard() RPC for initial overview data
+      const dashData = await apiFetch<DashboardData>(
+        '/rest/v1/rpc/get_manifold_dashboard',
+        'POST'
       );
 
-      // Handle response - can be array directly or wrapped
-      const pipelineData = Array.isArray(data) ? data : (data?.pipelines || []);
-      this.pipelines = pipelineData;
+      // Use dashboard data for pipelines and stats
+      this.pipelines = dashData?.pipeline_runs || [];
 
-      // Calculate stats locally
+      // Calculate stats from pipeline data
       const stats = {
         total: this.pipelines.length,
         active: this.pipelines.filter(p => p.status === 'active').length,
@@ -266,7 +287,10 @@ class ManifoldDashboard {
       );
 
       const p = detailData?.pipeline || pipeline;
-      const phases = detailData?.phase_history || [];
+      // AC4 FIX: Use phase_wos instead of phase_history
+      const phases = detailData?.phase_wos || [];
+      // AC4 FIX: Extract contracts from response
+      this.contracts = detailData?.contracts || [];
 
       this.manifest = detailData?.manifest_steps || [];
 
@@ -288,7 +312,8 @@ class ManifoldDashboard {
         'POST',
         { p_pipeline_run_id: pipelineId }
       );
-      return result?.phase_history || [];
+      // AC4 FIX: Use phase_wos instead of phase_history
+      return result?.phase_wos || [];
     } catch {
       return [];
     }
@@ -378,17 +403,44 @@ class ManifoldDashboard {
         ` : '<div class="empty-text">No manifest steps recorded</div>'}
       </div>
 
+      <div class="pipeline-contracts">
+        <h3>Scaffold Contracts (${this.contracts.length})</h3>
+        ${this.contracts.length ? `
+          <div class="contracts-list">
+            ${this.contracts.map(c => `
+              <div class="contract-item">
+                <div class="contract-header">
+                  <span class="contract-object">${escapeHtml(c.object_name)}</span>
+                  <span class="contract-operation">${escapeHtml(c.operation_type)}</span>
+                </div>
+                <div class="contract-meta">
+                  <span class="contract-label">Preconditions:</span>
+                  <span class="contract-value">${JSON.stringify(c.preconditions || {})}</span>
+                </div>
+                <div class="contract-meta">
+                  <span class="contract-label">Postconditions:</span>
+                  <span class="contract-value">${JSON.stringify(c.postconditions || {})}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<div class="empty-text">No scaffold contracts</div>'}
+      </div>
+
       <div class="pipeline-intervention">
         <h3>Intervene</h3>
         <div class="intervention-actions">
           <button class="btn btn-warning" data-action="pause">
             ⏸ Pause
           </button>
-          <button class="btn btn-danger" data-action="abort">
-            ⛔ Abort
+          <button class="btn btn-success" data-action="resume">
+            ▶ Resume
           </button>
-          <button class="btn btn-secondary" data-action="retry">
-            ↻ Retry
+          <button class="btn btn-secondary" data-action="skip_phase">
+            ⏭ Skip Phase
+          </button>
+          <button class="btn btn-secondary" data-action="restart_phase">
+            ↻ Restart Phase
           </button>
         </div>
       </div>
@@ -414,7 +466,7 @@ class ManifoldDashboard {
 
   // INFO: CSRF handled by Supabase - edge functions require valid JWT
   private async intervene(pipelineId: string, action: string) {
-    if (!confirm(`Are you sure you want to ${action} this pipeline?`)) {
+    if (!confirm(`Are you sure you want to ${action.replace('_', ' ')} this pipeline?`)) {
       return;
     }
 
