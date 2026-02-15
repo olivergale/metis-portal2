@@ -118,7 +118,7 @@ class WorkspaceApp {
     try {
       const [contextData, woData] = await Promise.all([
         apiFetch<ContextData>('/functions/v1/context-load', 'POST', { project_code: 'METIS-001' }),
-        apiFetch<WorkOrder[]>('/rest/v1/work_orders?select=*&order=updated_at.desc&limit=50')
+        apiFetch<WorkOrder[]>('/rest/v1/work_orders?select=*&order=created_at.desc&limit=50')
       ]);
 
       this.workOrders = (Array.isArray(woData) ? woData : []) || contextData.work_orders || [];

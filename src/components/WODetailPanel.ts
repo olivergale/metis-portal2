@@ -55,10 +55,10 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
   // Info Section
   content.appendChild(renderInfoSection(wo));
 
-  // Execution Log (loaded async)
+  // Execution Log + QA Findings (merged chronologically, loaded async)
   const execSection = renderSectionShell('Execution Log', 'Loading...');
   content.appendChild(execSection);
-  loadExecutionLog(wo.id, execSection);
+  loadMergedTimeline(wo.id, execSection);
 
   // WO Events Timeline (loaded async)
   const eventsSection = renderSectionShell('WO Events Timeline', 'Loading...');
@@ -72,11 +72,6 @@ export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
 
   // QA Checklist
   content.appendChild(renderQAChecklist(wo.qa_checklist));
-
-  // QA Findings (loaded async)
-  const findingsSection = renderSectionShell('QA Findings', 'Loading...');
-  content.appendChild(findingsSection);
-  loadQAFindings(wo.id, findingsSection);
 
   panel.appendChild(content);
 
@@ -262,6 +257,11 @@ function renderInfoSection(wo: WorkOrder): HTMLElement {
     ? renderACList(wo.acceptance_criteria)
     : '<span style="color:var(--text-muted)">None</span>';
 
+  const priorities = ['p0_critical', 'p1_high', 'p2_medium', 'p3_low'];
+  const priorityOptions = priorities.map(p =>
+    `<option value="${p}" ${p === wo.priority ? 'selected' : ''}>${p.replace('_', ' ')}</option>`
+  ).join('');
+
   section.innerHTML = `
     <div class="wo-detail-section-header"><h3>Details</h3></div>
     <div class="wo-detail-section-body">
@@ -272,6 +272,10 @@ function renderInfoSection(wo: WorkOrder): HTMLElement {
         <span class="wo-info-value">${acHtml}</span>
         <span class="wo-info-label">Summary</span>
         <span class="wo-info-value summary-text">${escapeHtml(wo.summary || 'N/A')}</span>
+        <span class="wo-info-label">Priority</span>
+        <span class="wo-info-value">
+          <select class="priority-override-select" data-wo-id="${wo.id}">${priorityOptions}</select>
+        </span>
         <span class="wo-info-label">Created</span>
         <span class="wo-info-value">${relativeTime(wo.created_at)}</span>
         ${wo.parent_id ? `<span class="wo-info-label">Parent</span><span class="wo-info-value" style="font-family:var(--font-mono);font-size:12px">${escapeHtml(wo.parent_id)}</span>` : ''}
@@ -279,6 +283,24 @@ function renderInfoSection(wo: WorkOrder): HTMLElement {
       </div>
     </div>
   `;
+
+  // Priority override handler
+  const prioritySelect = section.querySelector('.priority-override-select') as HTMLSelectElement;
+  if (prioritySelect) {
+    prioritySelect.addEventListener('change', async () => {
+      const newPriority = prioritySelect.value;
+      const woId = prioritySelect.dataset.woId!;
+      try {
+        await apiFetch(`/rest/v1/work_orders?id=eq.${woId}`, 'PATCH', { priority: newPriority });
+        prioritySelect.style.borderColor = '#34D399';
+        setTimeout(() => { prioritySelect.style.borderColor = ''; }, 2000);
+      } catch (err: any) {
+        alert(`Failed to update priority: ${err.message}`);
+        prioritySelect.value = wo.priority;
+      }
+    });
+  }
+
   return section;
 }
 
@@ -326,6 +348,89 @@ async function loadExecutionLog(woId: string, section: HTMLElement) {
         </div>
       `;
     }).join('')}</div>`;
+  } catch (err) {
+    const body = section.querySelector('.wo-detail-section-body')!;
+    body.innerHTML = '<div class="exec-log-empty">Failed to load execution log</div>';
+  }
+}
+
+/* ──────────── Merged Timeline (Exec Log + QA Findings) ──────────── */
+
+async function loadMergedTimeline(woId: string, section: HTMLElement) {
+  try {
+    const [entries, findings] = await Promise.all([
+      apiFetch<ExecutionLogEntry[]>(
+        `/rest/v1/work_order_execution_log?work_order_id=eq.${woId}&order=created_at.asc&limit=100`
+      ),
+      apiFetch<QAFinding[]>(
+        `/rest/v1/qa_findings?work_order_id=eq.${woId}&order=created_at.desc&limit=50`
+      ),
+    ]);
+
+    const body = section.querySelector('.wo-detail-section-body')!;
+    const headerEl = section.querySelector('.wo-detail-section-header')!;
+
+    const logItems = (entries || []).map(entry => ({
+      type: 'log' as const,
+      timestamp: entry.created_at || '',
+      phase: entry.phase || 'unknown',
+      agent: entry.agent_name || '--',
+      detail: extractDetail(entry.detail),
+    }));
+
+    const findingItems = (findings || []).map(f => ({
+      type: 'finding' as const,
+      timestamp: f.created_at || '',
+      phase: f.finding_type || 'info',
+      agent: 'qa-gate',
+      detail: `[${(f.category || 'qa').toUpperCase()}] ${f.description || ''}`,
+      evidence: f.evidence,
+      findingType: f.finding_type,
+    }));
+
+    const merged = [...logItems, ...findingItems].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    if (merged.length === 0) {
+      body.innerHTML = '<div class="exec-log-empty">No execution log entries</div>';
+      return;
+    }
+
+    const findingCount = findingItems.length;
+    headerEl.innerHTML = `<h3>Execution Log</h3><span style="font-size:11px;color:var(--text-muted)">${logItems.length} entries${findingCount > 0 ? ` + ${findingCount} QA findings` : ''}</span>`;
+
+    body.innerHTML = `<div class="exec-log-timeline">${merged.map((item, idx) => {
+      const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+      const isFinding = item.type === 'finding';
+      const phaseClass = isFinding ? (item as any).findingType || '' : item.phase;
+      return `
+        <div class="exec-log-entry ${isFinding ? 'qa-finding-inline' : ''}">
+          <span class="exec-log-phase ${phaseClass}">${escapeHtml(isFinding ? `QA: ${item.phase}` : item.phase)}</span>
+          <span class="exec-log-agent">${escapeHtml(item.agent)}</span>
+          <div>
+            <div class="exec-log-detail">${escapeHtml(item.detail)}</div>
+            ${isFinding && (item as any).evidence ? `
+              <button class="qa-finding-evidence-toggle" data-target="evidence-inline-${idx}">Show Evidence</button>
+              <div class="qa-finding-evidence" id="evidence-inline-${idx}">${escapeHtml(JSON.stringify((item as any).evidence, null, 2))}</div>
+            ` : ''}
+            <div class="exec-log-time">${time}</div>
+          </div>
+        </div>
+      `;
+    }).join('')}</div>`;
+
+    // Attach evidence toggle handlers
+    body.querySelectorAll('.qa-finding-evidence-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = (btn as HTMLElement).dataset.target!;
+        const evidenceEl = document.getElementById(targetId);
+        if (evidenceEl) {
+          const expanded = evidenceEl.classList.toggle('expanded');
+          btn.textContent = expanded ? 'Hide Evidence' : 'Show Evidence';
+        }
+      });
+    });
   } catch (err) {
     const body = section.querySelector('.wo-detail-section-body')!;
     body.innerHTML = '<div class="exec-log-empty">Failed to load execution log</div>';

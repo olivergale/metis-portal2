@@ -227,12 +227,30 @@
   color: var(--text-secondary);
 }
 
+/* Priority Override Dropdown */
+.priority-override-select {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.priority-override-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* Execution Log Timeline */
 .exec-log-timeline {
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-height: 400px;
+  max-height: 300px;
   overflow-y: auto;
 }
 
@@ -334,6 +352,30 @@
   font-size: 13px;
   text-align: center;
   padding: 20px;
+}
+
+.qa-finding-inline {
+  border-left: 3px solid rgba(167, 139, 250, 0.5);
+}
+
+.exec-log-phase.pass {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34D399;
+}
+
+.exec-log-phase.fail {
+  background: rgba(220, 38, 38, 0.2);
+  color: #DC2626;
+}
+
+.exec-log-phase.warning {
+  background: rgba(251, 191, 36, 0.2);
+  color: #FBBF24;
+}
+
+.exec-log-phase.info {
+  background: rgba(96, 165, 250, 0.2);
+  color: #60A5FA;
 }
 
 /* QA Checklist */
