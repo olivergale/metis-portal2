@@ -71,6 +71,24 @@ interface ActivityEvent {
   summary: string;
 }
 
+interface ObjectRegistry {
+  id: string;
+  object_name: string;
+  object_type: string;
+  parent_id?: string;
+  parent_name?: string;
+  properties?: Record<string, unknown>;
+}
+
+interface ObjectLink {
+  source_id: string;
+  source_name: string;
+  link_type: string;
+  target_id: string;
+  target_name: string;
+  metadata?: Record<string, unknown>;
+}
+
 class ManifoldDashboard {
   private container: HTMLElement;
   private pipelines: PipelineRun[] = [];
@@ -80,6 +98,9 @@ class ManifoldDashboard {
   private channels: RealtimeChannel[] = [];
   private activityEvents: ActivityEvent[] = [];
   private maxActivityEvents = 100;
+  private ontologyObjects: ObjectRegistry[] = [];
+  private selectedObject: ObjectRegistry | null = null;
+  private objectLinks: ObjectLink[] = [];
 
   constructor() {
     this.container = document.getElementById('app')!;
@@ -158,6 +179,39 @@ class ManifoldDashboard {
         <h2>Live Activity Feed</h2>
         <div id="activity-feed-container" class="activity-feed-container">
           <div class="empty-text">Waiting for activity...</div>
+        </div>
+      </div>
+
+      <div class="ontology-explorer" id="ontology-explorer">
+        <h2>Ontology Explorer</h2>
+        <div class="ontology-controls">
+          <input 
+            type="text" 
+            id="ontology-search" 
+            placeholder="Search by name..." 
+            class="ontology-search-input"
+          />
+          <select id="ontology-type-filter" class="ontology-type-select">
+            <option value="">All Types</option>
+            <option value="table">table</option>
+            <option value="view">view</option>
+            <option value="function">function</option>
+            <option value="trigger">trigger</option>
+            <option value="index">index</option>
+            <option value="policy">policy</option>
+            <option value="column">column</option>
+            <option value="constraint">constraint</option>
+            <option value="type">type</option>
+            <option value="extension">extension</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div id="ontology-results" class="ontology-results">
+          <div class="empty-text">Enter search criteria or select a type to explore objects</div>
+        </div>
+        <div id="ontology-links" class="ontology-links" style="display: none;">
+          <h3>Object Links</h3>
+          <div id="ontology-links-content"></div>
         </div>
       </div>
     `;
@@ -536,12 +590,133 @@ class ManifoldDashboard {
         flex-direction: column;
         gap: 4px;
       }
+      .ontology-explorer {
+        margin: 24px;
+        background: var(--bg-surface);
+        border-radius: 8px;
+        padding: 20px;
+      }
+      .ontology-explorer h2 {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 16px;
+      }
+      .ontology-controls {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .ontology-search-input {
+        flex: 1;
+        padding: 8px 12px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 14px;
+      }
+      .ontology-type-select {
+        padding: 8px 12px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 14px;
+        min-width: 150px;
+      }
+      .ontology-results {
+        background: var(--bg-elevated);
+        border-radius: 6px;
+        padding: 12px;
+      }
+      .ontology-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .ontology-table th {
+        text-align: left;
+        padding: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--border-default);
+      }
+      .ontology-table td {
+        padding: 12px;
+        font-size: 14px;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-default);
+      }
+      .ontology-row {
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .ontology-row:hover {
+        background: var(--bg-hover);
+      }
+      .ontology-row.selected {
+        background: var(--bg-hover);
+        border-left: 3px solid var(--accent);
+      }
+      .ontology-name {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .ontology-type {
+        font-family: var(--font-mono);
+        color: var(--accent);
+        font-size: 12px;
+      }
+      .ontology-links {
+        margin-top: 24px;
+        padding: 16px;
+        background: var(--bg-elevated);
+        border-radius: 6px;
+      }
+      .ontology-links h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+      }
+      .links-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .links-table th {
+        text-align: left;
+        padding: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--border-default);
+      }
+      .links-table td {
+        padding: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-default);
+      }
+      .link-type {
+        font-family: var(--font-mono);
+        color: var(--accent);
+        font-size: 11px;
+      }
     `;
     document.head.appendChild(style);
 
     // Event listeners
     document.getElementById('refresh-btn')?.addEventListener('click', () => this.loadPipelines());
     document.getElementById('create-pipeline-btn')?.addEventListener('click', () => this.showCreateModal());
+
+    // Ontology Explorer event listeners
+    const searchInput = document.getElementById('ontology-search') as HTMLInputElement;
+    const typeFilter = document.getElementById('ontology-type-filter') as HTMLSelectElement;
+    searchInput?.addEventListener('input', () => this.loadOntologyObjects());
+    typeFilter?.addEventListener('change', () => this.loadOntologyObjects());
 
     // Load initial data
     await this.loadPipelines();
@@ -996,6 +1171,160 @@ class ManifoldDashboard {
       hour: '2-digit', 
       minute: '2-digit' 
     });
+  }
+
+  private async loadOntologyObjects() {
+    const searchInput = document.getElementById('ontology-search') as HTMLInputElement;
+    const typeFilter = document.getElementById('ontology-type-filter') as HTMLSelectElement;
+    const resultsContainer = document.getElementById('ontology-results');
+    
+    if (!resultsContainer) return;
+
+    const searchText = searchInput?.value.trim() || '';
+    const selectedType = typeFilter?.value || '';
+
+    // Only search if there's a filter or search text
+    if (!searchText && !selectedType) {
+      resultsContainer.innerHTML = '<div class="empty-text">Enter search criteria or select a type to explore objects</div>';
+      const linksSection = document.getElementById('ontology-links');
+      if (linksSection) linksSection.style.display = 'none';
+      return;
+    }
+
+    resultsContainer.innerHTML = '<div class="loading-text">Loading ontology objects...</div>';
+
+    try {
+      const results = await apiFetch<ObjectRegistry[]>(
+        '/rest/v1/rpc/query_object_registry',
+        'POST',
+        {
+          p_object_type: selectedType || null,
+          p_name_pattern: searchText || null,
+          p_limit: 50
+        }
+      );
+
+      this.ontologyObjects = results || [];
+      this.renderOntologyTable();
+    } catch (error) {
+      console.error('Failed to load ontology objects:', error);
+      resultsContainer.innerHTML = '<div class="error-text">Failed to load ontology objects</div>';
+    }
+  }
+
+  private renderOntologyTable() {
+    const resultsContainer = document.getElementById('ontology-results');
+    if (!resultsContainer) return;
+
+    if (!this.ontologyObjects.length) {
+      resultsContainer.innerHTML = '<div class="empty-text">No objects found</div>';
+      return;
+    }
+
+    const tableHtml = `
+      <table class="ontology-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Parent</th>
+            <th>Properties</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${this.ontologyObjects.map(obj => {
+            const propsCount = obj.properties ? Object.keys(obj.properties).length : 0;
+            return `
+              <tr class="ontology-row" data-object-id="${obj.id}">
+                <td class="ontology-name">${escapeHtml(obj.object_name)}</td>
+                <td class="ontology-type">${escapeHtml(obj.object_type)}</td>
+                <td class="ontology-parent">${obj.parent_name ? escapeHtml(obj.parent_name) : '-'}</td>
+                <td class="ontology-props-count">${propsCount}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+
+    resultsContainer.innerHTML = tableHtml;
+
+    // Add click handlers for rows
+    resultsContainer.querySelectorAll('.ontology-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const objectId = (row as HTMLElement).dataset.objectId;
+        if (objectId) {
+          const obj = this.ontologyObjects.find(o => o.id === objectId);
+          if (obj) this.selectObject(obj);
+        }
+      });
+    });
+  }
+
+  private async selectObject(obj: ObjectRegistry) {
+    this.selectedObject = obj;
+
+    // Highlight selected row
+    document.querySelectorAll('.ontology-row').forEach(row => {
+      row.classList.toggle('selected', 
+        (row as HTMLElement).dataset.objectId === obj.id);
+    });
+
+    const linksSection = document.getElementById('ontology-links');
+    const linksContent = document.getElementById('ontology-links-content');
+    
+    if (!linksSection || !linksContent) return;
+
+    linksSection.style.display = 'block';
+    linksContent.innerHTML = '<div class="loading-text">Loading object links...</div>';
+
+    try {
+      const links = await apiFetch<ObjectLink[]>(
+        '/rest/v1/rpc/query_object_links',
+        'POST',
+        {
+          p_source_id: obj.id,
+          p_limit: 20
+        }
+      );
+
+      this.objectLinks = links || [];
+      this.renderObjectLinks();
+    } catch (error) {
+      console.error('Failed to load object links:', error);
+      linksContent.innerHTML = '<div class="error-text">Failed to load object links</div>';
+    }
+  }
+
+  private renderObjectLinks() {
+    const linksContent = document.getElementById('ontology-links-content');
+    if (!linksContent) return;
+
+    if (!this.objectLinks.length) {
+      linksContent.innerHTML = '<div class="empty-text">No links found for this object</div>';
+      return;
+    }
+
+    const tableHtml = `
+      <table class="links-table">
+        <thead>
+          <tr>
+            <th>Link Type</th>
+            <th>Target</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${this.objectLinks.map(link => `
+            <tr class="link-row">
+              <td class="link-type">${escapeHtml(link.link_type)}</td>
+              <td class="link-target">${escapeHtml(link.target_name)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    linksContent.innerHTML = tableHtml;
   }
 }
 
