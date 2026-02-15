@@ -72,6 +72,11 @@ export async function buildAgentContext(
     agentModel = workOrder.client_info.model;
   }
 
+  // WO-MF-P26: Escalation tier model override (takes priority over client_info.model)
+  if (workOrder.client_info?.escalation_model) {
+    agentModel = workOrder.client_info.escalation_model;
+  }
+
   // Load schema context
   let schemaContext = "## Database Schema\nSchema loading failed";
   try {
