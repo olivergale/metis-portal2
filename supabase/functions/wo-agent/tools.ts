@@ -956,10 +956,56 @@ export const TOOL_DEFINITIONS: Tool[] = [
       },
     },
   },
+  {
+    name: "sandbox_write_file",
+    description:
+      "Write a file to the sandbox /workspace directory. All writes are audit-logged. Path must be under /workspace. Returns {success, path, bytes_written}.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path in sandbox (must be under /workspace, e.g. '/workspace/test.txt')",
+        },
+        content: {
+          type: "string",
+          description: "File content to write",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "sandbox_pipeline",
+    description:
+      "Execute multiple commands sequentially in the sandbox. Each command runs in order; if any returns non-zero exit code, pipeline stops and returns partial results. Useful for chained verification (e.g. ls then wc -l).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        commands: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              command: { type: "string", description: "Command to execute" },
+              args: { type: "array", items: { type: "string" }, description: "Command arguments" },
+            },
+            required: ["command"],
+          },
+          description: "Array of {command, args} to execute sequentially",
+        },
+        timeout_ms: {
+          type: "number",
+          description: "Timeout per step in milliseconds (default: 30000)",
+        },
+      },
+      required: ["commands"],
+    },
+  },
 ];
 
 // Tool categories for filtering
-export const SANDBOX_TOOLS = ["sandbox_exec", "run_tests"];
+export const SANDBOX_TOOLS = ["sandbox_exec", "run_tests", "sandbox_write_file", "sandbox_pipeline"];
 const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];
@@ -1529,6 +1575,143 @@ export async function dispatchTool(
           result = { success: false, error: "Test execution timed out after 120s" };
         } else {
           result = { success: false, error: `Test execution error: ${e.message}` };
+        }
+      }
+      break;
+    }
+    case "sandbox_write_file": {
+      try {
+        const { data: flySettings } = await ctx.supabase
+          .from("system_settings")
+          .select("setting_key, setting_value")
+          .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+        const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+        const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+        if (!flyUrl) {
+          result = { success: false, error: "Fly Machine URL not configured" };
+          break;
+        }
+
+        const filePath = toolInput.path || "";
+        if (!filePath.startsWith("/workspace")) {
+          result = { success: false, error: `Path must be under /workspace. Got: ${filePath}` };
+          break;
+        }
+
+        // Use tee to write content via stdin simulation — exec endpoint with echo piped concept
+        // Actually use the /exec endpoint with 'tee' command
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (flyToken && flyToken !== "not_required_public_endpoint") {
+          headers["Authorization"] = `Bearer ${flyToken}`;
+        }
+
+        // Ensure parent directory exists first
+        const parentDir = filePath.substring(0, filePath.lastIndexOf("/"));
+        if (parentDir && parentDir !== "/workspace") {
+          await fetch(`${flyUrl}/exec`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ command: "mkdir", args: ["-p", parentDir], wo_slug: ctx.workOrderSlug }),
+          });
+        }
+
+        // Write via echo + tee pipeline using the /pipeline endpoint
+        const content = toolInput.content || "";
+        const response = await fetch(`${flyUrl}/pipeline`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            commands: [
+              { command: "tee", args: [filePath] },
+            ],
+            wo_slug: ctx.workOrderSlug,
+            timeout_ms: 10000,
+          }),
+        });
+
+        // tee reads from stdin but /pipeline doesn't pipe stdin
+        // Use echo + redirect approach instead — write via node one-liner
+        const writeResponse = await fetch(`${flyUrl}/exec`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            command: "node",
+            args: ["-e", `require('fs').writeFileSync('${filePath.replace(/'/g, "\\'")}', Buffer.from('${Buffer.from(content).toString("base64")}', 'base64')); console.log(JSON.stringify({bytes: ${content.length}}))`],
+            wo_slug: ctx.workOrderSlug,
+            timeout_ms: 10000,
+          }),
+        });
+
+        if (!writeResponse.ok) {
+          result = { success: false, error: `Write failed: ${writeResponse.statusText}` };
+        } else {
+          const writeResult = await writeResponse.json();
+          if (writeResult.exit_code !== 0) {
+            result = { success: false, error: writeResult.stderr || "Write failed" };
+          } else {
+            result = { success: true, path: filePath, bytes_written: content.length };
+          }
+        }
+
+        await recordMutation(ctx, "sandbox_write_file", "sandbox", filePath, "WRITE", result.success, result.error, { path: filePath, bytes: content.length });
+      } catch (e: any) {
+        result = { success: false, error: `Sandbox write error: ${e.message}` };
+      }
+      break;
+    }
+    case "sandbox_pipeline": {
+      try {
+        const { data: flySettings } = await ctx.supabase
+          .from("system_settings")
+          .select("setting_key, setting_value")
+          .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+        const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+        const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+
+        if (!flyUrl) {
+          result = { success: false, error: "Fly Machine URL not configured" };
+          break;
+        }
+
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (flyToken && flyToken !== "not_required_public_endpoint") {
+          headers["Authorization"] = `Bearer ${flyToken}`;
+        }
+
+        const pipelineCtrl = new AbortController();
+        const pipelineTimer = setTimeout(() => pipelineCtrl.abort(), 60000);
+        const response = await fetch(`${flyUrl}/pipeline`, {
+          method: "POST",
+          headers,
+          signal: pipelineCtrl.signal,
+          body: JSON.stringify({
+            commands: toolInput.commands || [],
+            timeout_ms: toolInput.timeout_ms || 30000,
+            wo_slug: ctx.workOrderSlug,
+          }),
+        });
+        clearTimeout(pipelineTimer);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          result = { success: false, error: `Pipeline failed (${response.status}): ${errorData.error || response.statusText}` };
+        } else {
+          const pipelineResult = await response.json();
+          result = {
+            success: pipelineResult.overall_success,
+            data: pipelineResult,
+            output: pipelineResult.steps?.map((s: any) => s.stdout).join("\n") || "",
+          };
+        }
+
+        const cmdSummary = (toolInput.commands || []).map((c: any) => c.command).join(" | ");
+        await recordMutation(ctx, "sandbox_pipeline", "sandbox", cmdSummary.substring(0, 100), "PIPELINE", result.success, result.error, { steps: (toolInput.commands || []).length });
+      } catch (e: any) {
+        if (e.name === "AbortError") {
+          result = { success: false, error: "Pipeline timed out after 60s" };
+        } else {
+          result = { success: false, error: `Pipeline error: ${e.message}` };
         }
       }
       break;

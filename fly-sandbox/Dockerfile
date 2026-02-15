@@ -25,7 +25,8 @@ ENV PATH="/root/.deno/bin:$PATH"
 RUN npm install -g typescript
 
 # Create workspace directory (repo cloned at runtime via /git-pull endpoint)
-RUN mkdir -p /workspace
+# /workspace is the writable sandbox root — write commands chrooted here
+RUN mkdir -p /workspace /var/log
 
 # Set working directory
 WORKDIR /app
