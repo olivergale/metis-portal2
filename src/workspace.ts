@@ -127,9 +127,9 @@ class WorkspaceApp {
       this.renderProjects();
       this.renderBoard();
       this.updateStats();
-    } catch (error) {
-      console.error('Failed to load data:', error);
-      this.showError('Failed to load workspace data');
+    } catch (err: any) {
+      console.error('Failed to load data:', err);
+      this.showError(err.message);
     }
   }
 
@@ -195,7 +195,7 @@ class WorkspaceApp {
       <div class="card" data-wo-id="${wo.id}">
         <div class="card-header">
           <span class="card-slug">${escapeHtml(wo.slug)}</span>
-          ${blockedOnInput ? '<span class="card-clarification-icon" title="Waiting for clarification">⏸️</span>' : ''}
+          ${blockedOnInput ? '<span class="card-clarification-icon" title="Waiting for clarification">â¸ï¸</span>' : ''}
           <span class="card-priority ${priorityClass}"></span>
         </div>
         <div class="card-title">${escapeHtml(wo.name || 'Untitled')}</div>

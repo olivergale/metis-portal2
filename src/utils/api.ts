@@ -16,6 +16,10 @@ export async function apiFetch<T = any>(endpoint: string, method: 'GET' | 'POST'
   }
 
   const res = await fetch(`${SUPABASE_URL}${endpoint}`, opts);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API ${res.status}: ${body.substring(0, 200)}`);
+  }
   return res.json();
 }
 

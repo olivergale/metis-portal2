@@ -4,7 +4,7 @@ import { renderActionButtons } from './WOActions';
 import { loadWOEvents, setupAutoRefresh, clearAutoRefresh } from './WOEventsTimeline';
 
 /**
- * Render WO Detail Panel — slide-out panel showing full execution trail,
+ * Render WO Detail Panel â slide-out panel showing full execution trail,
  * QA checklist, and QA findings for a work order.
  */
 export function renderWODetailPanel(wo: WorkOrder): HTMLElement {
@@ -121,14 +121,14 @@ function renderSectionShell(title: string, placeholder: string): HTMLElement {
   return section;
 }
 
-/* ──────────── Clarification Banner ──────────── */
+/* ââââââââââââ Clarification Banner ââââââââââââ */
 
 function renderClarificationBanner(woId: string): HTMLElement {
   const banner = document.createElement('div');
   banner.className = 'clarification-banner';
   banner.innerHTML = `
     <div class="clarification-header">
-      <span class="clarification-icon">⏸️</span>
+      <span class="clarification-icon">â¸ï¸</span>
       <span class="clarification-title">Agent Waiting for Clarification</span>
     </div>
     <div class="clarification-body">
@@ -227,7 +227,7 @@ async function loadClarificationRequest(woId: string, banner: HTMLElement) {
 
         body.innerHTML = `
           <div class="clarification-success">
-            ✅ Response submitted successfully! The work order will resume execution.
+            â Response submitted successfully! The work order will resume execution.
           </div>
         `;
 
@@ -241,13 +241,13 @@ async function loadClarificationRequest(woId: string, banner: HTMLElement) {
         submitBtn.textContent = 'Submit Answer';
       }
     });
-  } catch (err) {
+  } catch (err: any) {
     const body = banner.querySelector('.clarification-body')!;
-    body.innerHTML = '<div class="clarification-empty">Failed to load clarification request</div>';
+    body.innerHTML = `<div class="clarification-empty">${escapeHtml(err.message)}</div>`;
   }
 }
 
-/* ──────────────── Info Section ──────────────── */
+/* ââââââââââââââââ Info Section ââââââââââââââââ */
 
 function renderInfoSection(wo: WorkOrder): HTMLElement {
   const section = document.createElement('div');
@@ -315,7 +315,7 @@ function renderACList(ac: string): string {
   }).join('')}</ol>`;
 }
 
-/* ──────────────── Execution Log ──────────────── */
+/* ââââââââââââââââ Execution Log ââââââââââââââââ */
 
 async function loadExecutionLog(woId: string, section: HTMLElement) {
   try {
@@ -348,13 +348,13 @@ async function loadExecutionLog(woId: string, section: HTMLElement) {
         </div>
       `;
     }).join('')}</div>`;
-  } catch (err) {
+  } catch (err: any) {
     const body = section.querySelector('.wo-detail-section-body')!;
-    body.innerHTML = '<div class="exec-log-empty">Failed to load execution log</div>';
+    body.innerHTML = `<div class="exec-log-empty">${escapeHtml(err.message)}</div>`;
   }
 }
 
-/* ──────────── Merged Timeline (Exec Log + QA Findings) ──────────── */
+/* ââââââââââââ Merged Timeline (Exec Log + QA Findings) ââââââââââââ */
 
 async function loadMergedTimeline(woId: string, section: HTMLElement) {
   try {
@@ -431,9 +431,9 @@ async function loadMergedTimeline(woId: string, section: HTMLElement) {
         }
       });
     });
-  } catch (err) {
+  } catch (err: any) {
     const body = section.querySelector('.wo-detail-section-body')!;
-    body.innerHTML = '<div class="exec-log-empty">Failed to load execution log</div>';
+    body.innerHTML = `<div class="exec-log-empty">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -447,7 +447,7 @@ function extractDetail(detail: any): string {
   return JSON.stringify(detail).slice(0, 200);
 }
 
-/* ──────────────── QA Checklist ──────────────── */
+/* ââââââââââââââââ QA Checklist ââââââââââââââââ */
 
 function renderQAChecklist(checklist: any[]): HTMLElement {
   const section = document.createElement('div');
@@ -469,7 +469,7 @@ function renderQAChecklist(checklist: any[]): HTMLElement {
   const verdict = failed > 0 ? 'fail' : (passed === total ? 'pass' : 'pending');
   const verdictLabel = verdict === 'pass' ? 'PASS' : verdict === 'fail' ? 'FAIL' : 'PENDING';
 
-  const icons: Record<string, string> = { pass: '✓', fail: '✗', pending: '○' };
+  const icons: Record<string, string> = { pass: 'â', fail: 'â', pending: 'â' };
 
   section.innerHTML = `
     <div class="wo-detail-section-header">
@@ -493,7 +493,7 @@ function renderQAChecklist(checklist: any[]): HTMLElement {
   return section;
 }
 
-/* ──────────────── QA Findings ──────────────── */
+/* ââââââââââââââââ QA Findings ââââââââââââââââ */
 
 async function loadQAFindings(woId: string, section: HTMLElement) {
   try {
@@ -539,14 +539,14 @@ async function loadQAFindings(woId: string, section: HTMLElement) {
         }
       });
     });
-  } catch (err) {
+  } catch (err: any) {
     const body = section.querySelector('.wo-detail-section-body')!;
-    body.innerHTML = '<div class="wo-detail-empty">Failed to load QA findings</div>';
+    body.innerHTML = `<div class="wo-detail-empty">${escapeHtml(err.message)}</div>`;
   }
 }
 
 /**
- * Open the WO detail panel — main entry point called from workspace.
+ * Open the WO detail panel â main entry point called from workspace.
  */
 export async function openWODetail(woId: string, workOrders: WorkOrder[]) {
   // Remove existing panel if any
