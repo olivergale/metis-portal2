@@ -1,0 +1,183 @@
+name: WO PR Enforcer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  # Validate WO linkage on PR open/update
+  validate:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract WO slug
+        id: wo
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+
+          # Try branch name first: WO-XXXX or wo-xxxx prefix
+          SLUG=$(echo "$BRANCH" | grep -oP '^(WO-[A-Z0-9-]+|wo-[a-z0-9-]+)' | head -1 | tr 'a-z' 'A-Z')
+
+          # Try PR title: WO-XXXX anywhere
+          if [ -z "$SLUG" ]; then
+            SLUG=$(echo "$PR_TITLE" | grep -oP 'WO-[A-Z0-9-]+' | head -1)
+          fi
+
+          # Try PR body: WO-XXXX anywhere
+          if [ -z "$SLUG" ]; then
+            SLUG=$(echo "$PR_BODY" | grep -oP 'WO-[A-Z0-9-]+' | head -1)
+          fi
+
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "found=$([ -n "$SLUG" ] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "Extracted WO slug: ${SLUG:-none}"
+
+      - name: Validate WO exists and status
+        id: check
+        if: steps.wo.outputs.found == 'true'
+        env:
+          SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          SLUG="${{ steps.wo.outputs.slug }}"
+
+          # Query WO status via PostgREST
+          RESPONSE=$(curl -s \
+            "$SUPABASE_URL/rest/v1/work_orders?slug=eq.$SLUG&select=slug,name,status,priority,summary" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+
+          # Check if WO exists
+          WO_COUNT=$(echo "$RESPONSE" | jq 'length')
+          if [ "$WO_COUNT" = "0" ]; then
+            echo "status=not_found" >> $GITHUB_OUTPUT
+            echo "message=Work order $SLUG not found in database" >> $GITHUB_OUTPUT
+            echo "::error::WO $SLUG not found"
+            exit 0
+          fi
+
+          WO_STATUS=$(echo "$RESPONSE" | jq -r '.[0].status')
+          WO_NAME=$(echo "$RESPONSE" | jq -r '.[0].name')
+          WO_PRIORITY=$(echo "$RESPONSE" | jq -r '.[0].priority')
+
+          echo "status=$WO_STATUS" >> $GITHUB_OUTPUT
+          echo "name=$WO_NAME" >> $GITHUB_OUTPUT
+          echo "priority=$WO_PRIORITY" >> $GITHUB_OUTPUT
+
+          # Valid states for PR: in_progress, review, done
+          VALID_STATES="in_progress review done"
+          if echo "$VALID_STATES" | grep -qw "$WO_STATUS"; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+            echo "message=WO $SLUG is $WO_STATUS — PR allowed" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "message=WO $SLUG is $WO_STATUS — must be in_progress/review/done for PR" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Report result
+        run: |
+          WO_FOUND="${{ steps.wo.outputs.found }}"
+          SLUG="${{ steps.wo.outputs.slug }}"
+
+          if [ "$WO_FOUND" = "false" ]; then
+            echo "::warning::No WO slug found in branch name, PR title, or PR body. Expected format: WO-XXXX"
+            echo "## WO Enforcer" >> $GITHUB_STEP_SUMMARY
+            echo "No WO slug found. Link a work order by:" >> $GITHUB_STEP_SUMMARY
+            echo "- Branch name: \`WO-0123/description\`" >> $GITHUB_STEP_SUMMARY
+            echo "- PR title: include \`WO-0123\`" >> $GITHUB_STEP_SUMMARY
+            echo "- PR body: include \`WO-0123\`" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          WO_STATUS="${{ steps.check.outputs.status }}"
+          WO_NAME="${{ steps.check.outputs.name }}"
+          WO_VALID="${{ steps.check.outputs.valid }}"
+          WO_MESSAGE="${{ steps.check.outputs.message }}"
+
+          echo "## WO Enforcer" >> $GITHUB_STEP_SUMMARY
+          echo "- **WO**: $SLUG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Name**: $WO_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: $WO_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result**: $WO_MESSAGE" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$WO_STATUS" = "not_found" ]; then
+            echo "::error::$WO_MESSAGE"
+            exit 1
+          fi
+
+          if [ "$WO_VALID" = "false" ]; then
+            echo "::error::$WO_MESSAGE"
+            exit 1
+          fi
+
+          echo "$WO_MESSAGE"
+
+  # Post evidence bundle on PR merge
+  evidence:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract WO slug
+        id: wo
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+
+          SLUG=$(echo "$BRANCH" | grep -oP '^(WO-[A-Z0-9-]+|wo-[a-z0-9-]+)' | head -1 | tr 'a-z' 'A-Z')
+          if [ -z "$SLUG" ]; then
+            SLUG=$(echo "$PR_TITLE" | grep -oP 'WO-[A-Z0-9-]+' | head -1)
+          fi
+          if [ -z "$SLUG" ]; then
+            SLUG=$(echo "$PR_BODY" | grep -oP 'WO-[A-Z0-9-]+' | head -1)
+          fi
+
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "found=$([ -n "$SLUG" ] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Fetch WO details and post evidence
+        if: steps.wo.outputs.found == 'true'
+        env:
+          SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SLUG="${{ steps.wo.outputs.slug }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # Fetch WO details
+          WO_RESPONSE=$(curl -s \
+            "$SUPABASE_URL/rest/v1/work_orders?slug=eq.$SLUG&select=slug,name,status,priority,summary,qa_checklist" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+
+          WO_NAME=$(echo "$WO_RESPONSE" | jq -r '.[0].name // "Unknown"')
+          WO_STATUS=$(echo "$WO_RESPONSE" | jq -r '.[0].status // "Unknown"')
+          WO_PRIORITY=$(echo "$WO_RESPONSE" | jq -r '.[0].priority // "Unknown"')
+          WO_SUMMARY=$(echo "$WO_RESPONSE" | jq -r '.[0].summary // "No summary"')
+
+          # Count QA checklist items
+          QA_TOTAL=$(echo "$WO_RESPONSE" | jq '.[0].qa_checklist | length // 0')
+          QA_PASSED=$(echo "$WO_RESPONSE" | jq '[.[0].qa_checklist[]? | select(.status == "passed")] | length // 0')
+
+          # Build evidence comment
+          COMMENT="## WO Evidence Bundle
+
+          **Work Order**: \`$SLUG\` — $WO_NAME
+          **Status**: $WO_STATUS | **Priority**: $WO_PRIORITY
+          **QA**: $QA_PASSED/$QA_TOTAL checks passed
+
+          ### Summary
+          $WO_SUMMARY
+
+          ---
+          *Posted by WO PR Enforcer on merge*"
+
+          # Post comment via GitHub API
+          gh pr comment "$PR_NUMBER" --body "$COMMENT"
+
+          echo "Evidence bundle posted to PR #$PR_NUMBER"
