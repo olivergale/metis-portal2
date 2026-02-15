@@ -47,7 +47,7 @@ jobs:
           echo "Rolling back $FUNC to ref $REF"
 
           # WO-0390: Public functions need --no-verify-jwt
-          PUBLIC_FUNCTIONS="portal-chat"
+          PUBLIC_FUNCTIONS="portal-chat wo-agent"
           if echo "$PUBLIC_FUNCTIONS" | grep -qw "$FUNC"; then
             supabase functions deploy "$FUNC" \
               --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
@@ -124,7 +124,7 @@ jobs:
           ROLLED_BACK=""
 
           # WO-0390: Public functions need --no-verify-jwt for anonymous access
-          PUBLIC_FUNCTIONS="portal-chat"
+          PUBLIC_FUNCTIONS="portal-chat wo-agent"
           # Non-deployable directories
           SKIP_DIRS="wo-daemon _shared lib"
 
