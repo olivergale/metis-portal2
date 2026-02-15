@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     findutils \
     jq \
     curl \
+    unzip \
     python3 \
     diffutils \
     file \
