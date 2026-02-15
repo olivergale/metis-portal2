@@ -1,4 +1,4 @@
-export function createHeader(activePage: 'chat' | 'workspace' | 'health' | 'regression'): HTMLElement {
+export function createHeader(activePage: 'chat' | 'workspace' | 'health' | 'regression' | 'manifold'): HTMLElement {
   const nav = document.createElement('nav');
   nav.style.cssText = `
     display: flex;
@@ -26,6 +26,7 @@ export function createHeader(activePage: 'chat' | 'workspace' | 'health' | 'regr
     { text: 'Workspace', href: 'workspace.html', page: 'workspace' },
     { text: 'Health', href: 'health.html', page: 'health' },
     { text: 'Regression', href: 'regression.html', page: 'regression' },
+    { text: 'Manifold', href: 'manifold.html', page: 'manifold' },
   ];
 
   links.forEach(link => {
