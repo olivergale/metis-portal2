@@ -5,9 +5,88 @@ on:
     branches: [main]
     paths:
       - 'supabase/functions/**'
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: 'Function to rollback (e.g. wo-agent)'
+        required: true
+        type: string
+      git_ref:
+        description: 'Git ref to deploy from (commit SHA or branch)'
+        required: true
+        type: string
 
 jobs:
+  # Manual rollback job (workflow_dispatch only)
+  rollback:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 1
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Rollback function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          FUNC="${{ inputs.function_name }}"
+          REF="${{ inputs.git_ref }}"
+
+          if [ ! -d "supabase/functions/$FUNC" ]; then
+            echo "::error::Function directory supabase/functions/$FUNC not found at ref $REF"
+            exit 1
+          fi
+
+          echo "Rolling back $FUNC to ref $REF"
+
+          # WO-0390: Public functions need --no-verify-jwt
+          PUBLIC_FUNCTIONS="portal-chat"
+          if echo "$PUBLIC_FUNCTIONS" | grep -qw "$FUNC"; then
+            supabase functions deploy "$FUNC" \
+              --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+              --no-verify-jwt
+          else
+            supabase functions deploy "$FUNC" \
+              --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          fi
+
+      - name: Verify rollback
+        run: |
+          FUNC="${{ inputs.function_name }}"
+          PROJECT_URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co"
+
+          # Smoke test the rolled-back function
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$PROJECT_URL/functions/v1/$FUNC" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 10)
+
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "::error::Rollback verification failed: got 401 (JWT issue)"
+            exit 1
+          fi
+
+          echo "Rollback verification: HTTP $HTTP_CODE (function responding)"
+
+      - name: Rollback summary
+        run: |
+          echo "## Manual Rollback" >> $GITHUB_STEP_SUMMARY
+          echo "- **Function**: ${{ inputs.function_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rolled back to**: ${{ inputs.git_ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+  # Auto-deploy job (push to main only)
   deploy:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,49 +110,168 @@ jobs:
           echo "count=$(echo "$CHANGED" | grep -c . || echo 0)" >> $GITHUB_OUTPUT
           echo "Changed functions: $CHANGED"
 
-      - name: Deploy changed functions
+      - name: Deploy and verify functions
         if: steps.changed.outputs.count != '0'
+        id: deploy
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
+          PROJECT_URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co"
+          PREV_COMMIT=$(git rev-parse HEAD~1)
+          DEPLOYED=""
+          FAILED=""
+          SKIPPED=""
+          ROLLED_BACK=""
+
+          # WO-0390: Public functions need --no-verify-jwt for anonymous access
+          PUBLIC_FUNCTIONS="portal-chat"
+          # Non-deployable directories
+          SKIP_DIRS="wo-daemon _shared lib"
+
           echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
             [ -z "$func" ] && continue
 
-            # Skip shared module directories (not deployable)
-            if [ "$func" = "wo-daemon" ] || [ "$func" = "_shared" ]; then
+            # Skip non-deployable directories
+            if echo "$SKIP_DIRS" | grep -qw "$func"; then
               echo "Skipping non-deployable: $func"
+              echo "$func" >> /tmp/skipped.txt
               continue
             fi
 
             # Check if function directory still exists
             if [ ! -d "supabase/functions/$func" ]; then
               echo "Skipping deleted function: $func"
+              echo "$func" >> /tmp/skipped.txt
               continue
             fi
 
-            echo "Deploying: $func"
+            echo "::group::Deploying $func"
 
-            # WO-0390: Public functions need --no-verify-jwt for anonymous access
-            # All other functions deploy with JWT verification enabled (default)
-            PUBLIC_FUNCTIONS="portal-chat"
+            # Deploy with appropriate JWT setting
+            DEPLOY_OK=false
             if echo "$PUBLIC_FUNCTIONS" | grep -qw "$func"; then
               echo "  (public function — JWT verification disabled)"
-              supabase functions deploy "$func" \
+              if supabase functions deploy "$func" \
                 --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
-                --no-verify-jwt \
-                || echo "WARNING: Failed to deploy $func"
+                --no-verify-jwt 2>&1; then
+                DEPLOY_OK=true
+              fi
             else
-              supabase functions deploy "$func" \
-                --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
-                || echo "WARNING: Failed to deploy $func"
+              if supabase functions deploy "$func" \
+                --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} 2>&1; then
+                DEPLOY_OK=true
+              fi
             fi
+
+            if [ "$DEPLOY_OK" = "false" ]; then
+              echo "::warning::Deploy failed for $func (bundling error)"
+              echo "$func" >> /tmp/failed.txt
+              echo "::endgroup::"
+              continue
+            fi
+
+            # WO-0391: Post-deploy smoke test
+            echo "  Running smoke test..."
+            sleep 2  # Brief wait for function to become available
+
+            if echo "$PUBLIC_FUNCTIONS" | grep -qw "$func"; then
+              # Public functions: test without auth
+              HTTP_CODE=$(curl -s -o /tmp/smoke_body.txt -w "%{http_code}" \
+                -X POST "$PROJECT_URL/functions/v1/$func" \
+                -H "Content-Type: application/json" \
+                -d '{}' \
+                --max-time 10 2>/dev/null || echo "000")
+            else
+              # Protected functions: test with anon key
+              HTTP_CODE=$(curl -s -o /tmp/smoke_body.txt -w "%{http_code}" \
+                -X POST "$PROJECT_URL/functions/v1/$func" \
+                -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+                -H "Content-Type: application/json" \
+                -d '{}' \
+                --max-time 10 2>/dev/null || echo "000")
+            fi
+
+            # 401 = JWT misconfigured, 000 = timeout/unreachable
+            # 400/404/500 are acceptable (function is responding, just needs proper input)
+            if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "000" ]; then
+              echo "::error::Smoke test FAILED for $func (HTTP $HTTP_CODE)"
+              echo "  Attempting rollback to previous version..."
+
+              # Rollback: checkout previous version and redeploy
+              git show "$PREV_COMMIT:supabase/functions/$func/index.ts" > /tmp/prev_index.ts 2>/dev/null
+              if [ $? -eq 0 ] && [ -s /tmp/prev_index.ts ]; then
+                # Temporarily replace with previous version
+                cp /tmp/prev_index.ts "supabase/functions/$func/index.ts"
+                if echo "$PUBLIC_FUNCTIONS" | grep -qw "$func"; then
+                  supabase functions deploy "$func" \
+                    --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} \
+                    --no-verify-jwt 2>&1 || true
+                else
+                  supabase functions deploy "$func" \
+                    --project-ref ${{ secrets.SUPABASE_PROJECT_REF }} 2>&1 || true
+                fi
+                # Restore current version in working tree
+                git checkout HEAD -- "supabase/functions/$func/index.ts"
+                echo "  Rolled back $func to $PREV_COMMIT"
+                echo "$func (HTTP $HTTP_CODE → rolled back)" >> /tmp/rolled_back.txt
+              else
+                echo "  No previous version found, cannot rollback"
+                echo "$func (HTTP $HTTP_CODE → no rollback available)" >> /tmp/failed.txt
+              fi
+            else
+              echo "  Smoke test OK (HTTP $HTTP_CODE)"
+              echo "$func (HTTP $HTTP_CODE)" >> /tmp/deployed.txt
+            fi
+
+            echo "::endgroup::"
           done
 
-      - name: Summary
+          # Set outputs for summary
+          echo "deployed<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/deployed.txt 2>/dev/null || true
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "failed<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/failed.txt 2>/dev/null || true
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "rolled_back<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/rolled_back.txt 2>/dev/null || true
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Deploy summary
         if: steps.changed.outputs.count != '0'
         run: |
-          echo "## Deployed Functions" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.changed.outputs.functions }}" | while IFS= read -r func; do
-            [ -z "$func" ] && continue
-            echo "- $func" >> $GITHUB_STEP_SUMMARY
-          done
+          echo "## Edge Function Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: \`$(git rev-parse --short HEAD)\` by ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -s /tmp/deployed.txt ]; then
+            echo "### Deployed" >> $GITHUB_STEP_SUMMARY
+            while IFS= read -r line; do
+              echo "- $line" >> $GITHUB_STEP_SUMMARY
+            done < /tmp/deployed.txt
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -s /tmp/rolled_back.txt ]; then
+            echo "### Rolled Back (smoke test failed)" >> $GITHUB_STEP_SUMMARY
+            while IFS= read -r line; do
+              echo "- $line" >> $GITHUB_STEP_SUMMARY
+            done < /tmp/rolled_back.txt
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -s /tmp/failed.txt ]; then
+            echo "### Failed" >> $GITHUB_STEP_SUMMARY
+            while IFS= read -r line; do
+              echo "- $line" >> $GITHUB_STEP_SUMMARY
+            done < /tmp/failed.txt
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Fail the workflow if any functions were rolled back
+          if [ -s /tmp/rolled_back.txt ]; then
+            echo "::error::Some functions failed smoke tests and were rolled back"
+            exit 1
+          fi
