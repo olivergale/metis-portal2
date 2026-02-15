@@ -214,6 +214,29 @@ class ManifoldDashboard {
           <div id="ontology-links-content"></div>
         </div>
       </div>
+
+      <div class="feedback-panels">
+        <div class="feedback-panel" id="mutation-velocity-panel">
+          <h2>Mutation Velocity (24h)</h2>
+          <div id="mutation-velocity-chart" class="feedback-chart">
+            <div class="loading-text">Loading mutation data...</div>
+          </div>
+        </div>
+
+        <div class="feedback-panel" id="agent-performance-panel">
+          <h2>Agent Performance (7d)</h2>
+          <div id="agent-performance-table" class="feedback-table">
+            <div class="loading-text">Loading agent data...</div>
+          </div>
+        </div>
+
+        <div class="feedback-panel" id="ontology-health-panel">
+          <h2>Ontology Health</h2>
+          <div id="ontology-health-content" class="feedback-health">
+            <div class="loading-text">Loading health data...</div>
+          </div>
+        </div>
+      </div>
     `;
     this.container.appendChild(dashboard);
 
@@ -705,6 +728,137 @@ class ManifoldDashboard {
         color: var(--accent);
         font-size: 11px;
       }
+      .feedback-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin: 24px;
+      }
+      .feedback-panel {
+        background: var(--bg-surface);
+        border-radius: 8px;
+        padding: 20px;
+      }
+      .feedback-panel h2 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 16px;
+      }
+      .feedback-panel:first-child {
+        grid-column: 1 / -1;
+      }
+      .feedback-chart {
+        min-height: 160px;
+      }
+      .velocity-bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        height: 140px;
+        padding-bottom: 24px;
+        position: relative;
+        border-bottom: 1px solid var(--border-default);
+      }
+      .velocity-bar-group {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+        justify-content: flex-end;
+        position: relative;
+      }
+      .velocity-bar {
+        width: 100%;
+        max-width: 32px;
+        border-radius: 3px 3px 0 0;
+        position: relative;
+      }
+      .velocity-bar.success {
+        background: var(--status-success, #22c55e);
+      }
+      .velocity-bar.failure {
+        background: var(--status-error, #ef4444);
+        border-radius: 0;
+      }
+      .velocity-label {
+        font-size: 9px;
+        color: var(--text-muted);
+        position: absolute;
+        bottom: -20px;
+        transform: rotate(-45deg);
+        white-space: nowrap;
+      }
+      .velocity-count {
+        font-size: 9px;
+        color: var(--text-secondary);
+        margin-bottom: 2px;
+      }
+      .velocity-legend {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+        justify-content: center;
+      }
+      .velocity-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .velocity-legend-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+      }
+      .agent-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .agent-table th {
+        text-align: left;
+        padding: 8px 10px;
+        border-bottom: 2px solid var(--border-default);
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      .agent-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border-default);
+        color: var(--text-primary);
+      }
+      .agent-table tr:last-child td {
+        border-bottom: none;
+      }
+      .metric-good { color: var(--status-success, #22c55e); }
+      .metric-warn { color: var(--status-warning, #f59e0b); }
+      .metric-bad { color: var(--status-error, #ef4444); }
+      .health-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+      }
+      .health-stat {
+        text-align: center;
+        padding: 16px;
+        background: var(--bg-elevated);
+        border-radius: 6px;
+      }
+      .health-stat-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+      .health-stat-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-top: 4px;
+      }
     `;
     document.head.appendChild(style);
 
@@ -720,6 +874,9 @@ class ManifoldDashboard {
 
     // Load initial data
     await this.loadPipelines();
+    this.loadMutationVelocity();
+    this.loadAgentPerformance();
+    this.loadOntologyHealth();
 
     // Setup realtime subscriptions instead of polling
     this.setupRealtimeSubscriptions();
@@ -1325,6 +1482,134 @@ class ManifoldDashboard {
     `;
 
     linksContent.innerHTML = tableHtml;
+  }
+
+  private async loadMutationVelocity() {
+    const container = document.getElementById('mutation-velocity-chart');
+    if (!container) return;
+    try {
+      const data = await apiFetch<Array<{hour: string; total: number; success: number; failure: number}>>(
+        '/rest/v1/rpc/get_mutation_velocity',
+        'POST',
+        { p_hours: 24 }
+      );
+      if (!data || !data.length) {
+        container.innerHTML = '<div class="empty-text">No mutation data in the last 24 hours</div>';
+        return;
+      }
+      const maxTotal = Math.max(...data.map(d => d.total), 1);
+      const barsHtml = data.map(d => {
+        const successPct = (d.success / maxTotal) * 100;
+        const failurePct = (d.failure / maxTotal) * 100;
+        const hour = new Date(d.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `
+          <div class="velocity-bar-group">
+            <div class="velocity-count">${d.total}</div>
+            <div class="velocity-bar failure" style="height: ${failurePct}%;" title="${d.failure} failures"></div>
+            <div class="velocity-bar success" style="height: ${successPct}%;" title="${d.success} successes"></div>
+            <span class="velocity-label">${escapeHtml(hour)}</span>
+          </div>
+        `;
+      }).join('');
+
+      container.innerHTML = `
+        <div class="velocity-bars">${barsHtml}</div>
+        <div class="velocity-legend">
+          <div class="velocity-legend-item">
+            <div class="velocity-legend-dot" style="background: var(--status-success, #22c55e);"></div>
+            Success
+          </div>
+          <div class="velocity-legend-item">
+            <div class="velocity-legend-dot" style="background: var(--status-error, #ef4444);"></div>
+            Failure
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.error('Failed to load mutation velocity:', e);
+      container.innerHTML = '<div class="error-text">Failed to load mutation data</div>';
+    }
+  }
+
+  private async loadAgentPerformance() {
+    const container = document.getElementById('agent-performance-table');
+    if (!container) return;
+    try {
+      const data = await apiFetch<Array<{
+        agent_name: string; wos_done: number; wos_failed: number;
+        qa_pass_rate: number; mutation_success_rate: number; avg_completion_minutes: number;
+      }>>('/rest/v1/rpc/get_agent_performance_summary', 'POST', { p_days: 7 });
+      if (!data || !data.length) {
+        container.innerHTML = '<div class="empty-text">No agent performance data</div>';
+        return;
+      }
+      const rateClass = (v: number) => v >= 0.8 ? 'metric-good' : v >= 0.5 ? 'metric-warn' : 'metric-bad';
+      const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+      const rows = data
+        .filter(a => a.wos_done > 0)
+        .sort((a, b) => b.wos_done - a.wos_done)
+        .map(a => `
+          <tr>
+            <td><strong>${escapeHtml(a.agent_name)}</strong></td>
+            <td>${a.wos_done}</td>
+            <td>${a.wos_failed}</td>
+            <td class="${rateClass(a.mutation_success_rate)}">${pct(a.mutation_success_rate)}</td>
+            <td>${a.avg_completion_minutes.toFixed(1)}m</td>
+          </tr>
+        `).join('');
+
+      container.innerHTML = `
+        <table class="agent-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Done</th>
+              <th>Failed</th>
+              <th>Mutation Rate</th>
+              <th>Avg Time</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    } catch (e) {
+      console.error('Failed to load agent performance:', e);
+      container.innerHTML = '<div class="error-text">Failed to load agent data</div>';
+    }
+  }
+
+  private async loadOntologyHealth() {
+    const container = document.getElementById('ontology-health-content');
+    if (!container) return;
+    try {
+      const data = await apiFetch<{total_objects: number; total_links: number; stale_count: number}>(
+        '/rest/v1/rpc/get_ontology_health',
+        'POST'
+      );
+      if (!data) {
+        container.innerHTML = '<div class="empty-text">No ontology health data</div>';
+        return;
+      }
+      container.innerHTML = `
+        <div class="health-grid">
+          <div class="health-stat">
+            <div class="health-stat-value">${data.total_objects.toLocaleString()}</div>
+            <div class="health-stat-label">Objects</div>
+          </div>
+          <div class="health-stat">
+            <div class="health-stat-value">${data.total_links.toLocaleString()}</div>
+            <div class="health-stat-label">Links</div>
+          </div>
+          <div class="health-stat">
+            <div class="health-stat-value ${data.stale_count > 0 ? 'metric-warn' : 'metric-good'}">${data.stale_count}</div>
+            <div class="health-stat-label">Stale</div>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.error('Failed to load ontology health:', e);
+      container.innerHTML = '<div class="error-text">Failed to load health data</div>';
+    }
   }
 }
 
