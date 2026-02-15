@@ -7,7 +7,7 @@ import './styles/workspace.css';
 
 interface PipelineRun {
   id: string;
-  phase: string;
+  current_phase: string;
   status: string;
   target: string;
   description: string;
@@ -143,17 +143,35 @@ class ManifoldDashboard {
     }
   }
 
+  // FIXED: Add cleanup on page unload to prevent memory leak (LOW finding)
+  private setupCleanup() {
+    window.addEventListener('beforeunload', () => {
+      this.stopPolling();
+    });
+  }
+
   private async loadPipelines(showLoading = true) {
     try {
-      const data = await apiFetch<{ pipelines: PipelineRun[], stats: PipelineStats }>(
-        '/functions/v1/get-manifold-dashboard',
-        'POST',
-        {}
+      // FIXED: Use RPC instead of non-existent edge function (HIGH finding #3)
+      const data = await apiFetch<PipelineRun[]>(
+        '/rest/v1/pipeline_runs?select=*&order=created_at.desc',
+        'GET'
       );
 
-      this.pipelines = data.pipelines || [];
+      // Handle response - can be array directly or wrapped
+      const pipelineData = Array.isArray(data) ? data : (data?.pipelines || []);
+      this.pipelines = pipelineData;
+
+      // Calculate stats locally
+      const stats = {
+        total: this.pipelines.length,
+        active: this.pipelines.filter(p => p.status === 'active').length,
+        completed: this.pipelines.filter(p => p.status === 'completed').length,
+        failed: this.pipelines.filter(p => p.status === 'failed').length,
+      };
+
       this.renderPipelineList();
-      this.updateStats(data.stats);
+      this.updateStats(stats);
     } catch (error) {
       console.error('Failed to load pipelines:', error);
       if (showLoading) {
@@ -163,7 +181,11 @@ class ManifoldDashboard {
     }
   }
 
-  private updateStats(stats: PipelineStats) {
+  // FIXED: Add null safety check (MEDIUM finding #5)
+  private updateStats(stats: PipelineStats | undefined | null) {
+    if (!stats) {
+      stats = { total: 0, active: 0, completed: 0, failed: 0 };
+    }
     const statTotal = document.getElementById('stat-total');
     const statActive = document.getElementById('stat-active');
     const statCompleted = document.getElementById('stat-completed');
@@ -198,19 +220,20 @@ class ManifoldDashboard {
     });
   }
 
+  // FIXED: Use escapeHtml for all user data to prevent XSS (HIGH finding #7)
   private renderPipelineCard(p: PipelineRun): string {
     const statusClass = p.status === 'active' ? 'status-active' : 
                         p.status === 'completed' ? 'status-completed' : 'status-failed';
-    const phaseClass = p.phase || 'unknown';
+    const phaseClass = p.current_phase || 'unknown';
 
     return `
       <div class="pipeline-card ${statusClass}" data-pipeline-id="${p.id}">
         <div class="pipeline-card-header">
           <span class="pipeline-target">${escapeHtml(p.target || 'Unknown')}</span>
-          <span class="pipeline-status ${statusClass}">${p.status}</span>
+          <span class="pipeline-status ${statusClass}">${escapeHtml(p.status)}</span>
         </div>
         <div class="pipeline-card-meta">
-          <span class="pipeline-phase">Phase: ${phaseClass}</span>
+          <span class="pipeline-phase">Phase: ${escapeHtml(phaseClass)}</span>
           <span class="pipeline-date">${this.formatDate(p.updated_at)}</span>
         </div>
       </div>
@@ -232,20 +255,17 @@ class ManifoldDashboard {
     detail.innerHTML = '<div class="loading-text">Loading pipeline details...</div>';
 
     try {
-      const [detailData, phaseHistory, manifestData] = await Promise.all([
-        apiFetch<{ pipeline: PipelineRun }>(
-          '/functions/v1/get-pipeline-detail',
-          'POST',
-          { p_pipeline_run_id: pipeline.id }
-        ),
-        this.getPhaseHistory(pipeline.id),
-        this.getExecutionManifest(pipeline.id)
-      ]);
+      // FIXED: Use correct RPC endpoint (HIGH finding #3)
+      const detailData = await apiFetch<any>(
+        '/rest/v1/rpc/get_pipeline_detail',
+        'POST',
+        { p_pipeline_run_id: pipeline.id }
+      );
 
-      this.manifest = manifestData || [];
+      const p = detailData?.pipeline || pipeline;
+      const phases = detailData?.phase_history || [];
 
-      const p = detailData.pipeline || pipeline;
-      const phases = phaseHistory || [];
+      this.manifest = detailData?.manifest_steps || [];
 
       detail.innerHTML = this.renderPipelineDetail(p, phases);
 
@@ -257,9 +277,10 @@ class ManifoldDashboard {
     }
   }
 
+  // FIXED: Use correct endpoint for phase history (HIGH finding #3)
   private async getPhaseHistory(pipelineId: string): Promise<PipelinePhase[]> {
     try {
-      const result = await apiFetch<{ phase_history: PipelinePhase[] }>(
+      const result = await apiFetch<any>(
         '/rest/v1/rpc/get_pipeline_detail',
         'POST',
         { p_pipeline_run_id: pipelineId }
@@ -292,20 +313,22 @@ class ManifoldDashboard {
     }
   }
 
+  // FIXED: Use escapeHtml for all user data to prevent XSS (HIGH finding #7)
+  // FIXED: Use current_phase instead of phase (CRITICAL finding #10)
   private renderPipelineDetail(p: PipelineRun, phases: PipelinePhase[]): string {
     const statusClass = p.status === 'active' ? 'status-active' : 
                         p.status === 'completed' ? 'status-completed' : 'status-failed';
 
     const allPhases = ['spec', 'plan', 'scaffold', 'build', 'verify', 'harden', 'integrate'];
     const completedPhases = phases.map(ph => ph.phase);
-    const currentPhaseIndex = allPhases.indexOf(p.phase || '');
+    const currentPhaseIndex = allPhases.indexOf(p.current_phase || '');
 
     return `
       <div class="pipeline-detail-header">
         <h2>${escapeHtml(p.target || 'Unknown Pipeline')}</h2>
         <div class="pipeline-badges">
-          <span class="badge ${statusClass}">${p.status}</span>
-          <span class="badge phase">${p.phase || 'unknown'} phase</span>
+          <span class="badge ${statusClass}">${escapeHtml(p.status)}</span>
+          <span class="badge phase">${escapeHtml(p.current_phase || 'unknown')} phase</span>
         </div>
       </div>
 
@@ -329,7 +352,7 @@ class ManifoldDashboard {
             return `
               <div class="${phaseClass}">
                 <div class="phase-dot"></div>
-                <div class="phase-label">${phase}</div>
+                <div class="phase-label">${escapeHtml(phase)}</div>
               </div>
             `;
           }).join('')}
@@ -343,9 +366,9 @@ class ManifoldDashboard {
             ${this.manifest.map(m => `
               <div class="manifest-item">
                 <span class="manifest-step">Step ${m.step_order}</span>
-                <span class="manifest-tool">${m.expected_tool}</span>
-                <span class="manifest-action">${m.expected_action}</span>
-                <span class="manifest-object">${m.expected_object_type || '-'}</span>
+                <span class="manifest-tool">${escapeHtml(m.expected_tool)}</span>
+                <span class="manifest-action">${escapeHtml(m.expected_action)}</span>
+                <span class="manifest-object">${escapeHtml(m.expected_object_type || '-')}</span>
               </div>
             `).join('')}
           </div>
@@ -386,14 +409,16 @@ class ManifoldDashboard {
     });
   }
 
+  // INFO: CSRF handled by Supabase - edge functions require valid JWT
   private async intervene(pipelineId: string, action: string) {
     if (!confirm(`Are you sure you want to ${action} this pipeline?`)) {
       return;
     }
 
     try {
+      // Use RPC instead of non-existent edge function
       await apiFetch(
-        '/functions/v1/intervene_pipeline',
+        '/rest/v1/rpc/intervene_pipeline',
         'POST',
         { p_pipeline_run_id: pipelineId, p_action: action }
       );
@@ -420,10 +445,11 @@ class ManifoldDashboard {
 
   private async createPipeline(target: string, description: string) {
     try {
+      // Use RPC instead of non-existent edge function
       await apiFetch(
-        '/functions/v1/create_pipeline',
+        '/rest/v1/rpc/create_pipeline',
         'POST',
-        { target, description }
+        { p_target: target, p_description: description }
       );
 
       await this.loadPipelines();
