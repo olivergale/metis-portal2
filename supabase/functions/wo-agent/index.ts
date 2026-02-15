@@ -870,17 +870,17 @@ async function handleExecute(req: Request): Promise<Response> {
       console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
 
       // WO-0187: Self-reinvoke on checkpoint/timeout
+      // Fix: read anon key from system_settings (same source as triggers) instead of env var
       if (result.status === "checkpoint" || result.status === "timeout") {
         try {
-          const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
           const selfUrl = Deno.env.get("SUPABASE_URL")!;
           await supabase.rpc("run_sql_void", {
             sql_query: `SELECT net.http_post(
               url := '${selfUrl}/functions/v1/wo-agent/execute',
               headers := jsonb_build_object(
                 'Content-Type', 'application/json',
-                'Authorization', 'Bearer ${anonKey}',
-                'apikey', '${anonKey}'
+                'Authorization', 'Bearer ' || (SELECT setting_value #>> '{}' FROM system_settings WHERE setting_key = 'supabase_anon_key'),
+                'apikey', (SELECT setting_value #>> '{}' FROM system_settings WHERE setting_key = 'supabase_anon_key')
               ),
               body := jsonb_build_object('work_order_id', '${wo.id}')
             );`,
