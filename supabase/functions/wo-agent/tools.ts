@@ -29,6 +29,7 @@ import {
 } from "./tool-handlers/system.ts";
 // WO-0434: search_lessons import verified
 import { handleDelegateSubtask, handleCheckChildStatus } from "./tool-handlers/delegate.ts";
+import { handleQueryOntology, handleQueryObjectLinks, handleQueryPipelineStatus } from "./tool-handlers/ontology.ts";
 
 export interface ToolContext {
   supabase: any;
@@ -1002,6 +1003,46 @@ export const TOOL_DEFINITIONS: Tool[] = [
       required: ["commands"],
     },
   },
+  // MF-FOUND-006: Ontology query tools (read-only)
+  {
+    name: "query_ontology",
+    description: "Query the object_registry for schema objects (tables, functions, views, triggers, etc). Returns matching objects with their properties.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        object_type: { type: "string", description: "Filter by type: table, function, view, trigger, index, rls_policy, etc" },
+        name_pattern: { type: "string", description: "Filter by name (ILIKE pattern, e.g. '%user%')" },
+        parent_id: { type: "string", description: "Filter by parent object UUID" },
+        limit: { type: "number", description: "Max results (default 20)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "query_object_links",
+    description: "Query relationships between schema objects (FK, depends_on, triggers, etc). Returns links with source/target names.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        source_id: { type: "string", description: "Source object UUID" },
+        target_id: { type: "string", description: "Target object UUID" },
+        link_type: { type: "string", description: "Filter by link type: fk, depends_on, triggers, indexes, etc" },
+        limit: { type: "number", description: "Max results (default 20)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "query_pipeline_status",
+    description: "Get manifold pipeline status. Without pipeline_run_id: returns dashboard summary (pipeline_runs, ontology, mutations, agents). With pipeline_run_id: returns detail for that specific run.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pipeline_run_id: { type: "string", description: "Optional UUID of specific pipeline run for detail view" },
+      },
+      required: [],
+    },
+  },
 ];
 
 // Tool categories for filtering
@@ -1014,6 +1055,7 @@ const SUPABASE_TOOLS = ["execute_sql", "apply_migration", "read_table"];
 const GITHUB_TOOLS = ["github_read_file", "github_push_files", "github_list_files", "github_create_branch", "github_create_pr", "github_search_code", "github_grep", "github_read_file_range", "github_tree", "read_full_file", "git_log", "git_diff", "git_blame"];
 const DEPLOY_TOOLS = ["deploy_edge_function"];
 const WEB_TOOLS = ["web_fetch"];
+const ONTOLOGY_TOOLS = ["query_ontology", "query_object_links", "query_pipeline_status"];
 
 /**
  * Return filtered tool list based on WO tags AND agent role (tools_allowed).
@@ -1035,7 +1077,7 @@ export async function getToolsForWO(
   // Tier 2 (default): everything else (including remediation) -> all tools
   let tagFiltered: Tool[];
   if (tagSet.has("sql-only")) {
-    const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS]);
+    const allowed = new Set([...SYSTEM_TOOLS, ...SUPABASE_TOOLS, ...ONTOLOGY_TOOLS]);
     tagFiltered = TOOL_DEFINITIONS.filter((t) => allowed.has(t.name));
   } else {
     tagFiltered = [...TOOL_DEFINITIONS];
@@ -1716,6 +1758,16 @@ export async function dispatchTool(
       }
       break;
     }
+    // MF-FOUND-006: Ontology tools (read-only, no mutation recording)
+    case "query_ontology":
+      result = await handleQueryOntology(toolInput, ctx);
+      break;
+    case "query_object_links":
+      result = await handleQueryObjectLinks(toolInput, ctx);
+      break;
+    case "query_pipeline_status":
+      result = await handleQueryPipelineStatus(toolInput, ctx);
+      break;
     default:
       result = { success: false, error: `Unknown tool: ${toolName}` };
   }

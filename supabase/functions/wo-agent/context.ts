@@ -369,6 +369,11 @@ export async function buildAgentContext(
     }
   }
 
+  // MF-FOUND-008: Manifold pipeline context injection
+  if (woPipelinePhase || woTags2.includes("manifold-v1")) {
+    userMessage += await buildManifoldContext(supabase, workOrder);
+  }
+
   userMessage += `\n---\nExecute this work order now. Start by logging your plan, then proceed step by step.`;
 
   const maxTokens = agentProfile?.max_tokens || 16384;
@@ -583,6 +588,67 @@ async function buildConcurrentWOContext(
       ctx += `- **${wo.slug}**: ${wo.name}${tags ? ` [${tags}]` : ""}${agentTag}\n`;
     }
     ctx += `\nAvoid modifying the same tables, columns, or functions these WOs are working on.\n\n`;
+    return ctx;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * MF-FOUND-008: Build manifold pipeline context.
+ * Injects pipeline status and ontology summary for manifold-tagged WOs.
+ * Kept under 3,000 chars to avoid token bloat.
+ */
+async function buildManifoldContext(
+  supabase: any,
+  workOrder: any
+): Promise<string> {
+  try {
+    let ctx = `\n## Manifold Pipeline Context\n`;
+
+    // Get dashboard summary
+    const { data: dashboard, error: dashErr } = await supabase.rpc("get_manifold_dashboard");
+    if (dashErr || !dashboard) {
+      ctx += `(Dashboard unavailable: ${dashErr?.message || "no data"})\n`;
+      return ctx;
+    }
+
+    // Pipeline runs summary
+    const runs = dashboard.pipeline_runs || [];
+    if (runs.length > 0) {
+      ctx += `### Active Pipelines\n`;
+      for (const r of runs.slice(0, 3)) {
+        ctx += `- **${r.id.slice(0, 8)}**: phase=${r.current_phase || "none"}, status=${r.status}\n`;
+      }
+    }
+
+    // Ontology summary
+    const ont = dashboard.ontology_summary;
+    if (ont) {
+      ctx += `### Ontology: ${ont.total_objects} objects, ${ont.objects_with_properties} with props, ${ont.total_links} links\n`;
+    }
+
+    // If this WO has a pipeline_run_id, get detail
+    if (workOrder.pipeline_run_id) {
+      const { data: detail } = await supabase.rpc("get_pipeline_detail", {
+        p_pipeline_run_id: workOrder.pipeline_run_id,
+      });
+      if (detail && !detail.error) {
+        ctx += `### This Pipeline Run\n`;
+        ctx += `- Phase: ${detail.pipeline?.current_phase || "unknown"}\n`;
+        ctx += `- Status: ${detail.pipeline?.status || "unknown"}\n`;
+        const phaseWos = detail.phase_wos || {};
+        for (const [phase, wos] of Object.entries(phaseWos)) {
+          const woList = wos as any[];
+          if (woList.length > 0) {
+            const statuses = woList.map((w: any) => `${w.slug}:${w.status}`).join(", ");
+            ctx += `- ${phase}: ${statuses}\n`;
+          }
+        }
+      }
+    }
+
+    ctx += `\n`;
     return ctx;
   } catch {
     return "";

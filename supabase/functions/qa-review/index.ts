@@ -538,11 +538,18 @@ Deno.serve(async (req) => {
     }
 
     const { supabase, anthropic } = initClients();
-    const qaAgentId = agent_id || 'a53f20af-69e3-4768-99d1-72be21185af4';
-
-    const { data: qaAgent } = await supabase.from('agents').select('*').eq('id', qaAgentId).single();
-    if (!qaAgent) return new Response(JSON.stringify({ error: 'QA agent not found' }),
+    // Look up QA agent by name (not hardcoded UUID) to survive agent merges/renames
+    let qaAgent: any;
+    if (agent_id) {
+      const { data } = await supabase.from('agents').select('*').eq('id', agent_id).single();
+      qaAgent = data;
+    } else {
+      const { data } = await supabase.from('agents').select('*').eq('name', 'qa-gate').single();
+      qaAgent = data;
+    }
+    if (!qaAgent) return new Response(JSON.stringify({ error: 'QA agent not found (looked for qa-gate)' }),
       { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const qaAgentId = qaAgent.id;
 
     const { data: wo, error: woError } = await supabase.from('work_orders')
       .select('*, qa_checklist').eq('id', work_order_id).single();
