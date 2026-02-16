@@ -16,6 +16,9 @@ export interface WorkOrder {
   qa_checklist: any[];
   parent_id: string | null;
   depends_on: string[] | null;
+  pipeline_phase?: string | null;
+  pipeline_run_id?: string | null;
+  tags?: string[];
 }
 
 export interface ExecutionLogEntry {

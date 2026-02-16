@@ -99,11 +99,14 @@ class ManifoldDashboard {
   private activityEvents: ActivityEvent[] = [];
   private maxActivityEvents = 100;
   private ontologyObjects: ObjectRegistry[] = [];
-  private selectedObject: ObjectRegistry | null = null;
+  private _selectedObject: ObjectRegistry | null = null;
   private objectLinks: ObjectLink[] = [];
 
   constructor() {
     this.container = document.getElementById('app')!;
+    void this._selectedObject;
+    void this._getPhaseHistory;
+    void this._getExecutionManifest;
     this.init();
   }
 
@@ -1112,7 +1115,7 @@ class ManifoldDashboard {
   }
 
   // FIXED: Use correct endpoint for phase history (HIGH finding #3)
-  private async getPhaseHistory(pipelineId: string): Promise<PipelinePhase[]> {
+  private async _getPhaseHistory(pipelineId: string): Promise<PipelinePhase[]> {
     try {
       const result = await apiFetch<any>(
         '/rest/v1/rpc/get_pipeline_detail',
@@ -1126,7 +1129,7 @@ class ManifoldDashboard {
     }
   }
 
-  private async getExecutionManifest(pipelineId: string): Promise<WOExecutionManifest[]> {
+  private async _getExecutionManifest(pipelineId: string): Promise<WOExecutionManifest[]> {
     try {
       // Find the scaffold WO for this pipeline
       const wos = await apiFetch<WorkOrder[]>(
@@ -1419,7 +1422,7 @@ class ManifoldDashboard {
   }
 
   private async selectObject(obj: ObjectRegistry) {
-    this.selectedObject = obj;
+    this._selectedObject = obj;
 
     // Highlight selected row
     document.querySelectorAll('.ontology-row').forEach(row => {

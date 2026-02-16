@@ -1,5 +1,5 @@
 import { apiFetch, escapeHtml, relativeTime } from '../utils/api';
-import type { WorkOrder, ExecutionLogEntry, QAFinding, WOEvent } from '../types';
+import type { WorkOrder, ExecutionLogEntry, QAFinding } from '../types';
 import { renderActionButtons } from './WOActions';
 import { loadWOEvents, setupAutoRefresh, clearAutoRefresh } from './WOEventsTimeline';
 
@@ -172,7 +172,7 @@ async function loadClarificationRequest(woId: string, banner: HTMLElement) {
         <div class="clarification-options">
           <strong>Suggested Options:</strong>
           <div class="clarification-options-list">
-            ${options.map((opt: string, idx: number) => `
+            ${options.map((opt: string, _idx: number) => `
               <button class="clarification-option-btn" data-option="${escapeHtml(opt)}">${escapeHtml(opt)}</button>
             `).join('')}
           </div>
@@ -216,13 +216,10 @@ async function loadClarificationRequest(woId: string, banner: HTMLElement) {
       submitBtn.textContent = 'Submitting...';
 
       try {
-        await apiFetch('/functions/v1/answer-clarification', {
-          method: 'POST',
-          body: JSON.stringify({
+        await apiFetch('/functions/v1/answer-clarification', 'POST', {
             clarification_id: clarification.id,
             response,
-            responded_by: 'portal-user', // TODO: Get actual user ID
-          }),
+            responded_by: 'portal-user',
         });
 
         body.innerHTML = `
@@ -317,7 +314,7 @@ function renderACList(ac: string): string {
 
 /* ââââââââââââââââ Execution Log ââââââââââââââââ */
 
-async function loadExecutionLog(woId: string, section: HTMLElement) {
+export async function _loadExecutionLog(woId: string, section: HTMLElement) {
   try {
     const entries: ExecutionLogEntry[] = await apiFetch<ExecutionLogEntry[]>(
       `/rest/v1/work_order_execution_log?work_order_id=eq.${woId}&order=created_at.asc&limit=100`
@@ -495,7 +492,7 @@ function renderQAChecklist(checklist: any[]): HTMLElement {
 
 /* ââââââââââââââââ QA Findings ââââââââââââââââ */
 
-async function loadQAFindings(woId: string, section: HTMLElement) {
+export async function _loadQAFindings(woId: string, section: HTMLElement) {
   try {
     const findings: QAFinding[] = await apiFetch<QAFinding[]>(
       `/rest/v1/qa_findings?work_order_id=eq.${woId}&order=created_at.desc&limit=50`
