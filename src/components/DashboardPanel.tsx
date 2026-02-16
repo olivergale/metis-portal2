@@ -67,13 +67,19 @@ export default function DashboardPanel({
   // XSS Prevention: Sanitize title before rendering
   const safeTitle = escapeHtml(title);
 
+  // XSS Prevention: Clamp counter values to prevent animation DoS
+  // Max value: 999,999 (prevents integer overflow and animation exhaustion)
+  const MAX_SAFE_VALUE = 999999;
+
   // PATTERN: Animated count-up for metrics
   useEffect(() => {
     if (loading) return;
     
     metrics.forEach(metric => {
       let start = 0;
-      const end = metric.value;
+      // Clamp the end value to prevent animation DoS and integer overflow
+      const clampedEnd = Math.min(Math.max(metric.value, 0), MAX_SAFE_VALUE);
+      const end = clampedEnd;
       const duration = 1000;
       const increment = end / (duration / 16);
       
@@ -115,7 +121,7 @@ export default function DashboardPanel({
         initial="initial"
         animate="animate"
       >
-        <div className="text-4xl mb-4 opacity-30">📊</div>
+        <div className="text-4xl mb-4 opacity-30">ð\u011ds\u011d</div>
         <h3 className="text-lg font-semibold text-secondary mb-2">No data yet</h3>
         <p className="text-sm text-muted">Start adding metrics to see your dashboard come to life</p>
       </motion.div>
@@ -133,7 +139,7 @@ export default function DashboardPanel({
       {/* PATTERN: Section header - using dangerouslySetInnerHTML NOT used, relying on React text rendering */}
       <h2 className="text-xl font-semibold text-primary mb-6">{safeTitle}</h2>
 
-      {/* PATTERN: Responsive grid (1 col → 2 col → 3 col) */}
+      {/* PATTERN: Responsive grid (1 col \u2192 2 col \u2192 3 col) */}
       {metrics.length > 0 && (
         <motion.div
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8"
@@ -159,7 +165,7 @@ export default function DashboardPanel({
                   <span className={`text-lg ${
                     metric.trend === 'up' ? 'text-success' : 'text-error'
                   }`}>
-                    {metric.trend === 'up' ? '↑' : '↓'}
+                    {metric.trend === 'up' ? '\u2191' : '\u2193'}
                   </span>
                 )}
               </div>
@@ -221,7 +227,7 @@ export default function DashboardPanel({
                     {row.value.toLocaleString()}
                   </td>
                   <td className="p-3 text-muted text-xs">
-                    {expandedRow === row.id ? '▼' : '►'}
+                    {expandedRow === row.id ? '\u25BC' : '\u25B6'}
                   </td>
                 </motion.tr>
               ))}
