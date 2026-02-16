@@ -1,4 +1,5 @@
 import type { WorkOrder } from '../types';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../utils/config';
 
 /**
  * Render action buttons for work order transitions via wo-transition-api
@@ -92,13 +93,13 @@ async function handleWorkOrderAction(
 
   try {
     const response = await fetch(
-      'https://phfblljwuvzqzlbzkzpr.supabase.co/functions/v1/wo-transition-api',
+      `${SUPABASE_URL}/functions/v1/wo-transition-api`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjAzODgsImV4cCI6MjA4NTA5NjM4OH0.mWIj2vtQb1F2Pk540f_S9WwsZFwZK0n6oeqUmZgDZlA',
-          'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjAzODgsImV4cCI6MjA4NTA5NjM4OH0.mWIj2vtQb1F2Pk540f_S9WwsZFwZK0n6oeqUmZgDZlA',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
         },
         body: JSON.stringify({
           work_order_id: woId,

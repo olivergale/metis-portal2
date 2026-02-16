@@ -862,6 +862,7 @@
     </div>
 
     <script>
+        // Standalone HTML — cannot import from Vite config.ts. Anon key is public (RLS-protected).
         const SUPABASE_URL = 'https://phfblljwuvzqzlbzkzpr.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBoZmJsbGp3dXZ6cXpsYnprenByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MjAzODgsImV4cCI6MjA4NTA5NjM4OH0.mWIj2vtQb1F2Pk540f_S9WwsZFwZK0n6oeqUmZgDZlA';
 
@@ -879,6 +880,10 @@
             };
             if (body) opts.body = JSON.stringify(body);
             const res = await fetch(`${SUPABASE_URL}${endpoint}`, opts);
+            if (!res.ok) {
+                const errText = await res.text().catch(() => '');
+                throw new Error(`API ${res.status}: ${errText.substring(0, 200)}`);
+            }
             return res.json();
         }
 
