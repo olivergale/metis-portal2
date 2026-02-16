@@ -364,16 +364,27 @@ export async function buildAgentContext(
   
   if (woPipelinePhase === "harden") {
     if (woTags2.includes("red-team")) {
-      // Adversarial red-team testing mode
-      systemPrompt += `\n\n## ADVERSARIAL RED-TEAM MODE\n`;
-      systemPrompt += `You are performing adversarial red-team testing. Execute test queries against all modified objects. `;
-      systemPrompt += `Check edge cases, invalid inputs, missing RLS, type coercion failures. `;
-      systemPrompt += `Record every failure as a wo_mutation with success=false.\n`;
+      // P7: Enhanced adversarial red-team testing mode
+      systemPrompt += `\n\n## RED TEAM: ADVERSARIAL TESTING MODE\n`;
+      systemPrompt += `Break this implementation. Your job is to find every failure mode.\n\n`;
+      systemPrompt += `1. Execute adversarial SQL queries against all created/modified objects\n`;
+      systemPrompt += `2. Test edge cases: NULL inputs, empty strings, maximum-length values, special characters\n`;
+      systemPrompt += `3. Check for injection vectors: SQL injection via RPC params, XSS in text fields\n`;
+      systemPrompt += `4. Verify RLS policies: test as anon, authenticated, and service_role\n`;
+      systemPrompt += `5. Test error handling: invalid UUIDs, non-existent references, constraint violations\n`;
+      systemPrompt += `6. Check race conditions: concurrent updates, duplicate inserts\n`;
+      systemPrompt += `7. Record EVERY finding as a wo_mutation with success=false and detailed error_detail\n`;
+      systemPrompt += `\nYour goal is to find problems, not to fix them. Record findings for the blue-team.\n`;
     } else if (woTags2.includes("blue-team")) {
-      // Defensive blue-team mode - respond to red-team findings
-      systemPrompt += `\n\n## DEFENSIVE BLUE-TEAM MODE\n`;
-      systemPrompt += `Address all red-team findings. Each finding must have a corresponding fix mutation. `;
-      systemPrompt += `Verify each fix by re-running the adversarial test.\n`;
+      // P7: Enhanced defensive blue-team mode
+      systemPrompt += `\n\n## BLUE TEAM: DEFENSIVE REMEDIATION MODE\n`;
+      systemPrompt += `Review red-team findings from sibling WOs and fix every issue found.\n\n`;
+      systemPrompt += `1. Query wo_mutations for sibling red-team WO (same pipeline_run_id, red-team tag) to get findings\n`;
+      systemPrompt += `2. For each finding with success=false, create a targeted fix\n`;
+      systemPrompt += `3. After each fix, re-run the adversarial test that found the issue\n`;
+      systemPrompt += `4. Record each fix as a wo_mutation with success=true\n`;
+      systemPrompt += `5. If a fix cannot be applied, record it with success=false and explain why\n`;
+      systemPrompt += `\nEvery red-team finding must have a corresponding blue-team response.\n`;
     }
   }
 
