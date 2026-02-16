@@ -1,17 +1,13 @@
 import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
 export default defineConfig({
+  plugins: [react()],
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        workspace: resolve(__dirname, 'workspace-new.html'),
-        workspaceOld: resolve(__dirname, 'workspace.html'),
-        health: resolve(__dirname, 'health.html'),
-        dashboard: resolve(__dirname, 'dashboard.html'),
-        manifold: resolve(__dirname, 'manifold.html'),
-        // regression: excluded until fully implemented (missing style.css, react components)
       },
     },
   },

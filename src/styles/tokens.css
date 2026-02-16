@@ -1,46 +1,63 @@
-/* Design Tokens - Metis Dark Theme */
+/* Design Tokens - ENDGAME Command Center - Blue Dark Theme */
 :root {
-  /* Backgrounds - Warm Charcoal */
-  --bg-primary: #2b2a27;
-  --bg-surface: #353432;
-  --bg-elevated: #3f3e3b;
-  --bg-hover: #4a4946;
-  --bg-active: #555451;
+  /* Backgrounds - Deep Navy */
+  --bg-primary: #0a0e17;
+  --bg-surface: #111827;
+  --bg-elevated: #1a2332;
+  --bg-hover: #1e2d3d;
+  --bg-active: #243447;
 
-  /* Text - Soft White */
-  --text-primary: #ececec;
-  --text-secondary: #b8b8b6;
-  --text-muted: #888886;
-  --text-inverse: #2b2a27;
+  /* Text */
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-inverse: #0a0e17;
 
   /* Borders */
-  --border-default: #4a4946;
-  --border-strong: #5a5956;
+  --border-default: #1e2d3d;
+  --border-strong: #2a3f54;
 
-  /* Accent - Gold */
-  --accent: #d4a574;
-  --accent-hover: #e0b588;
-  --accent-subtle: rgba(212, 165, 116, 0.15);
+  /* Accent - Electric Blue */
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-subtle: rgba(59, 130, 246, 0.15);
 
   /* Status Colors */
   --status-inbox: #9CA3AF;
   --status-assigned: #60A5FA;
-  --status-progress: #FBBF24;
-  --status-review: #A78BFA;
-  --status-failed: #DC2626;
-  --status-done: #34D399;
-  --status-blocked: #F87171;
-  --status-active: #34D399;
-  --status-warning: #FBBF24;
-  --status-error: #F87171;
+  --status-progress: #3b82f6;
+  --status-review: #a78bfa;
+  --status-failed: #ef4444;
+  --status-done: #22c55e;
+  --status-blocked: #f87171;
+  --status-active: #3b82f6;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --status-success: #22c55e;
 
   /* Priority */
-  --priority-critical: #EF4444;
-  --priority-high: #F97316;
-  --priority-medium: #EAB308;
-  --priority-low: #22C55E;
+  --priority-critical: #ef4444;
+  --priority-high: #f97316;
+  --priority-medium: #eab308;
+  --priority-low: #22c55e;
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+
+  /* Spacing */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Sidebar */
+  --sidebar-width: 220px;
+  --sidebar-collapsed: 56px;
 }
