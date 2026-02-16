@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: Supabase
+    type: postgres
+    access: proxy
+    url: ${POSTGRES_HOST:-localhost:5432}
+    database: ${POSTGRES_DB:-postgres}
+    user: ${POSTGRES_USER:-postgres}
+    password: ${POSTGRES_PASSWORD}
+    jsonData:
+      sslmode: "disable"
+      postgresVersion: 1500
+      timescaledb: false
+    editable: false
