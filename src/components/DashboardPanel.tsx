@@ -18,6 +18,20 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { staggerContainer, staggerItem, fadeIn, hoverScale } from '../animations';
 
+// XSS Prevention: Escape HTML entities to prevent script injection
+// This is a defense-in-depth measure - React escapes by default but this adds extra protection
+function escapeHtml(str: string): string {
+  const htmlEntities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '/': '&#x2F;',
+  };
+  return String(str).replace(/[&<>"'/]/g, char => htmlEntities[char] || char);
+}
+
 interface Metric {
   id: string;
   label: string;
@@ -49,6 +63,9 @@ export default function DashboardPanel({
 }: DashboardPanelProps) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [animatedValues, setAnimatedValues] = useState<Record<string, number>>({});
+
+  // XSS Prevention: Sanitize title before rendering
+  const safeTitle = escapeHtml(title);
 
   // PATTERN: Animated count-up for metrics
   useEffect(() => {
@@ -113,8 +130,8 @@ export default function DashboardPanel({
       initial="initial"
       animate="animate"
     >
-      {/* PATTERN: Section header */}
-      <h2 className="text-xl font-semibold text-primary mb-6">{title}</h2>
+      {/* PATTERN: Section header - using dangerouslySetInnerHTML NOT used, relying on React text rendering */}
+      <h2 className="text-xl font-semibold text-primary mb-6">{safeTitle}</h2>
 
       {/* PATTERN: Responsive grid (1 col → 2 col → 3 col) */}
       {metrics.length > 0 && (
@@ -147,9 +164,9 @@ export default function DashboardPanel({
                 )}
               </div>
               
-              {/* PATTERN: Muted label with uppercase styling */}
+              {/* PATTERN: Muted label with uppercase styling - escapeHtml applied */}
               <div className="text-xs text-muted uppercase tracking-wide mt-1">
-                {metric.label}
+                {escapeHtml(metric.label)}
               </div>
               
               {/* PATTERN: StatusBadge with pulse animation for active states */}
@@ -195,7 +212,8 @@ export default function DashboardPanel({
                   variants={hoverScale}
                   whileHover="whileHover"
                 >
-                  <td className="p-3 font-medium text-primary">{row.name}</td>
+                  {/* XSS Prevention: escapeHtml applied to user-controlled data */}
+                  <td className="p-3 font-medium text-primary">{escapeHtml(row.name)}</td>
                   <td className="p-3">
                     <StatusBadge status={row.status} />
                   </td>
@@ -203,12 +221,12 @@ export default function DashboardPanel({
                     {row.value.toLocaleString()}
                   </td>
                   <td className="p-3 text-muted text-xs">
-                    {expandedRow === row.id ? '▼' : '▶'}
+                    {expandedRow === row.id ? '▼' : '►'}
                   </td>
                 </motion.tr>
               ))}
               
-              {/* PATTERN: Expandable detail row */}
+              {/* PATTERN: Expandable detail row - escapeHtml applied */}
               {data.map(row => expandedRow === row.id && row.detail && (
                 <motion.tr
                   key={`${row.id}-detail`}
@@ -219,7 +237,7 @@ export default function DashboardPanel({
                 >
                   <td colSpan={4} className="p-4">
                     <div className="text-sm text-secondary">
-                      {row.detail}
+                      {escapeHtml(row.detail)}
                     </div>
                   </td>
                 </motion.tr>
