@@ -178,12 +178,15 @@ function Empty({ text }: { text: string }) {
 
 function extractDetail(detail: any): string {
   if (!detail) return '';
-  if (typeof detail === 'string') return detail;
-  if (detail.content) return String(detail.content);
-  if (detail.tool_name) return `[${detail.tool_name}] ${detail.message || detail.result || ''}`;
-  if (detail.message) return String(detail.message);
-  if (detail.summary) return String(detail.summary);
-  return JSON.stringify(detail).slice(0, 200);
+  if (typeof detail === 'string') return detail.slice(0, 300);
+  if (detail.content) return String(detail.content).slice(0, 300);
+  if (detail.tool_name) return `[${detail.tool_name}] ${detail.message || detail.result || ''}`.slice(0, 300);
+  if (detail.message) return String(detail.message).slice(0, 300);
+  if (detail.summary) return String(detail.summary).slice(0, 300);
+  if (detail.event_type) return `${detail.event_type} ${detail.action || ''}`.slice(0, 300);
+  // Only stringify if no other options
+  const keys = Object.keys(detail || {}).slice(0, 5);
+  return keys.map(k => `${k}: ${JSON.stringify(detail[k]).slice(0, 50)}`).join(' | ');
 }
 
 function fmtTime(iso: string): string {
