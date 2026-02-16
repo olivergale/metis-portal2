@@ -61,66 +61,62 @@ Deno.serve(async (req: Request) => {
 });
 
 /**
- * WO-MF-P24: Attempt to escalate the WO to a higher tier before creating remediation.
- * Queries agent_execution_profiles for escalation_tiers and re-dispatches if tier exists.
+ * P6: Attempt to escalate the WO to a higher model tier before creating remediation.
+ * Uses get_next_escalation_tier() RPC to look up the agent_escalation_tiers table.
  */
 async function attemptEscalation(
   supabase: any,
   wo: { id: string; slug: string; name: string; objective?: string; tags?: string[]; assigned_to?: string },
-  failureReason: string,
-  currentTier: number
+  agentName: string,
+  currentModel: string,
+  failureReason: string
 ): Promise<boolean> {
   try {
-    // Get agent from work order
-    const agentId = wo.assigned_to;
-    if (!agentId) {
-      console.log(`[WO-AGENT] No assigned agent for ${wo.slug} - cannot escalate`);
+    if (!agentName) {
+      console.log(`[WO-AGENT] No agent name for ${wo.slug} - cannot escalate`);
       return false;
     }
 
-    // Query agent_execution_profiles for escalation_tiers
-    const { data: profile, error: profileErr } = await supabase
-      .from("agent_execution_profiles")
-      .select("escalation_tiers, model")
-      .eq("agent_id", agentId)
-      .single();
-
-    if (profileErr || !profile) {
-      console.log(`[WO-AGENT] No execution profile for agent ${agentId} - cannot escalate`);
-      return false;
-    }
-
-    const escalationTiers: any[] = profile.escalation_tiers || [];
-    const nextTier = currentTier + 1;
-
-    if (nextTier >= escalationTiers.length) {
-      console.log(`[WO-AGENT] No next escalation tier for ${wo.slug} (current=${currentTier}, max=${escalationTiers.length - 1})`);
-      return false;
-    }
-
-    const nextTierConfig = escalationTiers[nextTier];
-    console.log(`[WO-AGENT] Escalating ${wo.slug} from tier ${currentTier} to tier ${nextTier}:`, nextTierConfig);
-
-    // Update client_info with new escalation_tier
-    await supabase.rpc("run_sql_void", {
-      sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET client_info = COALESCE(client_info, '{}'::jsonb) || jsonb_build_object('escalation_tier', ${nextTier}, 'escalation_model', '${nextTierConfig.model || profile.model || 'claude-sonnet-4-5-20250929'}') WHERE id = '${wo.id}';`,
+    // Query the escalation tiers table via RPC
+    const { data: tierResult, error: tierErr } = await supabase.rpc("get_next_escalation_tier", {
+      p_agent_name: agentName,
+      p_current_model: currentModel,
     });
 
-    // Log escalation to execution_log with phase='escalation'
+    if (tierErr || !tierResult) {
+      console.log(`[WO-AGENT] Escalation tier lookup failed for ${agentName}:`, tierErr?.message);
+      return false;
+    }
+
+    if (tierResult.is_max_tier) {
+      console.log(`[WO-AGENT] ${wo.slug} already at max escalation tier (${currentModel}) - cannot escalate`);
+      return false;
+    }
+
+    const nextModel = tierResult.next_model;
+    const nextTier = tierResult.tier_order;
+    console.log(`[WO-AGENT] Escalating ${wo.slug} from ${currentModel} to ${nextModel} (tier ${nextTier})`);
+
+    // Update client_info with escalation model override + reset status to in_progress
+    await supabase.rpc("run_sql_void", {
+      sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'in_progress', client_info = COALESCE(client_info, '{}'::jsonb) || jsonb_build_object('escalation_tier', ${nextTier}, 'escalation_model', '${nextModel.replace(/'/g, "''")}') WHERE id = '${wo.id}';`,
+    });
+
+    // Log escalation
     await supabase.from("work_order_execution_log").insert({
       work_order_id: wo.id,
       phase: "escalation",
-      agent_name: "wo-agent",
+      agent_name: agentName,
       detail: {
         event_type: "escalation_attempt",
-        previous_tier: currentTier,
+        previous_model: currentModel,
+        next_model: nextModel,
         next_tier: nextTier,
-        model_override: nextTierConfig.model,
         reason: failureReason,
       },
     }).then(null, () => {});
 
-    // Re-dispatch same WO via pg_net POST
+    // Re-dispatch via pg_net POST
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
     const selfUrl = Deno.env.get("SUPABASE_URL")!;
 
@@ -139,7 +135,7 @@ async function attemptEscalation(
       );`,
     });
 
-    console.log(`[WO-AGENT] ${wo.slug} escalated to tier ${nextTier} - re-dispatch queued`);
+    console.log(`[WO-AGENT] ${wo.slug} escalated to tier ${nextTier} (${nextModel}) - re-dispatch queued`);
     return true;
   } catch (e: any) {
     console.error(`[WO-AGENT] Escalation failed for ${wo.slug}:`, e.message);
@@ -720,6 +716,11 @@ async function handleExecute(req: Request): Promise<Response> {
         work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
         detail: { event_type: "circuit_breaker", content: msg, decision: "hard_cap" },
       });
+      // P6: Try escalation before failing
+      const escalated = await attemptEscalation(supabase, wo, agentContext.agentName, agentContext.model, msg);
+      if (escalated) {
+        return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "escalated", turns: 0, summary: `Escalated: ${msg}`, tool_calls: 0 });
+      }
       await supabase.rpc("run_sql_void", {
         sql_query: `SELECT set_config('app.wo_executor_bypass', 'true', true); UPDATE work_orders SET status = 'failed', summary = '${msg.replace(/'/g, "''")}' WHERE id = '${wo.id}';`,
       });
@@ -760,8 +761,13 @@ async function handleExecute(req: Request): Promise<Response> {
         // AC3: New mutations detected  --  allow continuation regardless of checkpoint count
         // Fall through to continuation logic below
       } else {
-        // stuck or hard_cap  --  fail + remediation
+        // stuck or hard_cap  --  try escalation first, then fail + remediation
         const msg = `${reason}. Marking failed.`;
+        // P6: Try escalation before failing
+        const escalated = await attemptEscalation(supabase, wo, agentContext.agentName, agentContext.model, msg);
+        if (escalated) {
+          return jsonResponse({ work_order_id: wo.id, slug: wo.slug, status: "escalated", turns: 0, summary: `Escalated: ${msg}`, tool_calls: 0 });
+        }
         await supabase.from("work_order_execution_log").insert({
           work_order_id: wo.id, phase: "failed", agent_name: agentContext.agentName,
           detail: { event_type: "circuit_breaker", content: msg, decision, mutation_count: mutationCount },
