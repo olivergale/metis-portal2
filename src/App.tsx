@@ -5,6 +5,7 @@ import Agents from './views/Agents.tsx';
 import Logs from './views/Logs.tsx';
 import Health from './views/Health.tsx';
 import Chat from './views/Chat.tsx';
+import Ontology from './views/Ontology.tsx';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/logs" element={<Logs />} />
           <Route path="/health" element={<Health />} />
           <Route path="/chat" element={<Chat />} />
+          <Route path="/ontology" element={<Ontology />} />
         </Routes>
       </main>
     </div>
