@@ -35,7 +35,7 @@ export default function Manifold() {
     } else if (table === 'wo_mutations') {
       summary = `${record.tool_name} \u2192 ${record.action}`;
     } else if (table === 'pipeline_runs') {
-      summary = eventType === 'INSERT' ? `New pipeline: ${record.target}` : `${record.target} in ${record.current_phase}`;
+      summary = eventType === 'INSERT' ? `New work stream: ${record.display_name || record.target}` : `${record.display_name || record.target} in ${record.current_phase}`;
     } else {
       summary = `${eventType} on ${table}`;
     }
@@ -91,7 +91,7 @@ export default function Manifold() {
 
   async function intervene(action: string) {
     if (!selectedId) return;
-    if (!confirm(`Are you sure you want to ${action.replace('_', ' ')} this pipeline?`)) return;
+    if (!confirm(`Are you sure you want to ${action.replace('_', ' ')} this work stream?`)) return;
     try {
       await apiFetch('/rest/v1/rpc/intervene_pipeline', 'POST', { p_pipeline_run_id: selectedId, p_action: action });
     } catch (e) {
@@ -102,13 +102,13 @@ export default function Manifold() {
   return (
     <div>
       <div style={styles.topBar}>
-        <h1 style={styles.title}>Pipeline Command Center</h1>
+        <h1 style={styles.title}>Work Stream Command Center</h1>
         <button className="btn btn-primary" onClick={() => {
-          const target = prompt('Pipeline target name:');
+          const target = prompt('Work stream name:');
           if (!target) return;
           const desc = prompt('Description:') || '';
-          apiFetch('/rest/v1/rpc/create_pipeline', 'POST', { p_target: target, p_description: desc });
-        }}>+ New Pipeline</button>
+          apiFetch('/rest/v1/rpc/create_pipeline', 'POST', { p_target: target, p_description: desc, p_display_name: target });
+        }}>+ New Work Stream</button>
       </div>
 
       <div style={styles.statsRow}>
@@ -130,9 +130,9 @@ export default function Manifold() {
             ))}
           </div>
           {loading ? (
-            <div style={styles.empty}>Loading pipelines...</div>
+            <div style={styles.empty}>Loading work streams...</div>
           ) : !filtered.length ? (
-            <div style={styles.empty}>No pipelines found</div>
+            <div style={styles.empty}>No work streams found</div>
           ) : (
             <div style={styles.pipelineList}>
               {filtered.map(p => (
@@ -145,14 +145,14 @@ export default function Manifold() {
         {/* Pipeline detail */}
         <div style={styles.detailPanel}>
           {!selected ? (
-            <div style={styles.empty}>Select a pipeline to view details</div>
+            <div style={styles.empty}>Select a work stream to view details</div>
           ) : detailLoading ? (
             <div style={styles.empty}>Loading...</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div style={styles.detailHeader}>
                 <div>
-                  <h2 style={styles.detailTitle}>{selected.target}</h2>
+                  <h2 style={styles.detailTitle}>{selected.display_name || selected.target}</h2>
                   <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>{selected.description}</p>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -247,7 +247,7 @@ function PipelineCard({ pipeline, selected, onClick }: { pipeline: PipelineRun; 
       background: selected ? 'var(--bg-hover)' : 'var(--bg-elevated)',
     }}>
       <div style={pcStyles.header}>
-        <span style={pcStyles.target}>{pipeline.target}</span>
+        <span style={pcStyles.target}>{pipeline.display_name || pipeline.target}</span>
         <StatusBadge status={pipeline.status} />
       </div>
       <div style={pcStyles.meta}>
