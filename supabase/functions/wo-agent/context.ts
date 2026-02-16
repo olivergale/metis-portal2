@@ -43,6 +43,7 @@ interface WorkOrder {
   assigned_to: string | null;
   parent_id: string | null;
   pipeline_phase: string | null;
+  pipeline_run_id: string | null;
 }
 
 /**

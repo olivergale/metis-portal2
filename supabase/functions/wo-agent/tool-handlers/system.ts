@@ -144,31 +144,36 @@ export async function handleMarkComplete(
       }
     } catch { /* non-critical */ }
 
-    // WO-0389: Check for deployment_verification records when WO has deployment-related tags
-    // If the WO deployed edge functions but has no verification records, block completion
-    const DEPLOYMENT_TAGS = new Set(["edge-function", "deploy", "deployment", "supabase", "migration", "schema"]);
-    const { data: woForTags } = await ctx.supabase
+    // Check if this is a pipeline WO (skip deployment verification for pipeline WOs)
+    const { data: woForCheck } = await ctx.supabase
       .from("work_orders")
-      .select("tags")
+      .select("tags, pipeline_run_id")
       .eq("id", ctx.workOrderId)
       .single();
-    
-    const woTags = woForTags?.tags || [];
-    const hasDeploymentTag = woTags.some((t: string) => DEPLOYMENT_TAGS.has(t.toLowerCase()));
-    
-    if (hasDeploymentTag) {
-      // Check for deployment_verification entries in execution log
-      const { count: verifyCount } = await ctx.supabase
-        .from("work_order_execution_log")
-        .select("id", { count: "exact", head: true })
-        .eq("work_order_id", ctx.workOrderId)
-        .eq("phase", "deployment_verification");
-      
-      if ((verifyCount || 0) === 0) {
-        return {
-          success: false,
-          error: `BLOCKED: WO has deployment-related tags but no deployment_verification records. Deployments must be verified before mark_complete. Run deploy and ensure verification passes, or use transition_state to move to review manually.`,
-        };
+
+    const isPipelineWo = !!woForCheck?.pipeline_run_id;
+
+    // WO-0389: Check for deployment_verification records when WO has deployment-related tags
+    // Pipeline WOs skip this gate — their evaluation is HARDEN/INTEGRATE, not deployment verification
+    if (!isPipelineWo) {
+      const DEPLOYMENT_TAGS = new Set(["edge-function", "deploy", "deployment", "supabase", "migration", "schema"]);
+      const woTags = woForCheck?.tags || [];
+      const hasDeploymentTag = woTags.some((t: string) => DEPLOYMENT_TAGS.has(t.toLowerCase()));
+
+      if (hasDeploymentTag) {
+        // Check for deployment_verification entries in execution log
+        const { count: verifyCount } = await ctx.supabase
+          .from("work_order_execution_log")
+          .select("id", { count: "exact", head: true })
+          .eq("work_order_id", ctx.workOrderId)
+          .eq("phase", "deployment_verification");
+
+        if ((verifyCount || 0) === 0) {
+          return {
+            success: false,
+            error: `BLOCKED: WO has deployment-related tags but no deployment_verification records. Deployments must be verified before mark_complete. Run deploy and ensure verification passes, or use transition_state to move to review manually.`,
+          };
+        }
       }
     }
 
@@ -191,10 +196,15 @@ export async function handleMarkComplete(
       },
     });
 
-    // Transition to review using wo_transition (handles all enforcement uniformly)
+    // Pipeline WOs skip review — go straight to done (evaluation is HARDEN/INTEGRATE)
+    // Standard WOs go to review → QA as before
+    const transitionEvent = isPipelineWo
+      ? "mark_done"           // Pipeline: skip review, advance pipeline
+      : "submit_for_review";  // Standard: go to review → QA
+
     const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
       p_wo_id: ctx.workOrderId,
-      p_event: "submit_for_review",
+      p_event: transitionEvent,
       p_actor: ctx.agentName,
       p_payload: { summary: summary + overlapWarning },
     });

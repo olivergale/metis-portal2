@@ -606,7 +606,7 @@ async function handleExecute(req: Request): Promise<Response> {
   const { data: wo, error: woError } = await supabase
     .from("work_orders")
     .select(
-      "id, slug, name, objective, acceptance_criteria, tags, priority, status, summary, qa_checklist, client_info, project_brief_id, depends_on, assigned_to"
+      "id, slug, name, objective, acceptance_criteria, tags, priority, status, summary, qa_checklist, client_info, project_brief_id, depends_on, assigned_to, pipeline_phase, pipeline_run_id, parent_id"
     )
     .eq("id", work_order_id)
     .single();
