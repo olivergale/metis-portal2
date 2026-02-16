@@ -78,13 +78,21 @@ export async function buildAgentContext(
     agentModel = workOrder.client_info.escalation_model;
   }
 
-  // Load schema context
+  // Load schema context — P2: dynamic WO-aware schema extraction
   let schemaContext = "## Database Schema\nSchema loading failed";
   try {
-    const { data } = await supabase.rpc("get_schema_context");
+    const { data } = await supabase.rpc("get_dynamic_schema_context", {
+      p_work_order_id: workOrder.id,
+    });
     if (data) schemaContext = data;
   } catch {
-    // Schema load failed, use fallback
+    // Dynamic schema load failed, try static fallback
+    try {
+      const { data } = await supabase.rpc("get_schema_context");
+      if (data) schemaContext = data;
+    } catch {
+      // Schema load failed entirely, use fallback
+    }
   }
 
   // Build base system prompt from worker template
@@ -460,6 +468,19 @@ async function buildRemediationContext(
       }
     }
     ctx += `\n`;
+  }
+
+  // P2: Schema refresh for remediation — include objects parent WO created/modified
+  try {
+    const { data: parentSchema } = await supabase.rpc("get_dynamic_schema_context", {
+      p_work_order_id: parentWo.id,
+    });
+    if (parentSchema) {
+      ctx += `### Parent Schema Context (objects created/modified)\n`;
+      ctx += parentSchema.slice(0, 8000) + `\n\n`;
+    }
+  } catch {
+    // Schema refresh failed, continue without
   }
 
   // Parent execution log (what was done before)

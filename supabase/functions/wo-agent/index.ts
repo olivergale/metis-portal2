@@ -836,6 +836,19 @@ async function handleExecute(req: Request): Promise<Response> {
       finalUserMessage += `**IMPORTANT**: These approaches already failed. Try a different strategy or escalate if you cannot proceed.\n\n`;
     }
 
+    // P2: Schema refresh on continuation — re-extract schema for objects agent created/modified
+    try {
+      const { data: refreshedSchema } = await supabase.rpc("get_dynamic_schema_context", {
+        p_work_order_id: wo.id,
+      });
+      if (refreshedSchema) {
+        finalUserMessage += `## Updated Schema Context\n`;
+        finalUserMessage += refreshedSchema.slice(0, 8000) + `\n\n`;
+      }
+    } catch {
+      // Schema refresh failed, continue without
+    }
+
     finalUserMessage += `## Original Objective\n${wo.objective}\n\n`;
     if (wo.acceptance_criteria) {
       finalUserMessage += `## Acceptance Criteria\n${wo.acceptance_criteria}\n\n`;
