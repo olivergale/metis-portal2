@@ -1,6 +1,12 @@
-/* Design Tokens - ENDGAME Command Center - Blue Dark Theme */
+/* Design Tokens - Open Manifold Theme */
+/* Bridge layer: CSS custom properties that map to Tailwind tokens */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
-  /* Backgrounds - Deep Navy */
+  /* Backgrounds */
   --bg-primary: #0a0e17;
   --bg-surface: #111827;
   --bg-elevated: #1a2332;
@@ -17,7 +23,7 @@
   --border-default: #1e2d3d;
   --border-strong: #2a3f54;
 
-  /* Accent - Electric Blue */
+  /* Accent */
   --accent: #3b82f6;
   --accent-hover: #60a5fa;
   --accent-subtle: rgba(59, 130, 246, 0.15);
@@ -60,4 +66,11 @@
   /* Sidebar */
   --sidebar-width: 220px;
   --sidebar-collapsed: 56px;
+}
+
+/* Base styles */
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
