@@ -26,8 +26,8 @@ export default function WODetail({ wo, onClose }: WODetailProps) {
     });
   }, [wo.id]);
 
-  const successMut = mutations.filter(m => m.status === 'success').length;
-  const failMut = mutations.filter(m => m.status === 'failure').length;
+  const successMut = mutations.filter(m => m.success === true).length;
+  const failMut = mutations.filter(m => m.success === false).length;
 
   const tabs = [
     { id: 'info' as const, label: 'Details' },
@@ -121,8 +121,8 @@ function MutationTab({ mutations }: { mutations: WOMutation[] }) {
         <div key={m.id} style={styles.logEntry}>
           <span style={{
             ...styles.logPhase,
-            color: m.status === 'success' ? 'var(--status-success)' : 'var(--status-error)',
-          }}>{m.status}</span>
+            color: m.success === true ? 'var(--status-success)' : 'var(--status-error)',
+          }}>{m.success === true ? 'success' : 'failed'}</span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent)' }}>{m.tool_name}</span>
           <span style={styles.logDetail}>{m.action}{m.target_object ? ` on ${m.target_object}` : ''}</span>
           <span style={styles.logTime}>{fmtTime(m.created_at)}</span>
