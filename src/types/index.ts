@@ -77,6 +77,19 @@ export interface WOMutation {
   created_at: string;
 }
 
+export interface WOEffect {
+  id: string;
+  work_order_id: string;
+  effect_type: string;
+  payload: any;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  error_detail?: string;
+  created_at: string;
+  processed_at?: string;
+  retry_count: number;
+  max_retries: number;
+}
+
 export interface PipelineRun {
   id: string;
   current_phase: string;
@@ -125,6 +138,16 @@ export interface HealthCheck {
   status: 'green' | 'yellow' | 'red';
   detail?: string;
   lastActivity?: string;
+}
+
+export interface Anomaly {
+  id: string;
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  entity_type: string;
+  entity_id: string;
+  detected_at: string;
 }
 
 export type LogType = 'execution' | 'mutation' | 'event' | 'audit';
