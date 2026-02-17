@@ -53,6 +53,49 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // AC#5: Handle liveness-check action from POST body
+    if (req.method === "POST") {
+      const body = await req.json();
+      if (body.action === "liveness-check") {
+        const workOrderId = body.work_order_id;
+        if (workOrderId) {
+          console.log(`[LIVENESS] Checking specific WO: ${workOrderId}`);
+          const { data: livenessResult, error: livenessError } = await supabase.rpc(
+            "check_wo_liveness",
+            { p_wo_id: workOrderId }
+          );
+          
+          if (livenessError) {
+            console.error("[LIVENESS] Error:", livenessError);
+            return new Response(
+              JSON.stringify({ error: livenessError.message }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          
+          console.log("[LIVENESS] Result:", livenessResult);
+          
+          // Log to execution_log per AC#4
+          await supabase.from("work_order_execution_log").insert({
+            work_order_id: workOrderId,
+            agent_name: "ops",
+            phase: "stuck_detection",
+            event_type: "liveness_check",
+            detail: { liveness_result: livenessResult, checked_at: new Date().toISOString() }
+          });
+          
+          return new Response(
+            JSON.stringify({ success: true, liveness_result: livenessResult }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ error: "work_order_id required for liveness-check" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     console.log("Starting systemic health diagnosis...");
 
     const metrics: HealthMetrics = {
@@ -289,6 +332,49 @@ serve(async (req) => {
         });
       }
     });
+
+    // AC#1-4: LIVENESS CHECK FOR ZOMBIE WOs (in_progress > 7 minutes)
+    const sevenMinutesAgo = new Date(Date.now() - 7 * 60 * 1000).toISOString();
+    
+    const { data: zombieCandidates, error: zombieError } = await supabase
+      .from('work_orders')
+      .select('id, slug, status, started_at, updated_at')
+      .eq('status', 'in_progress')
+      .lt('started_at', sevenMinutesAgo);
+
+    if (zombieError) {
+      console.error("[LIVENESS] Error fetching zombie candidates:", zombieError);
+    } else if (zombieCandidates && zombieCandidates.length > 0) {
+      console.log(`[LIVENESS] Found ${zombieCandidates.length} zombie candidates`);
+      
+      for (const wo of zombieCandidates) {
+        // AC#3: Call check_wo_liveness for each candidate
+        const { data: livenessResult, error: livenessError } = await supabase.rpc(
+          "check_wo_liveness",
+          { p_wo_id: wo.id }
+        );
+        
+        if (livenessError) {
+          console.error(`[LIVENESS] Error checking WO ${wo.slug}:`, livenessError);
+        } else {
+          console.log(`[LIVENESS] ${wo.slug}:`, livenessResult);
+          
+          // AC#4: Log each result to execution_log with phase=stuck_detection and agent_name=ops
+          await supabase.from("work_order_execution_log").insert({
+            work_order_id: wo.id,
+            agent_name: "ops",
+            phase: "stuck_detection",
+            event_type: "liveness_check",
+            detail: { 
+              slug: wo.slug,
+              liveness_result: livenessResult, 
+              checked_at: new Date().toISOString(),
+              threshold_minutes: 7
+            }
+          });
+        }
+      }
+    }
 
     // 6. STALE WO_EVENTS CHECK (pending events older than 5 minutes) - WO-0621
     console.log("Checking for stale wo_events...");
