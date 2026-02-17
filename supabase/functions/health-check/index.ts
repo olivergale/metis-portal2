@@ -270,7 +270,7 @@ serve(async (req) => {
         work_order_execution_log!inner(created_at)
       `)
       .eq('status', 'in_progress')
-      .order('work_order_execution_log.created_at', { ascending: false });
+      .order('created_at', { ascending: false, foreignTable: 'work_order_execution_log' });
 
     if (stuckError) throw stuckError;
 
