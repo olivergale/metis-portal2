@@ -144,14 +144,16 @@ export async function handleMarkComplete(
       }
     } catch { /* non-critical */ }
 
-    // Check if this is a pipeline WO (skip deployment verification for pipeline WOs)
+    // Check if this is a pipeline WO and get its pipeline_phase
+    // ws7a-pipeline-review-integration: Check pipeline_phase to determine review vs done
     const { data: woForCheck } = await ctx.supabase
       .from("work_orders")
-      .select("tags, pipeline_run_id")
+      .select("tags, pipeline_run_id, pipeline_phase")
       .eq("id", ctx.workOrderId)
       .single();
 
     const isPipelineWo = !!woForCheck?.pipeline_run_id;
+    const pipelinePhase = woForCheck?.pipeline_phase || null;
 
     // WO-0389: Check for deployment_verification records when WO has deployment-related tags
     // Pipeline WOs skip this gate — their evaluation is HARDEN/INTEGRATE, not deployment verification
@@ -196,11 +198,14 @@ export async function handleMarkComplete(
       },
     });
 
-    // Pipeline WOs skip review — go straight to done (evaluation is HARDEN/INTEGRATE)
+    // Pipeline WOs: INTEGRATE phase skips review (it's the verification step)
+    // Non-INTEGRATE pipeline WOs go through review → QA for lie detector
     // Standard WOs go to review → QA as before
-    const transitionEvent = isPipelineWo
-      ? "mark_done"           // Pipeline: skip review, advance pipeline
-      : "submit_for_review";  // Standard: go to review → QA
+    // ws7a-pipeline-review-integration: Route non-INTEGRATE pipeline WOs through review
+    const isIntegratePhase = pipelinePhase === "INTEGRATE";
+    const transitionEvent = isPipelineWo && isIntegratePhase
+      ? "mark_done"              // INTEGRATE: skip review (is verification step)
+      : "submit_for_review";     // Non-INTEGRATE or non-pipeline: go to review
 
     const { error: rpcErr } = await ctx.supabase.rpc("wo_transition", {
       p_wo_id: ctx.workOrderId,
