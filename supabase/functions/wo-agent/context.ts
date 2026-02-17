@@ -365,7 +365,7 @@ export async function buildAgentContext(
     const { data: parentContext, error: ctxError } = await supabase
       .from('team_context')
       .select('content, author_agent, context_type')
-      .eq('metadata->>target_wo_id', workOrder.id)
+      .filter('metadata->>target_wo_id', 'eq', workOrder.id)
       .order('created_at', { ascending: true })
       .limit(5);
     
