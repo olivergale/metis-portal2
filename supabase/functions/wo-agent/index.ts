@@ -474,6 +474,73 @@ async function handleExecute(req: Request): Promise<Response> {
     });
   }
 
+  // WO-0740 Fix B: Inject escalation context when agent was escalated to a higher model
+  const clientInfo = wo.client_info || {};
+  if (clientInfo.escalation_tier && !checkpoint?.detail) {
+    // This is a fresh execution after escalation — agent needs to know what happened
+    const { data: escalationLogs } = await supabase
+      .from("work_order_execution_log")
+      .select("detail, created_at")
+      .eq("work_order_id", wo.id)
+      .eq("phase", "escalation")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Query mutation history from previous execution
+    const { data: mutSummary } = await supabase
+      .from("wo_mutation_summary")
+      .select("*")
+      .eq("work_order_id", wo.id)
+      .maybeSingle();
+
+    // Query failed mutations for DO NOT RETRY context
+    const { data: failedMuts } = await supabase
+      .from("wo_mutations")
+      .select("tool_name, action_keyword, target_object, error_class, error_detail")
+      .eq("work_order_id", wo.id)
+      .eq("success", false)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    let escalationContext = `\n\n## ESCALATION CONTEXT\n`;
+    escalationContext += `**You are an escalated agent.** A previous agent (lower-tier model) attempted this work order and failed.\n`;
+    escalationContext += `You have been escalated to tier ${clientInfo.escalation_tier} (model: ${clientInfo.escalation_model || "unknown"}).\n\n`;
+
+    if (escalationLogs?.detail) {
+      const esc = escalationLogs.detail;
+      escalationContext += `### Why You Were Escalated\n`;
+      escalationContext += `- **Previous model**: ${esc.previous_model || "unknown"}\n`;
+      escalationContext += `- **Escalation reason**: ${esc.reason || "unknown"}\n`;
+      escalationContext += `- **Escalated at**: ${escalationLogs.created_at}\n\n`;
+    }
+
+    if (mutSummary) {
+      escalationContext += `### Previous Agent's Mutation History\n`;
+      escalationContext += `- Total mutations: ${mutSummary.total_mutations || 0} (${mutSummary.successful_mutations || 0} successful, ${mutSummary.failed_mutations || 0} failed)\n`;
+      if (mutSummary.tools_used) {
+        escalationContext += `- Tools used: ${mutSummary.tools_used}\n`;
+      }
+      escalationContext += `\n`;
+    }
+
+    if (failedMuts && failedMuts.length > 0) {
+      escalationContext += `### Failed Approaches (DO NOT RETRY)\n`;
+      escalationContext += `The previous agent tried these and they failed. Use a different strategy:\n\n`;
+      for (const fm of failedMuts) {
+        escalationContext += `- **${fm.tool_name}** on \`${fm.target_object || "unknown"}\` (${fm.action_keyword || "unknown"})\n`;
+        escalationContext += `  - Error class: ${fm.error_class || "unknown"}\n`;
+        if (fm.error_detail) {
+          escalationContext += `  - Error: ${String(fm.error_detail).slice(0, 200)}\n`;
+        }
+      }
+      escalationContext += `\n**CRITICAL**: Do NOT repeat the same failed approaches. The previous agent already tried them.\n`;
+      escalationContext += `If the file is too large to read via github_read_file, use github_read_file_range to read specific line ranges.\n\n`;
+    }
+
+    finalUserMessage += escalationContext;
+  }
+
   // WO-0513: Run agentic loop as background task via EdgeRuntime.waitUntil()
   // This returns the HTTP response immediately, avoiding the 150s request idle timeout.
   // The background task uses the full 400s Pro plan wall clock budget.
