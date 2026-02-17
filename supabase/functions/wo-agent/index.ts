@@ -116,6 +116,9 @@ async function attemptEscalation(
       },
     }).then(null, () => {});
 
+    // WO-0740: Reset checkpoint count on escalation so escalated model gets a full run
+    await supabase.from("work_order_execution_log").delete().eq("work_order_id", wo.id).eq("phase", "checkpoint");
+
     // Re-dispatch via pg_net POST
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
     const selfUrl = Deno.env.get("SUPABASE_URL")!;
