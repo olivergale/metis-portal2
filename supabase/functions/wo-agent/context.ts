@@ -359,6 +359,25 @@ export async function buildAgentContext(
   // WO-0165: Add concurrent WO awareness
   userMessage += await buildConcurrentWOContext(supabase, workOrder.id);
 
+  // WO-0739: Load parent context injection from team_context
+  try {
+    const { data: parentContext, error: ctxError } = await supabase
+      .from('team_context')
+      .select('content, author_agent, context_type')
+      .eq('root_wo_id', workOrder.id)
+      .order('created_at', { ascending: true })
+      .limit(5);
+    
+    if (!ctxError && parentContext && parentContext.length > 0) {
+      userMessage += '\n\n## Parent Context Injection\n';
+      for (const ctx of parentContext) {
+        userMessage += `From ${ctx.author_agent} (${ctx.context_type}):\n${ctx.content}\n`;
+      }
+    }
+  } catch (ctxErr) {
+    // Non-fatal: team_context may be empty or query may fail
+  }
+
   // WO-MF-P25: Pipeline-phase aware adversarial prompt injection
   const woPipelinePhase = workOrder.pipeline_phase || "";
   const woTags2 = workOrder.tags || [];
