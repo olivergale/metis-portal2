@@ -166,7 +166,7 @@ export async function handleApplyMigration(
   try {
     // WO-0165: Advisory lock to serialize DDL across concurrent agents.
     // Uses run_sql_void (EXECUTE directly) -- run_sql wraps in SELECT subquery which breaks DDL.
-    const lockedQuery = `SET LOCAL lock_timeout = '10s'; SELECT pg_advisory_xact_lock(hashtext('${name.replace(/'/g, "''")}')); ${query}`;
+    const lockedQuery = `SET LOCAL statement_timeout = '600000'; SET LOCAL lock_timeout = '10s'; SELECT pg_advisory_xact_lock(hashtext('${name.replace(/'/g, "''")}')); ${query}`;
     const { success: ddlOk, error } = await executeDdlViaRpc(lockedQuery, ctx.supabase);
     if (!ddlOk || error) {
       // Log migration failure with explicit success: false and error_detail
