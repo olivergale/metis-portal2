@@ -1131,6 +1131,54 @@ export async function handleGithubPushFiles(
     }
     const baseTreeSha = (await commitResp.json()).tree.sha;
 
+    // Step 2.5 (WO guardrail-file-size-validation): Pre-commit file size validation
+    // Reject pushes where any file shrinks by more than 50% to prevent truncation
+    for (const file of files) {
+      if (!file.path || !file.content) continue; // skip patch-mode and missing paths
+      const newSizeBytes = new TextEncoder().encode(file.content).length;
+      // Check current file size on branch via Contents API (HEAD only, no body download needed)
+      try {
+        const sizeCheckResp = await fetch(
+          `${GITHUB_API}/repos/${repo}/contents/${file.path}?ref=${ref}`,
+          { method: "HEAD", headers: hdrs }
+        );
+        if (sizeCheckResp.ok) {
+          // HEAD doesn't return JSON, use GET with size-only
+          const sizeGetResp = await fetch(
+            `${GITHUB_API}/repos/${repo}/contents/${file.path}?ref=${ref}`,
+            { headers: hdrs }
+          );
+          if (sizeGetResp.ok) {
+            const fileInfo = await sizeGetResp.json();
+            const currentSize = fileInfo.size || 0;
+            if (currentSize > 0 && newSizeBytes < currentSize * 0.5) {
+              const pctReduction = Math.round((1 - newSizeBytes / currentSize) * 100);
+              const errorMsg = `File ${file.path} would shrink from ${currentSize} to ${newSizeBytes} bytes (${pctReduction}% reduction). This looks like truncation. Aborting push.`;
+              // Log the rejection as a failed mutation
+              try {
+                await ctx.supabase.rpc("record_mutation", {
+                  p_work_order_id: ctx.workOrderId,
+                  p_tool_name: "github_push_files",
+                  p_object_type: "file",
+                  p_object_id: file.path,
+                  p_action: "PUSH",
+                  p_success: false,
+                  p_error_class: "FILE_SIZE_VALIDATION",
+                  p_error_detail: `Truncation guard: current=${currentSize}B, new=${newSizeBytes}B, reduction=${pctReduction}%`,
+                  p_context: { current_size: currentSize, new_size: newSizeBytes, pct_reduction: pctReduction, branch: ref },
+                  p_agent_name: ctx.agentName || "builder",
+                });
+              } catch (_mutErr) { /* non-fatal logging */ }
+              return { success: false, error: errorMsg };
+            }
+          }
+        }
+        // If 404 (new file) or error, skip size check — that's fine
+      } catch (_sizeErr) {
+        // Network error checking size — allow push to proceed
+      }
+    }
+
     // Step 3: Create blobs for each file
     const treeItems: Array<{ path: string; mode: string; type: string; sha: string }> = [];
     const processedFiles: string[] = [];
