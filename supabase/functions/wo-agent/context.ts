@@ -360,11 +360,12 @@ export async function buildAgentContext(
   userMessage += await buildConcurrentWOContext(supabase, workOrder.id);
 
   // WO-0739: Load parent context injection from team_context
+  // AC: Query matches on metadata->>'target_wo_id' (string comparison with workOrder.id)
   try {
     const { data: parentContext, error: ctxError } = await supabase
       .from('team_context')
       .select('content, author_agent, context_type')
-      .eq('root_wo_id', workOrder.id)
+      .eq('metadata->>target_wo_id', workOrder.id)
       .order('created_at', { ascending: true })
       .limit(5);
     
