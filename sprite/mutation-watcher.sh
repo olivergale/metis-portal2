@@ -4,7 +4,7 @@
 # Outputs JSONL to /workspace/.mutations/fs-events.jsonl
 
 WATCH_DIR="${1:-/workspace}"
-OUTPUT_FILE="/workspace/.mutations/fs-events.jsonl"
+OUTPUT_FILE="/workspace/.mutations.jsonl"
 EXCLUDE_PATTERN="(\.git/|\.mutations/|node_modules/|__pycache__/)"
 
 echo "[mutation-watcher] Starting filesystem watch on $WATCH_DIR"
