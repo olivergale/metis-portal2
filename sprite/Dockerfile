@@ -16,13 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
   && apt-get clean && apt-get autoremove -y
 
-# Supabase CLI
-RUN ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://github.com/supabase/cli/releases/latest/download/supabase_linux_${ARCH}.deb" -o /tmp/supabase.deb && \
-    dpkg -i /tmp/supabase.deb && rm /tmp/supabase.deb
-
-# Claude Code CLI (via npm)
-RUN npm install -g @anthropic-ai/claude-code
+# Supabase CLI + Claude Code CLI (via npm — more reliable than .deb in Docker)
+RUN npm install -g supabase @anthropic-ai/claude-code
 
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
