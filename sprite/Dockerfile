@@ -4,15 +4,18 @@
 
 FROM denoland/deno:2.1.4
 
-# System dependencies + Node.js 22 + Python 3
-# Combined in single layer to ensure NodeSource repo is available for nodejs install
+# Cache buster for NodeSource layer
+ARG CACHEBUST=2
+
+# Node.js 22 + system deps + Python 3 — single layer ensures NodeSource repo is used
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-  && apt-get update && apt-get install -y --no-install-recommends \
+  && apt-get install -y \
     ca-certificates git jq curl wget unzip \
     inotify-tools procps \
     nodejs \
     python3 python3-pip python3-venv \
     postgresql-client \
+  && node --version && npm --version \
   && apt-get clean && apt-get autoremove -y
 
 # Supabase CLI + Claude Code CLI (via npm)
