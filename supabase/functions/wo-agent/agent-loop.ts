@@ -269,7 +269,8 @@ export async function runAgentLoop(
   tags?: string[],
   model?: string,
   maxTokens?: number,
-  messageBudget?: number
+  messageBudget?: number,
+  contextWindow?: number
 ): Promise<AgentLoopResult> {
   const isRemediation = (tags || []).some((t: string) =>
     t === 'remediation' || t === 'auto-qa-loop' || t.startsWith('parent:')
@@ -335,6 +336,7 @@ export async function runAgentLoop(
 
   let turn = 0;
   let turnsTrimmed = 0;
+  let lastInputTokens = 0;  // MR-002: Track last API input tokens for pressure detection
   // MR-003: Budget-driven history — messageBudget is token allocation for conversation history
   // Fallback: 15 pairs for remediation, 20 for normal (legacy behavior if no budget provided)
   const FALLBACK_MAX_PAIRS = isRemediation ? 15 : 20;
@@ -470,6 +472,28 @@ export async function runAgentLoop(
         },
       });
 
+      // MR-002: Context-pressure escalation — if input tokens > 70% of context window,
+      // escalate to a higher-tier model before self-reinvoke
+      if (contextWindow && lastInputTokens > 0) {
+        const pressureRatio = lastInputTokens / contextWindow;
+        if (pressureRatio > 0.70) {
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} context pressure ${(pressureRatio * 100).toFixed(0)}% (${lastInputTokens}/${contextWindow}) — attempting escalation`);
+          try {
+            const { attemptEscalation } = await import("./handlers/escalation.ts");
+            const woForEscalation = { id: ctx.workOrderId, slug: ctx.workOrderSlug, name: ctx.workOrderSlug };
+            const escalated = await attemptEscalation(
+              ctx.supabase, woForEscalation, ctx.agentName,
+              resolvedModel, `Context pressure: ${(pressureRatio * 100).toFixed(0)}% of ${contextWindow} tokens`
+            );
+            if (escalated) {
+              return { status: "checkpoint", turns: turn, summary: `${summary} [ESCALATED: context pressure ${(pressureRatio * 100).toFixed(0)}%]`, toolCalls };
+            }
+          } catch (escErr: any) {
+            console.warn(`[WO-AGENT] ${ctx.workOrderSlug} escalation attempt failed:`, escErr.message);
+          }
+        }
+      }
+
       return { status: "checkpoint", turns: turn, summary, toolCalls };
     }
 
@@ -571,6 +595,10 @@ export async function runAgentLoop(
 
       // Successful API call  -- reset error counter
       consecutiveApiErrors = 0;
+
+      // MR-002: Track input tokens for context pressure detection
+      const usage = response.usage as any;
+      lastInputTokens = usage?.input_tokens || usage?.prompt_tokens || 0;
 
       // Log the turn
       await logTurn(ctx, turn, response, turnsTrimmed, messages.length);
