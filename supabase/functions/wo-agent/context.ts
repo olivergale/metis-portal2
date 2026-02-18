@@ -1,4 +1,5 @@
-// wo-agent/context.ts v12
+// wo-agent/context.ts v13
+// v13: MR-004 depth-aware remediation model override (chain_depth → model from system_settings)
 // v12: CB-002 fix LitM ordering — directives to Block 1 (beginning), critical lessons to Block 5 (end)
 // v11: CTX-004 lesson dedup + CTX-005 Lost-in-the-Middle prompt reordering
 // v10: Add custom_instructions injection from agent_execution_profiles, frontend agent rules
@@ -136,6 +137,28 @@ export async function buildAgentContext(
     }
   } catch {
     // Profile not found, continue with defaults
+  }
+
+  // MR-004: Depth-aware remediation model override
+  // Priority: above agent/profile default, below explicit escalation_model
+  // chain_depth is set by spawn_remediation: 1 = first remediation, 2 = last chance
+  if ((workOrder.tags || []).includes("remediation") && !workOrder.client_info?.escalation_model) {
+    const chainDepth = workOrder.client_info?.chain_depth ?? 1;
+    try {
+      const { data: rmTiers } = await supabase
+        .from('system_settings')
+        .select('setting_value')
+        .eq('setting_key', 'remediation_model_tiers')
+        .single();
+      if (rmTiers?.setting_value?.tiers) {
+        const tiers = rmTiers.setting_value.tiers as Record<string, string>;
+        const maxKey = Math.max(...Object.keys(tiers).map(Number));
+        agentModel = tiers[String(Math.min(chainDepth, maxKey))] || 'claude-opus-4-6';
+      }
+    } catch {
+      // Hardcoded fallback: depth 1 → Sonnet, depth 2+ → Opus
+      agentModel = chainDepth >= 2 ? 'claude-opus-4-6' : 'claude-sonnet-4-6';
+    }
   }
 
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
