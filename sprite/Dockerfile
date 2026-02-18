@@ -37,6 +37,9 @@ RUN curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/ins
 ENV CLAUDE_CLI_PATH="/root/.claude/bin"
 ENV PATH="$CLAUDE_CLI_PATH:$PATH"
 
+# Install TypeScript compiler
+RUN npm install -g typescript
+
 # Create workspace directory
 RUN mkdir -p /workspace
 
