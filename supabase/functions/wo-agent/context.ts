@@ -252,8 +252,6 @@ export async function buildAgentContext(
     apply_migration: "Apply DDL changes (CREATE TABLE, ALTER, etc)",
     read_table: "Read rows from any Supabase table",
     github_read_file: "Read files from GitHub repos",
-    github_write_file: "Write/update files in GitHub repos (whole file)",
-    github_edit_file: "Patch-edit files in GitHub (send only the diff, not whole file)",
     deploy_edge_function: "Deploy Supabase Edge Functions (small ones only)",
     log_progress: "Log progress messages",
     read_execution_log: "Read execution logs (useful for remediation)",
@@ -294,7 +292,7 @@ export async function buildAgentContext(
   systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
   systemPrompt += `7. Never make up data -- query first, then act\n`;
   systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
-  systemPrompt += `9. For file edits, prefer github_patch_file (multi-edit, one commit) over github_edit_file (single edit) over github_write_file (full rewrite)\n`;
+  systemPrompt += `9. For file edits, use github_push_files for atomic multi-file commits. Read files first, then push all changes in a single commit.\n`;
   systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
 
   // v10: Frontend agent verification and build rules
