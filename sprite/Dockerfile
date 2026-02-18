@@ -2,12 +2,33 @@
 # Runs wo-agent (agent-loop.ts + tools) natively in Fly Machine
 # No wall-clock limit, direct filesystem access, any LLM via OpenRouter
 
-FROM denoland/deno:2.1.4
+FROM debian:bookworm-slim
 
-# System dependencies (minimal — Deno handles TS natively)
+# Install Node.js 22
+RUN apt-get update && apt-get install -y curl \
+  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y nodejs \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3 and pip
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Deno
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV PATH="/root/.deno/bin:$PATH"
+
+# Install Supabase CLI
+RUN npm install -g supabase
+
+# Install Claude Code CLI  
+RUN curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | sh
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git jq curl inotify-tools procps \
-  && apt-get clean && apt-get autoremove -y
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
