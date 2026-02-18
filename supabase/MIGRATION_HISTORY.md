@@ -1,0 +1,117 @@
+# Migration History
+
+Generated: 2026-02-18
+Total migrations: 409
+
+## Recovery Procedure
+
+If the database needs to be rebuilt from scratch:
+1. Apply `20260218_schema_baseline.sql` (creates all objects)
+2. Apply `20260218_seed_data.sql` (populates config tables)
+3. The baseline captures the cumulative effect of all 409 migrations below.
+
+## Schema Dump
+
+To regenerate the schema baseline:
+```bash
+cd /Users/OG/Projects/metis-portal2
+supabase db dump -s public --dry-run  # get connection info
+# Use pg_dump with the connection info to dump schema-only
+```
+
+## Migration List (409 entries)
+
+| Version | Name |
+|---------|------|
+| 20260131020826 | create_orchestrator_schema |
+| 20260131020846 | create_routing_and_config_tables |
+| 20260131020856 | create_transcripts_table |
+| 20260131020908 | create_orchestrator_functions |
+| 20260131022343 | 001_orchestrator_schema |
+| 20260131022355 | 002_orchestrator_configs_and_transcripts |
+| 20260131022411 | 003_orchestrator_functions |
+| 20260131022425 | 004_seed_model_capabilities |
+| 20260131022433 | 005_seed_model_pricing |
+| 20260131022452 | 006_seed_routing_rules |
+| ... | (409 total - see full list below) |
+
+## Full List
+
+```
+20260131020826 create_orchestrator_schema
+20260131020846 create_routing_and_config_tables
+20260131020856 create_transcripts_table
+20260131020908 create_orchestrator_functions
+20260131022343 001_orchestrator_schema
+20260131022355 002_orchestrator_configs_and_transcripts
+20260131022411 003_orchestrator_functions
+20260131022425 004_seed_model_capabilities
+20260131022433 005_seed_model_pricing
+20260131022452 006_seed_routing_rules
+20260131024749 create_project_briefs
+20260131124740 expand_model_benchmarks_v2
+20260131180657 create_work_orders_implementations_audits
+20260131180756 add_notion_sync_triggers
+20260201004412 add_metadata_to_transcripts
+20260201164146 create_open_source_tools_registry
+20260201170803 add_conversation_threads_v2
+20260201170822 add_system_directives
+20260201180515 add_portal_source_enum
+20260201234627 add_langfuse_traces_and_tool_calls
+20260202233855 add_multiagent_workspace_schema
+20260202233929 add_multiagent_rls_policies
+20260202234006 migrate_work_orders_assigned_to_uuid
+20260203033338 create_user_preferences
+20260203041627 add_work_order_webhook_trigger
+20260203043657 create_feedback_log
+20260203151959 add_work_order_execution_log
+20260203152015 add_metis_self_awareness_tables
+20260203183624 add_system_manifest_and_duplicate_detection
+20260204174621 add_source_tracking_to_work_orders
+20260204174633 add_bypass_log_table
+20260204174645 add_session_validation
+20260204174658 add_request_signing_functions
+20260204174956 add_mcp_request_log_table
+20260204175204 add_test_suite_to_source_check
+20260204185142 add_autoroute_decision_gates
+20260204185213 add_pending_approval_status
+20260204185231 add_autoroute_executor_v2
+20260205022411 harness_revision_001_1_state_write_spans
+20260205022427 harness_revision_001_2_error_to_lessons
+20260205022445 harness_revision_001_3_wo_trace_lifecycle
+20260205022507 harness_revision_001_4_session_summary_harness_stats
+20260205022521 harness_revision_001_5_register_components
+20260205031323 add_project_doc_generation_trigger
+20260205031405 fix_project_doc_generation_trigger
+20260205044834 resolve_open_decisions_and_create_endgame
+20260205051411 p0_fix1_wo_transition_validator
+20260205051436 p0_fix1_patch_project_brief_id
+20260205051625 p0_fix3_allowed_action_checker
+20260205052831 p1_fix4_auto_lesson_creation
+20260205053054 p1_fix4_expand_lesson_categories
+20260205053152 p1_fix5_directive_versioning_and_critical_trigger
+20260205053245 p1_fix5_lesson_category_counts_rpc
+20260205053354 p1_fix6_directive_enforcement
+20260205054820 p2_fix7_interrogation_answer_and_complete
+20260205055307 p2_fix8_project_documents_unique_constraint
+20260205055437 p2_fix8_add_generated_status
+20260205055839 p2_fix9_add_intake_gate_lesson_category
+20260205060453 fix_interrogation_auto_complete
+20260205060502 add_auto_intake_complete_trigger
+20260218032726 k002_enforce_nonce_check
+20260218032822 k002_wo_transition_nonce
+20260218033212 k004_create_wo_event_stream
+20260218033345 k004_wire_event_stream_into_wo_transition
+20260218033441 k004_verify_event_chain_rpc
+20260218033911 k005_create_kernel_spec_table
+20260218034000 k005_kernel_spec_rpcs
+20260218034443 k005_sync_spec_to_tables
+20260218034913 k006_create_evaluate_invariants
+20260218035059 k006_invariant_query_wrappers
+20260218035357 k006_wire_invariants_into_wo_transition
+20260218040040 create_verify_evidence_chain
+20260218040831 create_compute_valid_paths
+20260218040934 fix_compute_valid_paths_cost_query
+```
+
+*Note: Abbreviated for readability. Full 409-entry list preserved in Supabase `schema_migrations` table. The schema baseline captures the cumulative DDL effect.*
