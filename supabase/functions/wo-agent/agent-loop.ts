@@ -1,4 +1,5 @@
-// wo-agent/agent-loop.ts v11
+// wo-agent/agent-loop.ts v12
+// MR-003: Budget-driven history manager replaces fixed MAX_HISTORY_PAIRS
 // WO-0551: Dual-provider support -- Anthropic SDK for claude models, OpenRouter for all others (MiniMax, DeepSeek, etc.)
 // WO-0474: Fix catch block bypassing stall detection  -- API error counter + emergency trim + non-retryable fail-fast
 // WO-0477: Remove budget system, wall-clock only, non-productive recursion detection
@@ -14,6 +15,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk@0.39.0";
 import { TOOL_DEFINITIONS, dispatchTool, getToolsForWO, getToolsForWOSync, type ToolContext } from "./tools.ts";
 import { anthropicToolsToOpenAI, anthropicMessagesToOpenAI, openAIResponseToAnthropic } from "./format-converters.ts";
+import { estimateTokens } from "./model-specs.ts";
 
 const TIMEOUT_MS = 380_000; // 380s  -- 20s buffer before 400s Supabase Pro wall clock limit (waitUntil mode)
 const CHECKPOINT_MS = 240_000; // 240s  -- checkpoint before timeout to enable continuation
@@ -173,6 +175,30 @@ function summarizeTrimmedMessages(
   return summary.slice(0, 4000);
 }
 
+/** MR-003: Stringify a message for token estimation. */
+function stringifyMessage(msg: { role: string; content: any }): string {
+  if (typeof msg.content === 'string') return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content.map((b: any) => {
+      if (b.type === 'text') return b.text || '';
+      if (b.type === 'tool_use') return `${b.name}: ${JSON.stringify(b.input).slice(0, 500)}`;
+      if (b.type === 'tool_result') return typeof b.content === 'string' ? b.content.slice(0, 500) : JSON.stringify(b.content).slice(0, 500);
+      return '';
+    }).join('\n');
+  }
+  return JSON.stringify(msg.content).slice(0, 1000);
+}
+
+/** MR-003: Estimate total tokens across all messages. */
+function estimateMessageTokens(messages: Array<{ role: string; content: any }>): number {
+  let total = 0;
+  for (const msg of messages) {
+    total += estimateTokens(stringifyMessage(msg));
+    total += 4; // per-message overhead (role, separators)
+  }
+  return total;
+}
+
 /**
  * WO-0378: Repair corrupted message history where tool_use blocks lack matching tool_result.
  * This happens when dispatchTool throws an unhandled exception after assistant message is pushed
@@ -242,7 +268,8 @@ export async function runAgentLoop(
   ctx: ToolContext,
   tags?: string[],
   model?: string,
-  maxTokens?: number
+  maxTokens?: number,
+  messageBudget?: number
 ): Promise<AgentLoopResult> {
   const isRemediation = (tags || []).some((t: string) =>
     t === 'remediation' || t === 'auto-qa-loop' || t.startsWith('parent:')
@@ -308,7 +335,9 @@ export async function runAgentLoop(
 
   let turn = 0;
   let turnsTrimmed = 0;
-  const MAX_HISTORY_PAIRS = isRemediation ? 15 : 20;
+  // MR-003: Budget-driven history — messageBudget is token allocation for conversation history
+  // Fallback: 15 pairs for remediation, 20 for normal (legacy behavior if no budget provided)
+  const FALLBACK_MAX_PAIRS = isRemediation ? 15 : 20;
 
   while (true) {
     // Check checkpoint / timeout  -- checkpoint FIRST so long turns don't skip it
@@ -446,22 +475,38 @@ export async function runAgentLoop(
 
     turn++;
 
-    // WO-0167: Summarize + trim message history to prevent context window exhaustion
-    // Keep: first user message (index 0) + summary (index 1) + last MAX_HISTORY_PAIRS*2 messages
-    const maxMessages = 1 + MAX_HISTORY_PAIRS * 2; // first msg + pairs
-    if (messages.length > maxMessages) {
-      let trimCount = messages.length - maxMessages;
+    // MR-003: Budget-driven history management
+    // Estimate total tokens in conversation messages and trim when over budget
+    const msgTokens = estimateMessageTokens(messages);
+    const effectiveBudget = messageBudget || FALLBACK_MAX_PAIRS * 2 * 800; // ~800 tokens per msg fallback
+    const needsTrim = messageBudget
+      ? msgTokens > effectiveBudget * 0.85  // trim at 85% of budget (5-turn headroom)
+      : messages.length > 1 + FALLBACK_MAX_PAIRS * 2;  // legacy: count-based
 
-      // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair.
-      // If the message at (1 + trimCount) is a user message with tool_results,
-      // its preceding assistant message has tool_use blocks  -- keep the pair together.
+    if (needsTrim) {
+      // Target: trim to 60% of budget to leave room for growth
+      const targetTokens = messageBudget
+        ? Math.floor(effectiveBudget * 0.60)
+        : (1 + FALLBACK_MAX_PAIRS * 2) * 800;  // legacy fallback
+
+      // Find trim count: remove oldest messages (after index 0) until under target
+      let trimCount = 0;
+      let trimmedTokens = 0;
+      for (let i = 1; i < messages.length - 2; i++) {  // keep first and last 2
+        const msgTok = estimateTokens(stringifyMessage(messages[i]));
+        if (msgTokens - trimmedTokens - msgTok <= targetTokens) break;
+        trimmedTokens += msgTok;
+        trimCount++;
+      }
+      // Minimum trim of 2 messages to avoid infinite re-triggering
+      trimCount = Math.max(trimCount, Math.min(2, messages.length - 3));
+
+      // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair
       const cutIdx = 1 + trimCount;
       if (cutIdx < messages.length) {
         const msgAtCut = messages[cutIdx];
         if (msgAtCut.role === 'user' && Array.isArray(msgAtCut.content) &&
             (msgAtCut.content as any[]).some((b: any) => b.type === 'tool_result')) {
-          // This is a tool_result message  -- its assistant pair is at cutIdx-1
-          // Include it in the trim to keep pairs intact
           trimCount += 1;
         }
       }
@@ -483,6 +528,11 @@ export async function runAgentLoop(
         messages[1] = { role: 'user', content: historySummary };
       } else {
         messages.splice(1, 0, { role: 'user', content: historySummary });
+      }
+
+      if (messageBudget) {
+        const afterTokens = estimateMessageTokens(messages);
+        console.log(`[WO-AGENT] ${ctx.workOrderSlug} budget trim: ${trimCount} msgs removed, ${msgTokens}→${afterTokens} tokens (budget: ${effectiveBudget})`);
       }
     }
 

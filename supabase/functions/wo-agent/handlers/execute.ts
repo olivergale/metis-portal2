@@ -368,13 +368,15 @@ export async function handleExecute(req: Request, jsonResponse: JsonResponse): P
     try {
       // WO-0401: Pass config-driven model from agent profile
       // WO-0590: Pass config-driven max_tokens from agent profile
+      // MR-003: Pass message budget for budget-driven history management
       const result = await runAgentLoop(
         agentContext.systemPrompt,
         finalUserMessage,
         toolCtx,
         wo.tags || [],
         agentContext.model,
-        agentContext.maxTokens
+        agentContext.maxTokens,
+        agentContext.budget?.messageBudget
       );
 
       console.log(`[WO-AGENT] ${wo.slug} finished: ${result.status} in ${result.turns} turns`);
