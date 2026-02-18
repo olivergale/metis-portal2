@@ -2,20 +2,60 @@
 # Runs wo-agent (agent-loop.ts + tools) natively in Fly Machine
 # No wall-clock limit, direct filesystem access, any LLM via OpenRouter
 
-FROM denoland/deno:2.1.4
+FROM debian:bookworm-slim
 
-# System dependencies (minimal — Deno handles TS natively)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git jq curl inotify-tools procps \
-  && apt-get clean && apt-get autoremove -y
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    jq \
+    inotify-tools \
+    procps \
+    gnupg \
+    ca-certificates \
+    build-essential \
+    && apt-get clean && apt-get autoremove -y
+
+# Install Node.js 22
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g npm@latest
+
+# Install Python 3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    && apt-get clean
+
+# Install Deno
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="$DENO_INSTALL/bin:$PATH"
+
+# Install Supabase CLI
+RUN npm install -g supabase
+
+# Install Claude Code CLI
+RUN git clone https://github.com/anthropics/claude-code.git /tmp/claude-code \
+    && cd /tmp/claude-code \
+    && npm install -g .
+
+# Install TypeScript (for tsc)
+RUN npm install -g typescript
 
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
+WORKDIR /workspace
 
 # Copy sprite runtime files
-WORKDIR /app
-COPY entrypoint.sh mutation-watcher.sh health-server.ts ./
-RUN chmod +x entrypoint.sh mutation-watcher.sh
+COPY entrypoint.sh mutation-watcher.sh health-server.ts /workspace/
+RUN chmod +x /workspace/entrypoint.sh /workspace/mutation-watcher.sh
+
+# Add scripts to PATH
+ENV PATH="/workspace:$PATH"
 
 EXPOSE 8080
 
@@ -27,4 +67,4 @@ EXPOSE 8080
 # AGENT_MODEL — model to use (default: minimax/minimax-m2.5)
 # SPRITE_MODE — "agent" (run agent loop) or "sandbox" (exec server)
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/workspace/entrypoint.sh"]
