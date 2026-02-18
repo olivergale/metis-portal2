@@ -1,4 +1,6 @@
-// wo-agent/context.ts v13
+// wo-agent/context.ts v15
+// v15: CB-001 proportional budget assembly (all budgets are functions of model context window, zero hardcoded values)
+// v14: CB-001 budget-first context assembly (per-component token budgets from model context window)
 // v13: MR-004 depth-aware remediation model override (chain_depth → model from system_settings)
 // v12: CB-002 fix LitM ordering — directives to Block 1 (beginning), critical lessons to Block 5 (end)
 // v11: CTX-004 lesson dedup + CTX-005 Lost-in-the-Middle prompt reordering
@@ -22,11 +24,22 @@ import {
   loadKnowledgeBase,
 } from "../wo-daemon/worker-prompt.ts";
 
+import {
+  resolveModelSpec,
+  loadBudgetRatios,
+  computePromptBudget,
+  estimateTokens,
+  clipToTokenBudget,
+  type PromptBudget,
+} from "./model-specs.ts";
+
 export interface WorkOrderContext {
   systemPrompt: string;
   userMessage: string;
   agentName: string;
   model: string;
+  maxTokens: number;
+  budget?: PromptBudget;
 }
 
 interface WorkOrder {
@@ -161,43 +174,52 @@ export async function buildAgentContext(
     }
   }
 
+  // CB-001: Resolve model spec from provider APIs + compute proportional budget
+  const modelSpec = await resolveModelSpec(agentModel, supabase);
+  const budgetRatios = await loadBudgetRatios(supabase);
+  const budget = computePromptBudget(modelSpec, budgetRatios);
+
+  // Clip base template to its proportional budget
+  systemPrompt = clipToTokenBudget(systemPrompt, budget.components.base_template || budget.promptBudget);
+
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
   systemPrompt += `You are executing work order **${workOrder.slug}** (${workOrder.name}).\n`;
   systemPrompt += `Agent identity: **${agentName}**\n\n`;
 
   if (agentProfile) {
-    systemPrompt += `## Agent Profile\n`;
-    systemPrompt += `**Mission**: ${agentProfile.mission}\n`;
-    systemPrompt += `**Pace**: ${agentProfile.pace} -- `;
+    let profileBlock = '';
+    profileBlock += `## Agent Profile\n`;
+    profileBlock += `**Mission**: ${agentProfile.mission}\n`;
+    profileBlock += `**Pace**: ${agentProfile.pace} -- `;
     if (agentProfile.pace === "aggressive") {
-      systemPrompt += `Prioritize speed and iteration velocity. Implement fast, verify incrementally.\n`;
+      profileBlock += `Prioritize speed and iteration velocity. Implement fast, verify incrementally.\n`;
     } else if (agentProfile.pace === "measured") {
-      systemPrompt += `Balance speed and thoroughness. Plan before executing.\n`;
+      profileBlock += `Balance speed and thoroughness. Plan before executing.\n`;
     } else {
-      systemPrompt += `Prioritize correctness over speed. Verify before mutating.\n`;
+      profileBlock += `Prioritize correctness over speed. Verify before mutating.\n`;
     }
-    systemPrompt += `**Error Handling**: ${agentProfile.error_style} -- `;
+    profileBlock += `**Error Handling**: ${agentProfile.error_style} -- `;
     if (agentProfile.error_style === "retry-then-escalate") {
-      systemPrompt += `Classify errors (retriable vs non-retriable), retry up to ${agentProfile.escalation_rules?.max_retries || 3}x on retriable errors, escalate non-retriable.\n`;
+      profileBlock += `Classify errors (retriable vs non-retriable), retry up to ${agentProfile.escalation_rules?.max_retries || 3}x on retriable errors, escalate non-retriable.\n`;
     } else if (agentProfile.error_style === "fail-fast") {
-      systemPrompt += `Do not retry on errors. Log and exit immediately for manual review.\n`;
+      profileBlock += `Do not retry on errors. Log and exit immediately for manual review.\n`;
     } else {
-      systemPrompt += `Log errors but continue execution. Do not block on transient failures.\n`;
+      profileBlock += `Log errors but continue execution. Do not block on transient failures.\n`;
     }
 
     if (agentProfile.budget_guidance) {
-      systemPrompt += `**Budget Guidance**: Max ${agentProfile.budget_guidance.max_turns || 50} turns. `;
-      systemPrompt += `Target ${Math.round((agentProfile.budget_guidance.mutation_ratio_target || 0.3) * 100)}% mutation rate. `;
-      systemPrompt += `Implement-first: ${agentProfile.budget_guidance.implement_first_pct || 80}%, verify: ${agentProfile.budget_guidance.verification_budget_pct || 20}%.\n`;
+      profileBlock += `**Budget Guidance**: Max ${agentProfile.budget_guidance.max_turns || 50} turns. `;
+      profileBlock += `Target ${Math.round((agentProfile.budget_guidance.mutation_ratio_target || 0.3) * 100)}% mutation rate. `;
+      profileBlock += `Implement-first: ${agentProfile.budget_guidance.implement_first_pct || 80}%, verify: ${agentProfile.budget_guidance.verification_budget_pct || 20}%.\n`;
     }
 
     if (agentProfile.scope_boundaries) {
-      systemPrompt += `**Scope Boundaries**: ${agentProfile.scope_boundaries.mutation_scope || "See allowed_tables"}. `;
+      profileBlock += `**Scope Boundaries**: ${agentProfile.scope_boundaries.mutation_scope || "See allowed_tables"}. `;
       const protectedTables = agentProfile.scope_boundaries.protected_tables_via_rpc || [];
       if (protectedTables.length > 0) {
-        systemPrompt += `Protected tables (use state_write RPC): ${protectedTables.join(", ")}.\n`;
+        profileBlock += `Protected tables (use state_write RPC): ${protectedTables.join(", ")}.\n`;
       } else {
-        systemPrompt += `\n`;
+        profileBlock += `\n`;
       }
     }
 
@@ -205,29 +227,34 @@ export async function buildAgentContext(
       const escalationTarget = agentProfile.escalation_rules.escalation_target || "ops";
       const escalateOn = agentProfile.escalation_rules.escalate_on || [];
       if (escalateOn.length > 0) {
-        systemPrompt += `**Escalation**: Escalate to ${escalationTarget} on: ${escalateOn.join(", ")}.\n`;
+        profileBlock += `**Escalation**: Escalate to ${escalationTarget} on: ${escalateOn.join(", ")}.\n`;
       }
     }
-    systemPrompt += `\n`;
+    profileBlock += `\n`;
 
     if (agentProfile.custom_instructions) {
-      systemPrompt += `## Agent-Specific Instructions\n`;
-      systemPrompt += agentProfile.custom_instructions;
-      systemPrompt += `\n\n`;
+      profileBlock += `## Agent-Specific Instructions\n`;
+      profileBlock += agentProfile.custom_instructions;
+      profileBlock += `\n\n`;
     }
+
+    // CB-001: Clip agent profile to proportional budget
+    systemPrompt += clipToTokenBudget(profileBlock, budget.components.agent_profile || budget.promptBudget);
   }
 
   // ── CB-002: Directives in BEGINNING zone (high attention) ──
   if (activeDirectives.length > 0) {
-    systemPrompt += `# ACTIVE SYSTEM DIRECTIVES\n\n`;
-    systemPrompt += `The following directives are currently active and must be followed:\n\n`;
+    let directivesBlock = `# ACTIVE SYSTEM DIRECTIVES\n\n`;
+    directivesBlock += `The following directives are currently active and must be followed:\n\n`;
     for (const dir of activeDirectives) {
-      systemPrompt += `## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})\n`;
-      systemPrompt += `${dir.content}\n\n`;
+      directivesBlock += `## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})\n`;
+      directivesBlock += `${dir.content}\n\n`;
     }
+    // CB-001: Clip directives to proportional budget
+    systemPrompt += clipToTokenBudget(directivesBlock, budget.components.directives || budget.promptBudget);
   }
 
-  // ── BLOCK 2: Tools & Execution Rules (BEGINNING — critical operational info) ──
+  // ── BLOCK 2: Tools & Execution Rules (BEGINNING -- critical operational info) ──
   const { getToolsForWO } = await import("./tools.ts");
   const availableTools = await getToolsForWO(woTags, supabase, agentName);
   const toolDescriptions: Record<string, string> = {
@@ -247,7 +274,7 @@ export async function buildAgentContext(
     delegate_subtask: "Create a child WO with model assignment and dispatch it (always non-blocking)",
     check_child_status: "Check status/summary of a delegated child WO",
     sandbox_exec: "Execute command in sandboxed env (deno check, deno test, grep, etc.) to verify work before submitting",
-    github_push_files: "Atomic multi-file commit via Git Data API (blobs→tree→commit→ref). Preferred for all file changes.",
+    github_push_files: "Atomic multi-file commit via Git Data API. Preferred for all file changes.",
     github_list_files: "List files in a directory of a GitHub repo",
     github_search_code: "Search code across a GitHub repo by keyword/pattern",
     github_grep: "Grep file contents in a GitHub repo",
@@ -261,51 +288,55 @@ export async function buildAgentContext(
     sandbox_write_file: "Write a file into the sandbox for testing/verification",
     sandbox_pipeline: "Run multi-step pipeline in sandbox (build, test, verify)",
   };
-  systemPrompt += `## Available Tools (${availableTools.length} for ${agentName})\n`;
+  let toolsBlock = `## Available Tools (${availableTools.length} for ${agentName})\n`;
   for (const tool of availableTools) {
-    systemPrompt += `- **${tool.name}**: ${toolDescriptions[tool.name] || tool.name}\n`;
+    toolsBlock += `- **${tool.name}**: ${toolDescriptions[tool.name] || tool.name}\n`;
   }
-  systemPrompt += `\n`;
-  systemPrompt += `## Execution Rules\n`;
-  systemPrompt += `1. Start by logging your plan with log_progress\n`;
-  systemPrompt += `2. Execute the objective step by step\n`;
-  systemPrompt += `3. Verify your changes work (query to confirm)\n`;
-  systemPrompt += `4. Call mark_complete with a detailed summary when done\n`;
-  systemPrompt += `5. Call mark_failed if you cannot complete the objective\n`;
-  systemPrompt += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
-  systemPrompt += `7. Never make up data -- query first, then act\n`;
-  systemPrompt += `8. Log key steps with log_progress so reviewers can see what happened\n`;
-  systemPrompt += `9. For file edits, use github_push_files for atomic multi-file commits. Read files first, then push all changes in a single commit.\n`;
-  systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
+  toolsBlock += `\n`;
+  toolsBlock += `## Execution Rules\n`;
+  toolsBlock += `1. Start by logging your plan with log_progress\n`;
+  toolsBlock += `2. Execute the objective step by step\n`;
+  toolsBlock += `3. Verify your changes work (query to confirm)\n`;
+  toolsBlock += `4. Call mark_complete with a detailed summary when done\n`;
+  toolsBlock += `5. Call mark_failed if you cannot complete the objective\n`;
+  toolsBlock += `6. You MUST call either mark_complete or mark_failed before finishing\n`;
+  toolsBlock += `7. Never make up data -- query first, then act\n`;
+  toolsBlock += `8. Log key steps with log_progress so reviewers can see what happened\n`;
+  toolsBlock += `9. For file edits, use github_push_files for atomic multi-file commits. Read files first, then push all changes in a single commit.\n`;
+  toolsBlock += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete.\n`;
 
   if (agentName === "frontend") {
-    systemPrompt += `\n## Frontend Verification (MANDATORY)\n`;
-    systemPrompt += `After writing or editing any .ts/.js/.html/.css file:\n`;
-    systemPrompt += `1. Read the file back with github_read_file to confirm changes applied correctly\n`;
-    systemPrompt += `2. For TypeScript files: use sandbox_exec with command="npx" args=["tsc", "--noEmit"] to verify compilation\n`;
-    systemPrompt += `3. For new pages: verify the HTML file is added to vite.config.ts rollupOptions.input\n`;
-    systemPrompt += `4. For new routes: verify vercel.json has the rewrite rule\n`;
-    systemPrompt += `5. Use github_search_code to verify new exports/imports are properly connected\n`;
-    systemPrompt += `6. After ALL file changes: use sandbox_exec to run "npx vite build" and verify 0 errors\n`;
-    systemPrompt += `7. If build fails 3 times: escalate via log_progress, do NOT submit broken code\n`;
-    systemPrompt += `8. Commit all related files atomically via github_push_files (NEVER commit files one at a time)\n`;
+    toolsBlock += `\n## Frontend Verification (MANDATORY)\n`;
+    toolsBlock += `After writing or editing any .ts/.js/.html/.css file:\n`;
+    toolsBlock += `1. Read the file back with github_read_file to confirm changes applied correctly\n`;
+    toolsBlock += `2. For TypeScript files: use sandbox_exec with command="npx" args=["tsc", "--noEmit"] to verify compilation\n`;
+    toolsBlock += `3. For new pages: verify the HTML file is added to vite.config.ts rollupOptions.input\n`;
+    toolsBlock += `4. For new routes: verify vercel.json has the rewrite rule\n`;
+    toolsBlock += `5. Use github_search_code to verify new exports/imports are properly connected\n`;
+    toolsBlock += `6. After ALL file changes: use sandbox_exec to run "npx vite build" and verify 0 errors\n`;
+    toolsBlock += `7. If build fails 3 times: escalate via log_progress, do NOT submit broken code\n`;
+    toolsBlock += `8. Commit all related files atomically via github_push_files (NEVER commit files one at a time)\n`;
   }
 
   if (agentName === "builder") {
-    systemPrompt += `\n## Sandbox Verification (MANDATORY for TypeScript/JavaScript)\n`;
-    systemPrompt += `After writing or editing any .ts/.js file, you MUST verify it compiles:\n`;
-    systemPrompt += `1. Call sandbox_exec with command="deno" args=["check", "<filename>"] and include the file content in files array\n`;
-    systemPrompt += `2. If exit_code != 0, fix the errors and re-check (MAXIMUM 3 attempts per file)\n`;
-    systemPrompt += `3. If tests exist for the file, run sandbox_exec with command="deno" args=["test", "--no-run", "<test_file>"] to verify test compilation\n`;
-    systemPrompt += `4. Only mark the deliverable complete when deno check passes\n`;
-    systemPrompt += `5. After 3 failed verification attempts: call request_clarification with the error output -- do NOT submit broken code\n`;
-    systemPrompt += `6. Do NOT spawn fix work orders after verification failures -- escalate via request_clarification instead\n`;
+    toolsBlock += `\n## Sandbox Verification (MANDATORY for TypeScript/JavaScript)\n`;
+    toolsBlock += `After writing or editing any .ts/.js file, you MUST verify it compiles:\n`;
+    toolsBlock += `1. Call sandbox_exec with command="deno" args=["check", "<filename>"] and include the file content in files array\n`;
+    toolsBlock += `2. If exit_code != 0, fix the errors and re-check (MAXIMUM 3 attempts per file)\n`;
+    toolsBlock += `3. If tests exist for the file, run sandbox_exec with command="deno" args=["test", "--no-run", "<test_file>"] to verify test compilation\n`;
+    toolsBlock += `4. Only mark the deliverable complete when deno check passes\n`;
+    toolsBlock += `5. After 3 failed verification attempts: call request_clarification with the error output -- do NOT submit broken code\n`;
+    toolsBlock += `6. Do NOT spawn fix work orders after verification failures -- escalate via request_clarification instead\n`;
   }
 
-  // ── BLOCK 3: Knowledge Base (MIDDLE — lower attention zone) ──
+  // CB-001: Clip tools block to proportional budget
+  systemPrompt += clipToTokenBudget(toolsBlock, budget.components.tools || budget.promptBudget);
+
+  // ── BLOCK 3: Knowledge Base (MIDDLE -- lower attention zone) ──
   const knowledgeBase = await loadKnowledgeBase(supabase, agentName, woTags);
   if (knowledgeBase) {
-    systemPrompt += `\n\n${knowledgeBase}`;
+    // CB-001: Clip KB to proportional budget (largest variable component)
+    systemPrompt += `\n\n${clipToTokenBudget(knowledgeBase, budget.components.knowledge_base || budget.promptBudget)}`;
   }
 
   // ── BLOCK 4: Agent Memories (MIDDLE) ──
@@ -318,28 +349,32 @@ export async function buildAgentContext(
       .limit(20);
 
     if (memories && memories.length > 0) {
-      systemPrompt += `\n\n## Your Memories\nPatterns and gotchas saved from previous work:\n`;
+      let memoriesBlock = `\n\n## Your Memories\nPatterns and gotchas saved from previous work:\n`;
       for (const mem of memories) {
-        systemPrompt += `- [${mem.memory_type}] ${mem.key}: ${JSON.stringify(mem.value)}\n`;
+        memoriesBlock += `- [${mem.memory_type}] ${mem.key}: ${JSON.stringify(mem.value)}\n`;
       }
+      // CB-001: Clip memories to proportional budget
+      systemPrompt += clipToTokenBudget(memoriesBlock, budget.components.memories || budget.promptBudget);
     }
   } catch {
     // Memory loading failed, non-critical
   }
 
-  // ── BLOCK 5: Critical Lessons + Promoted Lessons (END — high attention recency zone) ──
+  // ── BLOCK 5: Critical Lessons + Promoted Lessons (END -- high attention recency zone) ──
   // CB-002: Critical lessons moved here from base template middle zone
   if (criticalLessons.length > 0) {
-    systemPrompt += `\n\n# CRITICAL LESSONS LEARNED\n\n`;
-    systemPrompt += `The following lessons were learned from past failures and MUST be applied:\n\n`;
+    let critLessonsBlock = `\n\n# CRITICAL LESSONS LEARNED\n\n`;
+    critLessonsBlock += `The following lessons were learned from past failures and MUST be applied:\n\n`;
     for (const lesson of criticalLessons) {
-      systemPrompt += `## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}\n`;
-      systemPrompt += `**Rule**: ${lesson.rule}\n`;
+      critLessonsBlock += `## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}\n`;
+      critLessonsBlock += `**Rule**: ${lesson.rule}\n`;
       if (lesson.example_good) {
-        systemPrompt += `**Example**: ${lesson.example_good}\n`;
+        critLessonsBlock += `**Example**: ${lesson.example_good}\n`;
       }
-      systemPrompt += `\n`;
+      critLessonsBlock += `\n`;
     }
+    // CB-001: Clip critical lessons to proportional budget
+    systemPrompt += clipToTokenBudget(critLessonsBlock, budget.components.critical_lessons || budget.promptBudget);
   }
 
   const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
@@ -353,7 +388,7 @@ export async function buildAgentContext(
   };
   try {
     const roleCategories = ROLE_LESSON_CATEGORIES[agentName] || ROLE_LESSON_CATEGORIES["builder"];
-    // CTX-004: Exclude critical/high severity — already loaded by loadCriticalLessons() in worker-prompt.ts
+    // CTX-004: Exclude critical/high severity -- already loaded by loadCriticalLessons() in worker-prompt.ts
     const { data: promotedLessons } = await supabase
       .from("lessons")
       .select("id, pattern, rule, category, severity")
@@ -365,11 +400,13 @@ export async function buildAgentContext(
       .limit(10);
 
     if (promotedLessons && promotedLessons.length > 0) {
-      systemPrompt += `\n\n## Lessons From Past Failures\n`;
+      let promLessonsBlock = `\n\n## Lessons From Past Failures\n`;
       for (const lesson of promotedLessons) {
         const ruleSnippet = (lesson.rule || "").slice(0, 200);
-        systemPrompt += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
+        promLessonsBlock += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
       }
+      // CB-001: Clip promoted lessons to proportional budget
+      systemPrompt += clipToTokenBudget(promLessonsBlock, budget.components.promoted_lessons || budget.promptBudget);
     }
   } catch {
     // Lesson loading failed, non-critical
@@ -468,8 +505,16 @@ export async function buildAgentContext(
 
   userMessage += `\n---\nExecute this work order now. Start by logging your plan, then proceed step by step.`;
 
-  const maxTokens = agentProfile?.max_tokens || 16384;
-  return { systemPrompt, userMessage, agentName, model: agentModel, maxTokens };
+  // CB-001: Clip user message to proportional budget
+  userMessage = clipToTokenBudget(userMessage, budget.components.user_message || budget.promptBudget);
+
+  // CB-001: maxTokens from model spec (agent profile can cap lower, but never above model max)
+  const maxTokens = Math.min(
+    agentProfile?.max_tokens || modelSpec.maxOutput,
+    modelSpec.maxOutput
+  );
+
+  return { systemPrompt, userMessage, agentName, model: agentModel, maxTokens, budget };
 }
 
 /**

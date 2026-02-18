@@ -262,7 +262,8 @@ export async function runAgentLoop(
   const resolvedModel = model || DEFAULT_MODEL;
   const useAnthropic = isAnthropicModel(resolvedModel);
   // WO-0590: Config-driven max_tokens from agent_execution_profiles
-  const resolvedMaxTokens = maxTokens || 16384;
+  // CB-001: Default from model spec (passed via context.ts), not hardcoded
+  const resolvedMaxTokens = maxTokens || 65536;
 
   // WO-0551: Validate required API key based on provider
   if (useAnthropic) {
@@ -509,6 +510,9 @@ export async function runAgentLoop(
           ],
           tools,
           messages,
+        }, {
+          // CB-001: Enable 1M context for Claude models (premium pricing only above 200K)
+          headers: { "anthropic-beta": "context-1m-2025-08-07" },
         });
       } else {
         // OpenRouter path -- converts to OpenAI format, calls API, converts response back
