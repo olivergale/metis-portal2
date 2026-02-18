@@ -4,11 +4,10 @@
 
 FROM denoland/deno:2.1.4
 
-# Node.js 22 (for npm ecosystem, Claude Code CLI)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-
-# System dependencies + Node.js + Python
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# System dependencies + Node.js 22 + Python 3
+# Combined in single layer to ensure NodeSource repo is available for nodejs install
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git jq curl wget unzip \
     inotify-tools procps \
     nodejs \
@@ -16,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
   && apt-get clean && apt-get autoremove -y
 
-# Supabase CLI + Claude Code CLI (via npm — more reliable than .deb in Docker)
+# Supabase CLI + Claude Code CLI (via npm)
 RUN npm install -g supabase @anthropic-ai/claude-code
 
 # Workspace setup
