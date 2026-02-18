@@ -1,34 +1,28 @@
-# Sprite Base Image — Model-Agnostic Agent Runtime
-# Runs wo-agent (agent-loop.ts + tools) natively in Fly Machine
-# No wall-clock limit, direct filesystem access, any LLM via OpenRouter
+# Sprite Base Image — Full-Capability Agent Runtime
+# Persistent Fly Machine: boot → clone → agent loop → push → self-destruct
+# Rich tooling — Sprites persist for WO duration (minutes-hours), optimize for capability
 
-FROM debian:bookworm-slim
+FROM denoland/deno:2.1.4
 
-# Install Node.js 22
-RUN apt-get update && apt-get install -y curl \
-  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-  && apt-get install -y nodejs \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Node.js 22 (for npm ecosystem, Claude Code CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 
-# Install Python 3 and pip
+# System dependencies + Node.js + Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git jq curl wget unzip \
+    inotify-tools procps \
+    nodejs \
     python3 python3-pip python3-venv \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+    postgresql-client \
+  && apt-get clean && apt-get autoremove -y
 
-# Install Deno
-RUN curl -fsSL https://deno.land/install.sh | sh
-ENV PATH="/root/.deno/bin:$PATH"
+# Supabase CLI
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/supabase/cli/releases/latest/download/supabase_linux_${ARCH}.deb" -o /tmp/supabase.deb && \
+    dpkg -i /tmp/supabase.deb && rm /tmp/supabase.deb
 
-# Install Supabase CLI
-RUN npm install -g supabase
-
-# Install Claude Code CLI  
-RUN curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | sh
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git jq curl inotify-tools procps \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Claude Code CLI (via npm)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
