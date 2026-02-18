@@ -145,7 +145,8 @@ export async function buildWorkerPrompt(
   template: WorkerPromptTemplate,
   workerAgentName: string,
   schemaContext: string,
-  woTags?: string[]
+  woTags?: string[],
+  options?: { skipDirectives?: boolean; skipLessons?: boolean }
 ): Promise<string> {
   const sections: string[] = [];
 
@@ -172,33 +173,39 @@ export async function buildWorkerPrompt(
   sections.push('');
 
   // 6. Active Directives (filtered by WO tags if provided)
-  const directives = await loadActiveDirectives(supabase, woTags);
-  if (directives.length > 0) {
-    sections.push('# ACTIVE SYSTEM DIRECTIVES');
-    sections.push('');
-    sections.push('The following directives are currently active and must be followed:');
-    sections.push('');
-    for (const dir of directives) {
-      sections.push(`## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})`);
-      sections.push(dir.content);
+  // CB-002: Skip when context.ts handles placement via CTX-005 LitM ordering
+  if (!options?.skipDirectives) {
+    const directives = await loadActiveDirectives(supabase, woTags);
+    if (directives.length > 0) {
+      sections.push('# ACTIVE SYSTEM DIRECTIVES');
       sections.push('');
+      sections.push('The following directives are currently active and must be followed:');
+      sections.push('');
+      for (const dir of directives) {
+        sections.push(`## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})`);
+        sections.push(dir.content);
+        sections.push('');
+      }
     }
   }
 
   // 7. Critical Lessons
-  const lessons = await loadCriticalLessons(supabase);
-  if (lessons.length > 0) {
-    sections.push('# CRITICAL LESSONS LEARNED');
-    sections.push('');
-    sections.push('The following lessons were learned from past failures and MUST be applied:');
-    sections.push('');
-    for (const lesson of lessons) {
-      sections.push(`## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}`);
-      sections.push(`**Rule**: ${lesson.rule}`);
-      if (lesson.example_good) {
-        sections.push(`**Example**: ${lesson.example_good}`);
-      }
+  // CB-002: Skip when context.ts handles placement via CTX-005 LitM ordering
+  if (!options?.skipLessons) {
+    const lessons = await loadCriticalLessons(supabase);
+    if (lessons.length > 0) {
+      sections.push('# CRITICAL LESSONS LEARNED');
       sections.push('');
+      sections.push('The following lessons were learned from past failures and MUST be applied:');
+      sections.push('');
+      for (const lesson of lessons) {
+        sections.push(`## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}`);
+        sections.push(`**Rule**: ${lesson.rule}`);
+        if (lesson.example_good) {
+          sections.push(`**Example**: ${lesson.example_good}`);
+        }
+        sections.push('');
+      }
     }
   }
 

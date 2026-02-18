@@ -1,4 +1,5 @@
-// wo-agent/context.ts v11
+// wo-agent/context.ts v12
+// v12: CB-002 fix LitM ordering — directives to Block 1 (beginning), critical lessons to Block 5 (end)
 // v11: CTX-004 lesson dedup + CTX-005 Lost-in-the-Middle prompt reordering
 // v10: Add custom_instructions injection from agent_execution_profiles, frontend agent rules
 // v9: WO-MF-P25 -- pipeline_phase-aware adversarial prompt injection (red-team, blue-team)
@@ -103,7 +104,8 @@ export async function buildAgentContext(
   let systemPrompt: string;
   const template = await loadWorkerPromptTemplate(supabase);
   if (template) {
-    systemPrompt = await buildWorkerPrompt(supabase, template, agentName, schemaContext, woTags);
+    // CB-002: Skip directives/lessons in template — context.ts places them in LitM-optimal positions
+    systemPrompt = await buildWorkerPrompt(supabase, template, agentName, schemaContext, woTags, { skipDirectives: true, skipLessons: true });
   } else {
     // Fallback: build minimal prompt
     systemPrompt = await buildFallbackPrompt(supabase, agentName, schemaContext, woTags);
@@ -113,7 +115,11 @@ export async function buildAgentContext(
   // U-shaped attention: BEGINNING and END get highest model attention.
   // Order: Identity+Profile → Tools+Rules → KB → Memories → Lessons (end)
 
-  // ── BLOCK 1: Agent Identity & Profile (BEGINNING — highest attention) ──
+  // ── CB-002: Load directives and critical lessons early (injected at LitM-optimal positions) ──
+  const activeDirectives = await loadActiveDirectives(supabase, woTags);
+  const criticalLessons = await loadCriticalLessons(supabase);
+
+  // ── BLOCK 1: Agent Identity & Profile + Directives (BEGINNING — highest attention) ──
   // Load agent execution profile first (needed for identity block)
   let agentProfile: any = null;
   try {
@@ -185,6 +191,16 @@ export async function buildAgentContext(
       systemPrompt += `## Agent-Specific Instructions\n`;
       systemPrompt += agentProfile.custom_instructions;
       systemPrompt += `\n\n`;
+    }
+  }
+
+  // ── CB-002: Directives in BEGINNING zone (high attention) ──
+  if (activeDirectives.length > 0) {
+    systemPrompt += `# ACTIVE SYSTEM DIRECTIVES\n\n`;
+    systemPrompt += `The following directives are currently active and must be followed:\n\n`;
+    for (const dir of activeDirectives) {
+      systemPrompt += `## ${dir.name} (priority: ${dir.priority}, enforcement: ${dir.enforcement_mode})\n`;
+      systemPrompt += `${dir.content}\n\n`;
     }
   }
 
@@ -288,7 +304,21 @@ export async function buildAgentContext(
     // Memory loading failed, non-critical
   }
 
-  // ── BLOCK 5: Promoted Lessons (END — high attention recency zone) ──
+  // ── BLOCK 5: Critical Lessons + Promoted Lessons (END — high attention recency zone) ──
+  // CB-002: Critical lessons moved here from base template middle zone
+  if (criticalLessons.length > 0) {
+    systemPrompt += `\n\n# CRITICAL LESSONS LEARNED\n\n`;
+    systemPrompt += `The following lessons were learned from past failures and MUST be applied:\n\n`;
+    for (const lesson of criticalLessons) {
+      systemPrompt += `## [${lesson.severity.toUpperCase()}] ${lesson.category}: ${lesson.pattern.slice(0, 100)}\n`;
+      systemPrompt += `**Rule**: ${lesson.rule}\n`;
+      if (lesson.example_good) {
+        systemPrompt += `**Example**: ${lesson.example_good}\n`;
+      }
+      systemPrompt += `\n`;
+    }
+  }
+
   const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
     builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
     "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
