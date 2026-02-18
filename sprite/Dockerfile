@@ -5,7 +5,7 @@
 FROM denoland/deno:2.1.4
 
 # 1. Bootstrap: get curl + ca-certificates first (base image is minimal)
-RUN apt-get update && apt-get install -y curl ca-certificates
+RUN apt-get update && apt-get install -y curl ca-certificates gnupg
 
 # 2. Add NodeSource repo for Node.js 22
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -20,8 +20,15 @@ RUN apt-get update && apt-get install -y \
   && node --version && npm --version \
   && apt-get clean && apt-get autoremove -y
 
-# 4. Supabase CLI + Claude Code CLI (via npm)
-RUN npm install -g supabase @anthropic-ai/claude-code
+# 4. Supabase CLI (direct binary — npm global install not supported)
+RUN curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz \
+    -o /tmp/supabase.tar.gz \
+  && tar xzf /tmp/supabase.tar.gz -C /usr/local/bin \
+  && rm /tmp/supabase.tar.gz \
+  && supabase --version
+
+# 5. Claude Code CLI (via npm)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
