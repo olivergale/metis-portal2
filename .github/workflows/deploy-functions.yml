@@ -125,6 +125,8 @@ jobs:
 
           # WO-0390: Public functions need --no-verify-jwt for anonymous access
           PUBLIC_FUNCTIONS="portal-chat"
+          # Functions where 401 is expected (require service_role, not anon key)
+          JWT_PROTECTED_FUNCTIONS="kernel"
           # Non-deployable directories
           SKIP_DIRS="wo-daemon _shared lib"
 
@@ -191,9 +193,20 @@ jobs:
                 --max-time 10 2>/dev/null || echo "000")
             fi
 
-            # 401 = JWT misconfigured, 000 = timeout/unreachable
+            # 401 = JWT misconfigured (unless function is in JWT_PROTECTED list)
+            # 000 = timeout/unreachable
             # 400/404/500 are acceptable (function is responding, just needs proper input)
-            if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "000" ]; then
+            SMOKE_FAIL=false
+            if [ "$HTTP_CODE" = "000" ]; then
+              SMOKE_FAIL=true
+            elif [ "$HTTP_CODE" = "401" ]; then
+              if echo "$JWT_PROTECTED_FUNCTIONS" | grep -qw "$func"; then
+                echo "  401 expected for JWT-protected function $func — PASS"
+              else
+                SMOKE_FAIL=true
+              fi
+            fi
+            if [ "$SMOKE_FAIL" = "true" ]; then
               echo "::error::Smoke test FAILED for $func (HTTP $HTTP_CODE)"
               echo "  Attempting rollback to previous version..."
 
