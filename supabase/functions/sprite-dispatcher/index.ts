@@ -6,7 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const FLY_API_BASE = "https://api.machines.dev/v1";
 const FLY_APP = "endgame-sprite";
-const SPRITE_IMAGE = "registry.fly.io/endgame-sprite:deployment-01KHRTJTRRVB6XDDCF9XAT9M94";
+const SPRITE_IMAGE = "registry.fly.io/endgame-sprite:deployment-01KHRV5VBEBQCCDS6N5P15918K";
 const REGION = "iad";
 
 interface DispatchPayload {
