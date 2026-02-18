@@ -595,23 +595,10 @@ async function pushToGitHub(
 
 // ── SYSTEM PROMPT BUILDER ────────────────────────────────────────────
 async function buildSystemPrompt(): Promise<string> {
-  // Load knowledge base entries for builder role
-  let kbEntries: string[] = [];
-  try {
-    const kb = await supabaseQuery("agent_knowledge_base", "category, title, content, severity", {}) as Array<{
-      category: string;
-      title: string;
-      content: string;
-      severity: string;
-    }>;
-    kbEntries = kb
-      .filter((e) => e.severity === "critical" || e.severity === "high")
-      .map((e) => `- [${e.category}/${e.severity}] ${e.title}: ${e.content}`);
-  } catch (_e) {
-    // KB load failure is non-fatal
-  }
+  const sections: string[] = [];
 
-  return `You are a builder agent executing work order ${WO_SLUG}.
+  // ── 1. IDENTITY & WO CONTEXT (top — highest attention zone) ────────
+  sections.push(`You are a builder agent executing work order ${WO_SLUG}.
 
 ## Work Order
 - **Name**: ${WO_NAME}
@@ -622,29 +609,174 @@ async function buildSystemPrompt(): Promise<string> {
 
 ## Environment
 You are running inside a Fly Machine (Sprite) with direct filesystem access to the repo at ${SPRITE_WORK_DIR}.
-You have tools for SQL execution, DDL migrations, GitHub push, and filesystem operations.
+You have tools for SQL execution, DDL migrations, GitHub push, and filesystem operations.`);
 
-## Rules
+  // ── 2. EXECUTION RULES (top — critical) ────────────────────────────
+  sections.push(`## Execution Rules
 1. Complete ALL acceptance criteria before submitting for review.
-2. Record every mutation. If a tool call fails, do NOT retry the same approach.
+2. Record every mutation. If a tool call fails, do NOT retry the same approach — try a different strategy.
 3. Use sandbox_exec for running tests, checking file sizes, verifying deploys.
-4. Use github_push_files for committing code changes (atomic multi-file push).
+4. Use github_push_files for committing code changes (atomic multi-file push). Always read the file first, then push full content.
 5. Use apply_migration for DDL changes (CREATE TABLE, ALTER, triggers, functions).
 6. Use execute_sql for DML queries (SELECT, INSERT, UPDATE, DELETE).
 7. When done, call transition_state with event "submit_for_review" and a summary.
 8. If stuck or unable to complete, call transition_state with event "mark_failed" and explain why.
+9. NEVER use github_write_file or github_edit_file — they are deprecated. Only github_push_files.
+10. After DDL changes: run NOTIFY pgrst, 'reload schema' via execute_sql.
+11. For file changes: read the FULL file first (sandbox_read_file), make changes, verify with sandbox_exec (wc -c).`);
 
-## Schema Knowledge
-${kbEntries.length > 0 ? kbEntries.join("\n") : "No knowledge base entries loaded."}
+  // ── 3. AGENT EXECUTION PROFILE ─────────────────────────────────────
+  try {
+    const { data: profiles } = await supabase
+      .from("agent_execution_profiles")
+      .select("mission, error_style, custom_instructions")
+      .eq("agent_name", "builder")
+      .limit(1);
+    if (profiles && profiles.length > 0) {
+      const p = profiles[0];
+      let profileText = "## Agent Profile\n";
+      if (p.mission) profileText += `Mission: ${p.mission}\n`;
+      if (p.error_style) profileText += `Error handling: ${p.error_style}\n`;
+      if (p.custom_instructions) profileText += `\n${p.custom_instructions}`;
+      sections.push(profileText);
+    }
+  } catch (_e) { /* non-fatal */ }
 
-## Critical Gotchas
-- work_orders.name NOT title
-- work_orders.created_by is agent_type enum NOT UUID
-- work_orders.priority is enum (p0-p3)
+  // ── 4. KNOWLEDGE BASE (role + tag filtered) ────────────────────────
+  try {
+    const { data: kb } = await supabase
+      .from("agent_knowledge_base")
+      .select("category, topic, content, severity, applicable_roles, applicable_tags")
+      .eq("active", true);
+    if (kb && kb.length > 0) {
+      const filtered = kb.filter((e: Record<string, unknown>) => {
+        const sev = e.severity as string;
+        if (sev !== "critical" && sev !== "high") return false;
+        const roles = e.applicable_roles as string[] | null;
+        if (roles && roles.length > 0 && !roles.includes("builder")) return false;
+        const tags = e.applicable_tags as string[] | null;
+        if (tags && tags.length > 0) {
+          if (!tags.some((t: string) => WO_TAGS.includes(t))) return false;
+        }
+        return true;
+      });
+      if (filtered.length > 0) {
+        sections.push("## Schema Knowledge\n" +
+          filtered.map((e: Record<string, unknown>) =>
+            `- [${e.category}/${e.severity}] ${e.topic}: ${e.content}`
+          ).join("\n"));
+      }
+    }
+  } catch (_e) { /* non-fatal */ }
+
+  // ── 5. SYSTEM DIRECTIVES (middle — lower attention OK for soft) ────
+  try {
+    const { data: directives } = await supabase
+      .from("directives")
+      .select("name, content, enforcement, enforcement_mode")
+      .eq("active", true)
+      .order("priority", { ascending: true })
+      .limit(30);
+    if (directives && directives.length > 0) {
+      const hard = directives.filter((d: Record<string, unknown>) =>
+        d.enforcement === "hard" || d.enforcement_mode === "hard");
+      const soft = directives.filter((d: Record<string, unknown>) =>
+        d.enforcement !== "hard" && d.enforcement_mode !== "hard");
+      let text = "## System Directives\n";
+      if (hard.length > 0) {
+        text += "### MANDATORY\n" + hard.map((d: Record<string, unknown>) =>
+          `- **${d.name}**: ${d.content}`).join("\n") + "\n";
+      }
+      if (soft.length > 0) {
+        text += "### Advisory\n" + soft.slice(0, 10).map((d: Record<string, unknown>) =>
+          `- ${d.name}: ${d.content}`).join("\n");
+      }
+      sections.push(text);
+    }
+  } catch (_e) { /* non-fatal */ }
+
+  // ── 6. PROMOTED LESSONS (middle) ───────────────────────────────────
+  try {
+    const { data: lessons } = await supabase
+      .from("lessons")
+      .select("pattern, rule, category, severity")
+      .eq("review_status", "approved")
+      .not("promoted_at", "is", null)
+      .in("category", ["schema", "deployment", "testing", "enforcement", "tool_usage", "agent_behavior"])
+      .limit(20);
+    if (lessons && lessons.length > 0) {
+      sections.push("## Learned Lessons\n" +
+        lessons.map((l: Record<string, unknown>) =>
+          `- [${l.category}] ${l.pattern}: ${l.rule}`
+        ).join("\n"));
+    }
+  } catch (_e) { /* non-fatal */ }
+
+  // ── 7. CONCURRENT WO AWARENESS (middle) ────────────────────────────
+  try {
+    const { data: concurrent } = await supabase
+      .from("work_orders")
+      .select("slug, name")
+      .eq("status", "in_progress")
+      .neq("id", WO_ID)
+      .limit(10);
+    if (concurrent && concurrent.length > 0) {
+      sections.push("## Concurrent Work Orders (avoid conflicts)\n" +
+        concurrent.map((w: Record<string, unknown>) => `- ${w.slug}: ${w.name}`).join("\n"));
+    }
+  } catch (_e) { /* non-fatal */ }
+
+  // ── 8. REMEDIATION CONTEXT (if applicable) ─────────────────────────
+  if (WO_TAGS.includes("remediation")) {
+    try {
+      const { data: thisWO } = await supabase
+        .from("work_orders")
+        .select("parent_id")
+        .eq("id", WO_ID)
+        .single();
+      if (thisWO?.parent_id) {
+        const { data: parentWO } = await supabase
+          .from("work_orders")
+          .select("slug, name, objective")
+          .eq("id", thisWO.parent_id)
+          .single();
+        const { data: parentMuts } = await supabase
+          .from("wo_mutations")
+          .select("tool_name, action, object_id, success, error_detail")
+          .eq("work_order_id", thisWO.parent_id)
+          .order("created_at", { ascending: true });
+        if (parentWO && parentMuts) {
+          const ok = parentMuts.filter((m: Record<string, unknown>) => m.success);
+          const fail = parentMuts.filter((m: Record<string, unknown>) => !m.success);
+          let ctx = `## Remediation Context\nRemediating ${parentWO.slug}: ${parentWO.name}\nOriginal objective: ${parentWO.objective}\n`;
+          if (ok.length > 0) {
+            ctx += "\n### Completed Mutations (DO NOT REDO)\n" +
+              ok.map((m: Record<string, unknown>) => `- ${m.tool_name}: ${m.action} on ${m.object_id}`).join("\n") + "\n";
+          }
+          if (fail.length > 0) {
+            ctx += "\n### Failed Mutations (DO NOT RETRY same approach)\n" +
+              fail.map((m: Record<string, unknown>) =>
+                `- ${m.tool_name}: ${m.action} on ${m.object_id} — ${m.error_detail || "unknown"}`
+              ).join("\n") + "\n";
+          }
+          sections.push(ctx);
+        }
+      }
+    } catch (_e) { /* non-fatal */ }
+  }
+
+  // ── 9. CRITICAL GOTCHAS (bottom — high attention zone) ─────────────
+  sections.push(`## Critical Gotchas
+- work_orders.name NOT title; .created_by is agent_type enum NOT UUID; .priority is enum (p0-p3)
 - audit_log columns: target_type/target_id/payload (immutable), event_type NOT NULL
 - pgcrypto is in extensions schema: use extensions.digest()
 - After DDL changes: NOTIFY pgrst, 'reload schema'
-`;
+- github_push_files requires FULL file content, not patches. Read file first.
+- wo_transition() is the ONLY way to change WO status. Never UPDATE work_orders directly.
+- system_settings columns: setting_key/setting_value (NOT key/value)
+- ACs must be numbered/bullets format for count_acceptance_criteria() regex`);
+
+  return sections.join("\n\n");
 }
 
 // ── MAIN AGENT LOOP ──────────────────────────────────────────────────
