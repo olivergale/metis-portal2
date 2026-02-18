@@ -1,4 +1,5 @@
-// wo-agent/context.ts v10
+// wo-agent/context.ts v11
+// v11: CTX-004 lesson dedup + CTX-005 Lost-in-the-Middle prompt reordering
 // v10: Add custom_instructions injection from agent_execution_profiles, frontend agent rules
 // v9: WO-MF-P25 -- pipeline_phase-aware adversarial prompt injection (red-team, blue-team)
 // v8: WO-0405 -- per-agent lesson filtering, ROLE_LESSON_CATEGORIES
@@ -108,64 +109,12 @@ export async function buildAgentContext(
     systemPrompt = await buildFallbackPrompt(supabase, agentName, schemaContext, woTags);
   }
 
-  // Inject institutional knowledge base (filtered by agent role + WO tags)
-  const knowledgeBase = await loadKnowledgeBase(supabase, agentName, woTags);
-  if (knowledgeBase) {
-    systemPrompt += `\n\n${knowledgeBase}`;
-  }
+  // CTX-005: Lost-in-the-Middle prompt ordering
+  // U-shaped attention: BEGINNING and END get highest model attention.
+  // Order: Identity+Profile → Tools+Rules → KB → Memories → Lessons (end)
 
-  // WO-0546: Load agent memories (patterns, gotchas, preferences, facts)
-  try {
-    const { data: memories } = await supabase
-      .from("agent_memory")
-      .select("key, memory_type, value")
-      .eq("agent_id", agentName)
-      .order("updated_at", { ascending: false })
-      .limit(20);
-
-    if (memories && memories.length > 0) {
-      systemPrompt += `\n\n## Your Memories\nPatterns and gotchas saved from previous work:\n`;
-      for (const mem of memories) {
-        systemPrompt += `- [${mem.memory_type}] ${mem.key}: ${JSON.stringify(mem.value)}\n`;
-      }
-    }
-  } catch {
-    // Memory loading failed, non-critical
-  }
-
-  // WO-0405: Load promoted lessons filtered by agent role
-  const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
-    builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
-    "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
-    ops: ["operational", "monitoring", "failure_archetype", "execution"],
-    security: ["security", "enforcement", "approval_flow"],
-    frontend: ["execution", "deployment", "scope_creep", "schema_gotcha", "hallucination", "testing"],
-    ilmarinen: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "operational", "scope_creep", "hallucination"],
-    "user-portal": ["approval_flow", "scope_creep"],
-  };
-  try {
-    const roleCategories = ROLE_LESSON_CATEGORIES[agentName] || ROLE_LESSON_CATEGORIES["builder"];
-    const { data: promotedLessons } = await supabase
-      .from("lessons")
-      .select("id, pattern, rule, category, severity")
-      .eq("review_status", "approved")
-      .not("promoted_at", "is", null)
-      .in("category", roleCategories)
-      .order("promoted_at", { ascending: false })
-      .limit(10);
-
-    if (promotedLessons && promotedLessons.length > 0) {
-      systemPrompt += `\n\n## Lessons From Past Failures\n`;
-      for (const lesson of promotedLessons) {
-        const ruleSnippet = (lesson.rule || "").slice(0, 200);
-        systemPrompt += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
-      }
-    }
-  } catch {
-    // Lesson loading failed, non-critical
-  }
-
-  // Load agent execution profile (WO-0380, WO-0401: model from profile)
+  // ── BLOCK 1: Agent Identity & Profile (BEGINNING — highest attention) ──
+  // Load agent execution profile first (needed for identity block)
   let agentProfile: any = null;
   try {
     const { data } = await supabase
@@ -183,15 +132,10 @@ export async function buildAgentContext(
     // Profile not found, continue with defaults
   }
 
-  // WO-0569: Remediation WOs now route to ilmarinen CLI (configurable via system_settings.remediation_default_agent)
-  // Model override removed -- remediation handled by CLI session, not server-side API
-
-  // Add agent-specific instructions
   systemPrompt += `\n\n# AGENTIC EXECUTOR RULES\n\n`;
   systemPrompt += `You are executing work order **${workOrder.slug}** (${workOrder.name}).\n`;
   systemPrompt += `Agent identity: **${agentName}**\n\n`;
 
-  // Inject agent profile if available
   if (agentProfile) {
     systemPrompt += `## Agent Profile\n`;
     systemPrompt += `**Mission**: ${agentProfile.mission}\n`;
@@ -211,7 +155,7 @@ export async function buildAgentContext(
     } else {
       systemPrompt += `Log errors but continue execution. Do not block on transient failures.\n`;
     }
-    
+
     if (agentProfile.budget_guidance) {
       systemPrompt += `**Budget Guidance**: Max ${agentProfile.budget_guidance.max_turns || 50} turns. `;
       systemPrompt += `Target ${Math.round((agentProfile.budget_guidance.mutation_ratio_target || 0.3) * 100)}% mutation rate. `;
@@ -237,7 +181,6 @@ export async function buildAgentContext(
     }
     systemPrompt += `\n`;
 
-    // v10: Inject custom_instructions from profile (agent-specific domain knowledge)
     if (agentProfile.custom_instructions) {
       systemPrompt += `## Agent-Specific Instructions\n`;
       systemPrompt += agentProfile.custom_instructions;
@@ -245,7 +188,7 @@ export async function buildAgentContext(
     }
   }
 
-  // WO-0166: Dynamic tool list based on agent role
+  // ── BLOCK 2: Tools & Execution Rules (BEGINNING — critical operational info) ──
   const { getToolsForWO } = await import("./tools.ts");
   const availableTools = await getToolsForWO(woTags, supabase, agentName);
   const toolDescriptions: Record<string, string> = {
@@ -296,7 +239,6 @@ export async function buildAgentContext(
   systemPrompt += `9. For file edits, use github_push_files for atomic multi-file commits. Read files first, then push all changes in a single commit.\n`;
   systemPrompt += `10. SELF-VERIFY: After writing/editing files, read back the file to confirm changes applied correctly before marking complete. Use github_search_code to verify new exports/functions are reachable.\n`;
 
-  // v10: Frontend agent verification and build rules
   if (agentName === "frontend") {
     systemPrompt += `\n## Frontend Verification (MANDATORY)\n`;
     systemPrompt += `After writing or editing any .ts/.js/.html/.css file:\n`;
@@ -310,7 +252,6 @@ export async function buildAgentContext(
     systemPrompt += `8. Commit all related files atomically via github_push_files (NEVER commit files one at a time)\n`;
   }
 
-  // WO-0553: Mandatory sandbox verification instructions for builder
   if (agentName === "builder") {
     systemPrompt += `\n## Sandbox Verification (MANDATORY for TypeScript/JavaScript)\n`;
     systemPrompt += `After writing or editing any .ts/.js file, you MUST verify it compiles:\n`;
@@ -320,6 +261,65 @@ export async function buildAgentContext(
     systemPrompt += `4. Only mark the deliverable complete when deno check passes\n`;
     systemPrompt += `5. After 3 failed verification attempts: call request_clarification with the error output -- do NOT submit broken code\n`;
     systemPrompt += `6. Do NOT spawn fix work orders after verification failures -- escalate via request_clarification instead\n`;
+  }
+
+  // ── BLOCK 3: Knowledge Base (MIDDLE — lower attention zone) ──
+  const knowledgeBase = await loadKnowledgeBase(supabase, agentName, woTags);
+  if (knowledgeBase) {
+    systemPrompt += `\n\n${knowledgeBase}`;
+  }
+
+  // ── BLOCK 4: Agent Memories (MIDDLE) ──
+  try {
+    const { data: memories } = await supabase
+      .from("agent_memory")
+      .select("key, memory_type, value")
+      .eq("agent_id", agentName)
+      .order("updated_at", { ascending: false })
+      .limit(20);
+
+    if (memories && memories.length > 0) {
+      systemPrompt += `\n\n## Your Memories\nPatterns and gotchas saved from previous work:\n`;
+      for (const mem of memories) {
+        systemPrompt += `- [${mem.memory_type}] ${mem.key}: ${JSON.stringify(mem.value)}\n`;
+      }
+    }
+  } catch {
+    // Memory loading failed, non-critical
+  }
+
+  // ── BLOCK 5: Promoted Lessons (END — high attention recency zone) ──
+  const ROLE_LESSON_CATEGORIES: Record<string, string[]> = {
+    builder: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "scope_creep"],
+    "qa-gate": ["qa_pattern", "testing", "acceptance_criteria", "hallucination", "state_consistency"],
+    ops: ["operational", "monitoring", "failure_archetype", "execution"],
+    security: ["security", "enforcement", "approval_flow"],
+    frontend: ["execution", "deployment", "scope_creep", "schema_gotcha", "hallucination", "testing"],
+    ilmarinen: ["execution", "schema_gotcha", "deployment", "rpc_signature", "migration", "operational", "scope_creep", "hallucination"],
+    "user-portal": ["approval_flow", "scope_creep"],
+  };
+  try {
+    const roleCategories = ROLE_LESSON_CATEGORIES[agentName] || ROLE_LESSON_CATEGORIES["builder"];
+    // CTX-004: Exclude critical/high severity — already loaded by loadCriticalLessons() in worker-prompt.ts
+    const { data: promotedLessons } = await supabase
+      .from("lessons")
+      .select("id, pattern, rule, category, severity")
+      .eq("review_status", "approved")
+      .not("promoted_at", "is", null)
+      .not("severity", "in", "(critical,high)")
+      .in("category", roleCategories)
+      .order("promoted_at", { ascending: false })
+      .limit(10);
+
+    if (promotedLessons && promotedLessons.length > 0) {
+      systemPrompt += `\n\n## Lessons From Past Failures\n`;
+      for (const lesson of promotedLessons) {
+        const ruleSnippet = (lesson.rule || "").slice(0, 200);
+        systemPrompt += `- [${lesson.category}] ${lesson.pattern}: ${ruleSnippet}\n`;
+      }
+    }
+  } catch {
+    // Lesson loading failed, non-critical
   }
 
   // Build user message with WO details
