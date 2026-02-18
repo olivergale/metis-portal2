@@ -1,0 +1,44 @@
+# Fly.io configuration for endgame-sprite
+# Model-agnostic autonomous agent execution environment
+
+app = "endgame-sprite"
+
+[build]
+  dockerfile = "sprite/Dockerfile"
+  buildpacks = []
+
+[env]
+  # No secrets baked in - injected at runtime
+  # ANTHROPIC_API_KEY set via fly secrets
+
+[[services]]
+  http_port = 8080
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8080
+
+  [services.health_check]
+    path = "/"
+    port = 8080
+    interval = "10s"
+    timeout = "5s"
+    grace_period = "5s"
+
+[vm]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[flyctl]
+  version = "0.2.0"
+
+# Machine configuration
+[machine]
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines = 0
+  max_machines = 1
+
+[processes]
+  app = ""

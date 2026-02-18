@@ -1,0 +1,16 @@
+# Docker ignore file for Sprite build
+.git
+.gitignore
+node_modules
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+README.md
+LICENSE
+supabase
+src
+public
+.env
+.env.*
+!.env.example
