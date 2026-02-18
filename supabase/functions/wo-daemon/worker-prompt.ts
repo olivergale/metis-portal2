@@ -165,12 +165,7 @@ export async function buildWorkerPrompt(
   sections.push(template.sections.schema_gotchas);
   sections.push('');
 
-  // 4b. Institutional Knowledge Base (dynamic, role/tag-filtered)
-  const kb = await loadKnowledgeBase(supabase, workerAgentName, woTags);
-  if (kb) {
-    sections.push(kb);
-    sections.push('');
-  }
+  // 4b. KB loaded in buildAgentContext() — removed here to prevent double injection.
 
   // 5. Database Schema Context (already formatted)
   sections.push(schemaContext);
