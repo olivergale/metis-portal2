@@ -1,61 +1,30 @@
-# Base Fly Machine Docker image for Sprites
-# Model-agnostic autonomous agent execution environments
+# Sprite Base Image — Model-Agnostic Agent Runtime
+# Runs wo-agent (agent-loop.ts + tools) natively in Fly Machine
+# No wall-clock limit, direct filesystem access, any LLM via OpenRouter
 
-FROM ubuntu:22.04
+FROM denoland/deno:2.1.4
 
-# Prevent interactive prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
+# System dependencies (minimal — Deno handles TS natively)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git jq curl inotify-tools procps \
+  && apt-get clean && apt-get autoremove -y
 
-# Install base dependencies and required tools
-RUN apt-get update && apt-get install -y \
-    curl \
-    wget \
-    git \
-    python3 \
-    python3-pip \
-    build-essential \
-    ca-certificates \
-    gnupg \
-    inotify-tools \
-    && rm -rf /var/lib/apt/lists/*
+# Workspace setup
+RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
 
-# Install Node.js 22
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Copy sprite runtime files
+WORKDIR /app
+COPY entrypoint.sh mutation-watcher.sh health-server.ts ./
+RUN chmod +x entrypoint.sh mutation-watcher.sh
 
-# Install Deno
-RUN curl -fsSL https://deno.land/install.sh | sh
-ENV DENO_INSTALL="/root/.deno"
-ENV PATH="$DENO_INSTALL/bin:$PATH"
-
-# Install Supabase CLI
-RUN npm install -g supabase
-
-# Install Claude Code CLI
-RUN curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | sh
-ENV CLAUDE_CLI_PATH="/root/.claude/bin"
-ENV PATH="$CLAUDE_CLI_PATH:$PATH"
-
-# Install TypeScript compiler
-RUN npm install -g typescript
-
-# Create workspace directory
-RUN mkdir -p /workspace
-
-# Copy entrypoint and mutation watcher
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY mutation-watcher.sh /usr/local/bin/mutation-watcher.sh
-
-RUN chmod +x /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/mutation-watcher.sh
-
-# Create mutations log file
-RUN touch /workspace/.mutations.jsonl
-
-# Expose health endpoint port
 EXPOSE 8080
 
-# Default command
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD []
+# Environment variables (injected at runtime, never baked in):
+# ANTHROPIC_API_KEY, OPENROUTER_API_KEY — LLM access
+# SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — DB access
+# GITHUB_TOKEN — repo access
+# WO_ID, WO_SLUG, WO_OBJECTIVE — work order context
+# AGENT_MODEL — model to use (default: minimax/minimax-m2.5)
+# SPRITE_MODE — "agent" (run agent loop) or "sandbox" (exec server)
+
+ENTRYPOINT ["./entrypoint.sh"]

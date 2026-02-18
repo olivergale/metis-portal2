@@ -1,52 +1,81 @@
 #!/bin/bash
-# Entrypoint script for Sprite Fly Machine
-# Starts HTTP health endpoint on port 8080 with explicit 200 status on /health
+# Sprite Entrypoint — Bootstrap agent execution environment
+# Lifecycle: start watcher → clone repo → start health server → wait for /run signal
 
 set -e
 
-# Start mutation watcher in background
-echo "Starting mutation watcher..."
-/usr/local/bin/mutation-watcher.sh &
-MUTATION_PID=$!
+echo "[sprite] Starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export SPRITE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-echo "Mutation watcher started with PID: $MUTATION_PID"
+# Ensure workspace dirs exist (volume mount overwrites Dockerfile dirs)
+mkdir -p /workspace/.mutations /var/log/sprite
 
-# Start HTTP health endpoint with proper /health route
-echo "Starting health endpoint on port 8080..."
+# Write initial status
+echo "idle" > /workspace/.sprite-status
 
-# Use Node.js for explicit health endpoint returning 200 status
-node -e "
-const http = require('http');
-const PORT = 8080;
+# 1. Start mutation watcher in background
+echo "[sprite] Starting mutation watcher..."
+/app/mutation-watcher.sh /workspace &
+WATCHER_PID=$!
+echo "[sprite] Mutation watcher PID: $WATCHER_PID"
 
-const server = http.createServer((req, res) => {
-  // Health endpoint - returns 200 status
-  if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
-    return;
-  }
-  // 404 for other routes
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Not found' }));
-});
+# 2. Clone/update repo if GITHUB_TOKEN is set
+if [ -n "$GITHUB_TOKEN" ]; then
+  REPO_DIR="/workspace/repo"
+  REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO:-olivergale/metis-portal2}.git"
 
-server.listen(PORT, () => {
-  console.log('Health endpoint listening on port ' + PORT);
-});
-" &
-HTTP_PID=$!
+  if [ -d "$REPO_DIR/.git" ]; then
+    echo "[sprite] Pulling latest from repo..."
+    cd "$REPO_DIR" && git pull --ff-only 2>/dev/null || true
+    cd /app
+  else
+    echo "[sprite] Cloning repo..."
+    git clone --depth 1 "$REPO_URL" "$REPO_DIR" 2>/dev/null
+  fi
 
-echo "Health endpoint started with PID: $HTTP_PID"
+  # Create worktree for WO if slug provided
+  if [ -n "$WO_SLUG" ] && [ -d "$REPO_DIR/.git" ]; then
+    WORK_DIR="/workspace/$WO_SLUG"
+    if [ ! -d "$WORK_DIR" ]; then
+      echo "[sprite] Creating worktree for $WO_SLUG..."
+      cd "$REPO_DIR"
+      git worktree add --detach "$WORK_DIR" 2>/dev/null || cp -r "$REPO_DIR" "$WORK_DIR"
+      cd /app
+    fi
+    export SPRITE_WORK_DIR="$WORK_DIR"
+    echo "[sprite] Working directory: $WORK_DIR"
+  fi
+else
+  echo "[sprite] No GITHUB_TOKEN — skipping repo clone"
+fi
 
-# Keep container running
-cleanup() {
-    echo "Shutting down..."
-    kill $MUTATION_PID 2>/dev/null || true
-    kill $HTTP_PID 2>/dev/null || true
-}
+# 3. Start health server (also serves /run, /mutations, /evidence endpoints)
+echo "[sprite] Starting health server on port ${PORT:-8080}..."
+deno run --allow-net --allow-read --allow-write=/workspace --allow-env \
+  /app/health-server.ts &
+HEALTH_PID=$!
 
-trap cleanup SIGTERM SIGINT
+# 4. If SPRITE_MODE=agent and WO context is provided, start immediately
+if [ "$SPRITE_MODE" = "agent" ] && [ -n "$WO_ID" ]; then
+  echo "[sprite] Auto-starting agent loop for WO $WO_SLUG..."
+  echo "running" > /workspace/.sprite-status
 
-# Wait forever
-wait
+  # The agent runner is a Deno script that imports agent-loop.ts
+  # and runs the tool-use loop with direct filesystem access
+  if [ -f "/app/sprite-agent.ts" ]; then
+    deno run --allow-all /app/sprite-agent.ts 2>&1 | tee /var/log/sprite/agent.log
+    EXIT_CODE=$?
+
+    if [ $EXIT_CODE -eq 0 ]; then
+      echo "completed" > /workspace/.sprite-status
+    else
+      echo "failed" > /workspace/.sprite-status
+    fi
+  else
+    echo "[sprite] No sprite-agent.ts found — waiting for /run signal"
+  fi
+fi
+
+# 5. Keep alive — wait for health server or signals
+echo "[sprite] Ready. Health server running, waiting for commands..."
+wait $HEALTH_PID

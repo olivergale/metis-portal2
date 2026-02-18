@@ -1,64 +1,43 @@
 #!/bin/bash
-# Mutation watcher script
-# Logs file create/modify/delete events to /workspace/.mutations.jsonl
-# Format: timestamp, event_type, path, size_bytes
+# Mutation Watcher — Filesystem-level mutation capture for Sprites
+# Uses inotifywait to watch /workspace recursively
+# Outputs JSONL to /workspace/.mutations/fs-events.jsonl
 
-WATCH_DIR="/workspace"
-LOG_FILE="/workspace/.mutations.jsonl"
+WATCH_DIR="${1:-/workspace}"
+OUTPUT_FILE="/workspace/.mutations/fs-events.jsonl"
+EXCLUDE_PATTERN="(\.git/|\.mutations/|node_modules/|__pycache__/)"
 
-echo "Mutation watcher started. Watching: $WATCH_DIR"
-echo "Logging to: $LOG_FILE"
+echo "[mutation-watcher] Starting filesystem watch on $WATCH_DIR"
+echo "[mutation-watcher] Output: $OUTPUT_FILE"
 
-# Ensure log file exists
-touch "$LOG_FILE"
+# Create output file if it doesn't exist
+touch "$OUTPUT_FILE"
 
-# Function to log mutation event
-log_mutation() {
-    local event_type="$1"
-    local file_path="$2"
-    
-    # Get file size (0 if deleted or doesn't exist)
-    local size_bytes=0
-    if [ -f "$file_path" ]; then
-        size_bytes=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
+# Watch for file events recursively
+# Events: create, modify, delete, moved_from, moved_to
+inotifywait -m -r \
+  --format '{"timestamp":"%T","event_type":"%e","path":"%w%f"}' \
+  --timefmt '%Y-%m-%dT%H:%M:%S' \
+  --exclude "$EXCLUDE_PATTERN" \
+  -e create -e modify -e delete -e moved_from -e moved_to \
+  "$WATCH_DIR" 2>/dev/null | while IFS= read -r line; do
+    # Extract path using jq (no python dependency)
+    filepath=$(echo "$line" | jq -r '.path' 2>/dev/null)
+    if [ -f "$filepath" ] 2>/dev/null; then
+      size=$(stat -c %s "$filepath" 2>/dev/null || echo "0")
+    else
+      size="0"
     fi
-    
-    # Get timestamp in ISO 8601 format
-    local timestamp
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
-    # Write JSONL entry
-    echo "{\"timestamp\": \"$timestamp\", \"event_type\": \"$event_type\", \"path\": \"$file_path\", \"size_bytes\": $size_bytes}" >> "$LOG_FILE"
-    
-    echo "Logged: $event_type $file_path ($size_bytes bytes)"
-}
 
-# Use inotifywait to watch for file changes
-# -m: monitor mode (continuous)
-# -r: recursive
-# -e: events to watch
-# --format: output format
-inotifywait -m -r -e create -e modify -e delete -e move --format '%e %w%f' "$WATCH_DIR" 2>/dev/null | while read EVENT FILE_PATH; do
-    # Skip the log file itself to avoid infinite loops
-    if [[ "$FILE_PATH" == *".mutations.jsonl" ]]; then
-        continue
+    # Add size_bytes and wo_slug using jq
+    enriched=$(echo "$line" | jq -c \
+      --argjson sz "$size" \
+      --arg slug "${WO_SLUG:-unknown}" \
+      '. + {size_bytes: $sz, wo_slug: $slug}' 2>/dev/null)
+
+    if [ -n "$enriched" ]; then
+      echo "$enriched" >> "$OUTPUT_FILE"
+    else
+      echo "$line" >> "$OUTPUT_FILE"
     fi
-    
-    # Convert inotify event to our event type
-    case "$EVENT" in
-        CREATE)
-            event_type="create";;
-        MODIFY)
-            event_type="modify";;
-        DELETE)
-            event_type="delete";;
-        MOVED_FROM)
-            event_type="delete";;
-        MOVED_TO)
-            event_type="create";;
-        *)
-            event_type="unknown";;
-    esac
-    
-    log_mutation "$event_type" "$FILE_PATH"
 done

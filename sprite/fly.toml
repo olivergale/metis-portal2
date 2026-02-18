@@ -1,23 +1,39 @@
-# Fly.io configuration for endgame-sprite
-# Model-agnostic autonomous agent execution environment
+# Sprite — Model-Agnostic Agent Runtime Machines
+# Each WO gets its own Fly Machine instance
 
 app = "endgame-sprite"
 primary_region = "iad"
 
 [build]
-  dockerfile = "sprite/Dockerfile"
+  dockerfile = "Dockerfile"
 
-# HTTP service with health endpoint
+[env]
+  PORT = "8080"
+  SPRITE_MODE = "sandbox"  # Default to sandbox; override to "agent" for autonomous execution
+
 [http_service]
   internal_port = 8080
-  force_https = false
+  force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
 
-# No secrets baked in - ANTHROPIC_API_KEY injected via fly secrets at runtime
+[checks]
+  [checks.health]
+    port = 8080
+    type = "http"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
 
 [[vm]]
   memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
+
+# Persistent volume for workspace (repo clone, worktrees, mutations)
+[[mounts]]
+  source = "sprite_workspace"
+  destination = "/workspace"
