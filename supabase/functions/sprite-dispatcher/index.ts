@@ -90,6 +90,11 @@ Deno.serve(async (req: Request) => {
       secretMap[s.key] = typeof s.value === "string" ? s.value : JSON.stringify(s.value);
     }
 
+    // Fall back to edge function env for keys not in secrets table
+    if (!secretMap["ANTHROPIC_API_KEY"]) secretMap["ANTHROPIC_API_KEY"] = Deno.env.get("ANTHROPIC_API_KEY") || "";
+    if (!secretMap["GITHUB_TOKEN"]) secretMap["GITHUB_TOKEN"] = Deno.env.get("GITHUB_TOKEN") || "";
+    if (!secretMap["OPENROUTER_API_KEY"]) secretMap["OPENROUTER_API_KEY"] = Deno.env.get("OPENROUTER_API_KEY") || "";
+
     // Load agent model from agent_execution_profiles
     const { data: profile } = await supabase
       .from("agent_execution_profiles")

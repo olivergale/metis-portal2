@@ -65,8 +65,10 @@ async function recordMutation(
       p_object_type: objectType,
       p_object_id: objectId,
       p_success: success,
-      p_error_message: detail.error || null,
+      p_error_class: detail.error_class || null,
+      p_error_detail: detail.error ? String(detail.error) : null,
       p_context: detail,
+      p_agent_name: "builder",
     });
   } catch (e) {
     console.error(`[mutation] Record failed: ${e}`);
@@ -381,7 +383,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     switch (name) {
       case "execute_sql": {
         const query = input.query as string;
-        const { data, error } = await supabase.rpc("execute_sql", { query });
+        const { data, error } = await supabase.rpc("run_sql", { sql_query: query });
         if (error) {
           await recordMutation("execute_sql", "QUERY", "sql", query.substring(0, 100), false, { error: error.message });
           return `ERROR: ${error.message}`;
@@ -393,10 +395,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       case "apply_migration": {
         const migName = input.name as string;
         const query = input.query as string;
-        const { data, error } = await supabase.rpc("apply_migration", {
-          name: migName,
-          query,
-        });
+        // apply_migration uses run_sql (same RPC, DDL goes through same path)
+        const { data, error } = await supabase.rpc("run_sql", { sql_query: query });
         if (error) {
           await recordMutation("apply_migration", "DDL", "migration", migName, false, { error: error.message });
           return `ERROR: ${error.message}`;
