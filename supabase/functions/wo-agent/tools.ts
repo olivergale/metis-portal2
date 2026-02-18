@@ -32,6 +32,10 @@ import {
   handleRunTests,
   handleSandboxWriteFile,
   handleSandboxPipeline,
+  handleSandboxReadFile,
+  handleSandboxEditFile,
+  handleSandboxGrep,
+  handleSandboxGlob,
 } from "./tool-handlers/inline.ts";
 
 // Re-export from tool-definitions for existing importers
@@ -127,6 +131,11 @@ export async function dispatchTool(
     "execute_sql",
     "apply_migration",
     "github_push_files",
+    "sandbox_exec",
+    "sandbox_write_file",
+    "sandbox_pipeline",
+    "run_tests",
+    "deploy_edge_function",
   ]);
 
   let result: ToolResult;
@@ -246,6 +255,18 @@ export async function dispatchTool(
     case "sandbox_pipeline":
       result = await handleSandboxPipeline(toolInput, ctx);
       break;
+    case "sandbox_read_file":
+      result = await handleSandboxReadFile(toolInput, ctx);
+      break;
+    case "sandbox_edit_file":
+      result = await handleSandboxEditFile(toolInput, ctx);
+      break;
+    case "sandbox_grep":
+      result = await handleSandboxGrep(toolInput, ctx);
+      break;
+    case "sandbox_glob":
+      result = await handleSandboxGlob(toolInput, ctx);
+      break;
     case "query_ontology":
       result = await handleQueryOntology(toolInput, ctx);
       break;
@@ -295,6 +316,16 @@ export async function dispatchTool(
         })),
         message: toolInput.message
       };
+    } else if (toolName === "deploy_edge_function") {
+      objectType = "edge_function";
+      objectId = toolInput.function_name || "unknown";
+      action = "DEPLOY";
+      context = { function_name: toolInput.function_name };
+    } else if (toolName.startsWith("sandbox_") || toolName === "run_tests") {
+      objectType = "sandbox";
+      objectId = toolInput.path || toolInput.pattern || toolInput.command || toolInput.test_command || "unknown";
+      action = toolName === "run_tests" ? "TEST" : toolName.replace("sandbox_", "").toUpperCase();
+      context = { path: toolInput.path, command: toolInput.command || toolName };
     }
 
     // Skip recording SELECT queries (reads, not mutations)

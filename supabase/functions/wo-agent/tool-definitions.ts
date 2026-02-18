@@ -896,6 +896,91 @@ export const TOOL_DEFINITIONS: Tool[] = [
       required: ["commands"],
     },
   },
+  // K003b: Sandbox file tools (read/edit/search in Fly Machine)
+  {
+    name: "sandbox_read_file",
+    description:
+      "Read a file from the Fly Machine sandbox /workspace directory. Returns file contents. Use for inspecting code in the sandbox before or after edits.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path in sandbox (must be under /workspace, e.g. '/workspace/src/index.ts')",
+        },
+        encoding: {
+          type: "string",
+          description: "File encoding (default: utf-8)",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "sandbox_edit_file",
+    description:
+      "Apply a targeted search/replace edit to a file in the Fly Machine sandbox. Reads file, replaces old_string with new_string, writes back. Returns diff of changes.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path in sandbox (must be under /workspace)",
+        },
+        old_string: {
+          type: "string",
+          description: "Exact string to find in the file",
+        },
+        new_string: {
+          type: "string",
+          description: "Replacement string",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
+    },
+  },
+  {
+    name: "sandbox_grep",
+    description:
+      "Search file contents in the Fly Machine sandbox using grep. Returns matching lines with file paths and line numbers.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Search pattern (basic regex supported)",
+        },
+        path: {
+          type: "string",
+          description: "Directory or file to search in (default: /workspace)",
+        },
+        flags: {
+          type: "string",
+          description: "Additional grep flags (e.g. '-i' for case-insensitive, '-l' for files only)",
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "sandbox_glob",
+    description:
+      "List files matching a glob pattern in the Fly Machine sandbox. Returns file paths.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob pattern to match (e.g. '*.ts', '**/*.test.ts')",
+        },
+        cwd: {
+          type: "string",
+          description: "Base directory for the search (default: /workspace)",
+        },
+      },
+      required: ["pattern"],
+    },
+  },
   // MF-FOUND-006: Ontology query tools (read-only)
   {
     name: "query_ontology",
@@ -939,7 +1024,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
 ];
 
 // Tool categories for filtering
-export const SANDBOX_TOOLS = ["sandbox_exec", "run_tests", "sandbox_write_file", "sandbox_pipeline"];
+export const SANDBOX_TOOLS = ["sandbox_exec", "run_tests", "sandbox_write_file", "sandbox_pipeline", "sandbox_read_file", "sandbox_edit_file", "sandbox_grep", "sandbox_glob"];
 const MEMORY_TOOLS = ["save_memory", "recall_memory"];
 const ORCHESTRATION_TOOLS = ["delegate_subtask", "check_child_status"];
 const CLARIFICATION_TOOLS = ["request_clarification", "check_clarification"];

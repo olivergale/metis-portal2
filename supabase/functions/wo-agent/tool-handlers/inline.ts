@@ -186,22 +186,6 @@ export async function handleSandboxExec(toolInput: Record<string, any>, ctx: Too
           };
         }
 
-        // Record mutation
-        const cmdStr = `${toolInput.command} ${(toolInput.args || []).join(" ")}`;
-        await recordMutation(
-          ctx,
-          "sandbox_exec",
-          "sandbox",
-          cmdStr.substring(0, 100),
-          "EXEC",
-          result.success,
-          result.error,
-          {
-            command: toolInput.command,
-            args: toolInput.args,
-            exit_code: result.data?.exit_code,
-          }
-        );
       } catch (e: any) {
         if (e.name === "AbortError") {
           return { success: false, error: "Sandbox exec timed out after 30s" };
@@ -297,17 +281,6 @@ export async function handleRunTests(toolInput: Record<string, any>, ctx: ToolCo
           };
         }
 
-        // Record mutation
-        await recordMutation(
-          ctx,
-          "run_tests",
-          "test_suite",
-          testCmd.substring(0, 100),
-          "TEST",
-          result.success,
-          result.error,
-          { test_command: testCmd, exit_code: result.data?.exit_code }
-        );
       } catch (e: any) {
         if (e.name === "AbortError") {
           return { success: false, error: "Test execution timed out after 120s" };
@@ -390,7 +363,6 @@ export async function handleSandboxWriteFile(toolInput: Record<string, any>, ctx
           }
         }
 
-        await recordMutation(ctx, "sandbox_write_file", "sandbox", filePath, "WRITE", result.success, result.error, { path: filePath, bytes: content.length });
       } catch (e: any) {
         return { success: false, error: `Sandbox write error: ${e.message}` };
       }
@@ -440,8 +412,6 @@ export async function handleSandboxPipeline(toolInput: Record<string, any>, ctx:
           };
         }
 
-        const cmdSummary = (toolInput.commands || []).map((c: any) => c.command).join(" | ");
-        await recordMutation(ctx, "sandbox_pipeline", "sandbox", cmdSummary.substring(0, 100), "PIPELINE", result.success, result.error, { steps: (toolInput.commands || []).length });
       } catch (e: any) {
         if (e.name === "AbortError") {
           return { success: false, error: "Pipeline timed out after 60s" };
@@ -449,5 +419,206 @@ export async function handleSandboxPipeline(toolInput: Record<string, any>, ctx:
           return { success: false, error: `Pipeline error: ${e.message}` };
         }
       }
+}
+
+// --- K003b: Sandbox file tools ---
+
+/** Helper to get Fly Machine connection details */
+async function getFlyConfig(ctx: ToolContext): Promise<{ flyUrl: string; headers: Record<string, string> } | ToolResult> {
+  const { data: flySettings } = await ctx.supabase
+    .from("system_settings")
+    .select("setting_key, setting_value")
+    .in("setting_key", ["fly_machine_url", "fly_machine_token"]);
+  const flyUrl = flySettings?.find((s: any) => s.setting_key === "fly_machine_url")?.setting_value;
+  const flyToken = flySettings?.find((s: any) => s.setting_key === "fly_machine_token")?.setting_value;
+  if (!flyUrl) {
+    return { success: false, error: "Fly Machine URL not configured in system_settings (fly_machine_url)" };
+  }
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (flyToken && flyToken !== "not_required_public_endpoint") {
+    headers["Authorization"] = `Bearer ${flyToken}`;
+  }
+  return { flyUrl, headers };
+}
+
+export async function handleSandboxReadFile(toolInput: Record<string, any>, ctx: ToolContext): Promise<ToolResult> {
+  try {
+    const config = await getFlyConfig(ctx);
+    if ("success" in config) return config as ToolResult;
+    const { flyUrl, headers } = config;
+
+    const filePath = toolInput.path || "";
+    if (!filePath.startsWith("/workspace")) {
+      return { success: false, error: `Path must be under /workspace. Got: ${filePath}` };
+    }
+
+    const response = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "cat",
+        args: [filePath],
+        wo_slug: ctx.workOrderSlug,
+        timeout_ms: 10000,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      return { success: false, error: `Read failed: ${err.error || response.statusText}` };
+    }
+    const result = await response.json();
+    if (result.exit_code !== 0) {
+      return { success: false, error: result.stderr || `File not found: ${filePath}` };
+    }
+    return { success: true, data: { content: result.stdout, path: filePath, bytes: (result.stdout || "").length } };
+  } catch (e: any) {
+    return { success: false, error: `Sandbox read error: ${e.message}` };
+  }
+}
+
+export async function handleSandboxEditFile(toolInput: Record<string, any>, ctx: ToolContext): Promise<ToolResult> {
+  try {
+    const config = await getFlyConfig(ctx);
+    if ("success" in config) return config as ToolResult;
+    const { flyUrl, headers } = config;
+
+    const filePath = toolInput.path || "";
+    if (!filePath.startsWith("/workspace")) {
+      return { success: false, error: `Path must be under /workspace. Got: ${filePath}` };
+    }
+
+    const oldStr = toolInput.old_string || "";
+    const newStr = toolInput.new_string || "";
+    if (!oldStr) {
+      return { success: false, error: "old_string is required" };
+    }
+
+    // Use node to read, replace, write, and output diff
+    const script = `
+const fs = require('fs');
+const path = '${filePath.replace(/'/g, "\\'")}';
+const content = fs.readFileSync(path, 'utf-8');
+const oldStr = Buffer.from('${Buffer.from(oldStr).toString("base64")}', 'base64').toString();
+const newStr = Buffer.from('${Buffer.from(newStr).toString("base64")}', 'base64').toString();
+const idx = content.indexOf(oldStr);
+if (idx === -1) {
+  console.error('old_string not found in file');
+  process.exit(1);
+}
+const updated = content.substring(0, idx) + newStr + content.substring(idx + oldStr.length);
+fs.writeFileSync(path, updated);
+console.log(JSON.stringify({ replaced: true, bytes_before: content.length, bytes_after: updated.length }));
+`.trim();
+
+    const response = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "node",
+        args: ["-e", script],
+        wo_slug: ctx.workOrderSlug,
+        timeout_ms: 10000,
+      }),
+    });
+
+    if (!response.ok) {
+      return { success: false, error: `Edit failed: ${response.statusText}` };
+    }
+    const result = await response.json();
+    if (result.exit_code !== 0) {
+      return { success: false, error: result.stderr || "Edit failed - old_string not found" };
+    }
+    const parsed = JSON.parse(result.stdout || "{}");
+    return { success: true, data: { ...parsed, path: filePath } };
+  } catch (e: any) {
+    return { success: false, error: `Sandbox edit error: ${e.message}` };
+  }
+}
+
+export async function handleSandboxGrep(toolInput: Record<string, any>, ctx: ToolContext): Promise<ToolResult> {
+  try {
+    const config = await getFlyConfig(ctx);
+    if ("success" in config) return config as ToolResult;
+    const { flyUrl, headers } = config;
+
+    const pattern = toolInput.pattern || "";
+    if (!pattern) {
+      return { success: false, error: "pattern is required" };
+    }
+
+    const searchPath = toolInput.path || "/workspace";
+    const args = ["-rn"];
+    if (toolInput.flags) {
+      args.push(...toolInput.flags.split(/\s+/).filter((f: string) => /^-[a-zA-Z]+$/.test(f)));
+    }
+    args.push(pattern, searchPath);
+
+    const response = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "grep",
+        args,
+        wo_slug: ctx.workOrderSlug,
+        timeout_ms: 30000,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      return { success: false, error: `Grep failed: ${err.error || response.statusText}` };
+    }
+    const result = await response.json();
+    // grep exit_code 1 = no matches (not an error)
+    if (result.exit_code === 1) {
+      return { success: true, data: { matches: [], count: 0, pattern } };
+    }
+    if (result.exit_code > 1) {
+      return { success: false, error: result.stderr || "Grep error" };
+    }
+    const lines = (result.stdout || "").split("\n").filter((l: string) => l.trim());
+    return { success: true, data: { matches: lines.slice(0, 100), count: lines.length, pattern } };
+  } catch (e: any) {
+    return { success: false, error: `Sandbox grep error: ${e.message}` };
+  }
+}
+
+export async function handleSandboxGlob(toolInput: Record<string, any>, ctx: ToolContext): Promise<ToolResult> {
+  try {
+    const config = await getFlyConfig(ctx);
+    if ("success" in config) return config as ToolResult;
+    const { flyUrl, headers } = config;
+
+    const pattern = toolInput.pattern || "";
+    if (!pattern) {
+      return { success: false, error: "pattern is required" };
+    }
+
+    const cwd = toolInput.cwd || "/workspace";
+    const response = await fetch(`${flyUrl}/exec`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        command: "find",
+        args: [cwd, "-name", pattern, "-type", "f"],
+        wo_slug: ctx.workOrderSlug,
+        timeout_ms: 15000,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      return { success: false, error: `Glob failed: ${err.error || response.statusText}` };
+    }
+    const result = await response.json();
+    if (result.exit_code !== 0) {
+      return { success: false, error: result.stderr || "Find error" };
+    }
+    const files = (result.stdout || "").split("\n").filter((l: string) => l.trim());
+    return { success: true, data: { files, count: files.length, pattern, cwd } };
+  } catch (e: any) {
+    return { success: false, error: `Sandbox glob error: ${e.message}` };
+  }
 }
 
