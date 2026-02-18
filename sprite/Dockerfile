@@ -4,13 +4,15 @@
 
 FROM denoland/deno:2.1.4
 
-# Cache buster for NodeSource layer
-ARG CACHEBUST=2
+# 1. Bootstrap: get curl + ca-certificates first (base image is minimal)
+RUN apt-get update && apt-get install -y curl ca-certificates
 
-# Node.js 22 + system deps + Python 3 — single layer ensures NodeSource repo is used
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-  && apt-get install -y \
-    ca-certificates git jq curl wget unzip \
+# 2. Add NodeSource repo for Node.js 22
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+
+# 3. Install all dependencies (NodeSource repo now available)
+RUN apt-get update && apt-get install -y \
+    git jq wget unzip \
     inotify-tools procps \
     nodejs \
     python3 python3-pip python3-venv \
@@ -18,7 +20,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
   && node --version && npm --version \
   && apt-get clean && apt-get autoremove -y
 
-# Supabase CLI + Claude Code CLI (via npm)
+# 4. Supabase CLI + Claude Code CLI (via npm)
 RUN npm install -g supabase @anthropic-ai/claude-code
 
 # Workspace setup
