@@ -175,7 +175,8 @@ export async function buildAgentContext(
       .single();
     agentProfile = data;
     // WO-0401: Config-driven model selection from profile
-    if (agentProfile?.model) {
+    // BUG FIX (CTX-002): Profile model must NOT overwrite escalation_model
+    if (agentProfile?.model && !workOrder.client_info?.escalation_model) {
       agentModel = agentProfile.model;
     }
   } catch {
