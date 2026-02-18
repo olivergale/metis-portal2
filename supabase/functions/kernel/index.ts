@@ -457,15 +457,13 @@ Deno.serve(async (req) => {
   );
 
   // Authenticate request (AC #8)
-  // For now, we'll allow requests but log the attempt
-  // In production, uncomment the following:
-  // const auth = await authenticateRequest(req, supabase);
-  // if (!auth.authenticated) {
-  //   return new Response(
-  //     JSON.stringify({ error: auth.error || "Unauthorized", error_code: "ERR_UNAUTHORIZED" }),
-  //     { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  //   );
-  // }
+  const auth = await authenticateRequest(req, supabase);
+  if (!auth.authenticated) {
+    return new Response(
+      JSON.stringify({ error: auth.error || "Unauthorized", error_code: "ERR_UNAUTHORIZED" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
   // Parse URL and route to handler
   const url = new URL(req.url);
