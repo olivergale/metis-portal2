@@ -5,6 +5,7 @@
 // Tool type from Anthropic SDK -- inlined to avoid deep npm sub-path import that breaks Deno edge runtime
 type Tool = { name: string; description: string; input_schema: Record<string, any> };
 import { classifyError } from "./error-classifier.ts";
+import { proxyViaVerify, PROXY_ELIGIBLE_TOOLS } from "./proxy-verify.ts";
 import { handleExecuteSql, handleApplyMigration, handleReadTable } from "./tool-handlers/supabase.ts";
 import { handleGithubReadFile, handleGithubPushFiles, handleGithubListFiles, handleGithubCreateBranch, handleGithubCreatePr, handleGithubSearchCode, handleGithubGrep, handleGithubReadFileRange, handleGithubTree, handleReadFullFile, handleGitLog, handleGitDiff, handleGitBlame } from "./tool-handlers/github.ts";
 import { handleDeployEdgeFunction } from "./tool-handlers/deploy.ts";
@@ -160,6 +161,16 @@ export async function dispatchTool(
   ]);
 
   let result: ToolResult;
+
+  // Phase C: Check if tool should route through /verify edge proxy
+  if (PROXY_ELIGIBLE_TOOLS.has(toolName)) {
+    const proxyResult = await proxyViaVerify(toolName, toolInput, ctx);
+    if (proxyResult !== null) {
+      // Proxy handled the request — mutation already recorded server-side with edge_proxy mode
+      return proxyResult;
+    }
+    // proxyResult === null means proxy is disabled or not applicable — fall through to direct execution
+  }
 
   switch (toolName) {
     case "execute_sql":

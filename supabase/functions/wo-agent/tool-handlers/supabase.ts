@@ -76,6 +76,95 @@ async function executeDdlViaRpc(query: string, supabase: any): Promise<{ success
   }
 }
 
+/**
+ * Check if scoped SQL RPCs are enabled (feature flag in system_settings).
+ * Caches per isolate lifetime.
+ */
+let _scopedSqlEnabled: boolean | null = null;
+let _scopedSqlCheckedAt = 0;
+async function isScopedSqlEnabled(supabase: any): Promise<boolean> {
+  const now = Date.now();
+  if (_scopedSqlEnabled !== null && now - _scopedSqlCheckedAt < 60_000) {
+    return _scopedSqlEnabled;
+  }
+  try {
+    const { data } = await supabase
+      .from("system_settings")
+      .select("setting_value")
+      .eq("setting_key", "scoped_sql_enabled")
+      .single();
+    _scopedSqlEnabled = data?.setting_value === "true";
+    _scopedSqlCheckedAt = now;
+  } catch {
+    _scopedSqlEnabled = false;
+    _scopedSqlCheckedAt = now;
+  }
+  return _scopedSqlEnabled;
+}
+
+/**
+ * Route SQL through scoped RPCs: agent_query, agent_execute_ddl, agent_execute_dml.
+ * Returns ToolResult or null to fall through to legacy path.
+ */
+async function executeScopedSql(
+  query: string,
+  upperQuery: string,
+  isDdl: boolean,
+  isDml: boolean,
+  isConfig: boolean,
+  ctx: ToolContext
+): Promise<ToolResult | null> {
+  try {
+    if (isConfig) {
+      // Extract key and value from SET statement: SET key = 'value' or SET key TO 'value'
+      const match = query.match(/SET\s+(LOCAL\s+)?(\S+)\s*(?:=|TO)\s*'([^']*)'/i);
+      if (!match) return null; // Can't parse — fall through
+      const { data, error } = await ctx.supabase.rpc("agent_set_config", {
+        p_key: match[2],
+        p_value: match[3],
+        p_wo_id: ctx.workOrderId,
+        p_agent_name: ctx.agentName,
+      });
+      if (error) return { success: false, error: `Config error: ${error.message}` };
+      if (data && !data.success) return { success: false, error: data.error };
+      return { success: true, data: "Config set successfully" };
+    } else if (isDdl) {
+      const { data, error } = await ctx.supabase.rpc("agent_execute_ddl", {
+        p_query: query,
+        p_wo_id: ctx.workOrderId,
+        p_agent_name: ctx.agentName,
+      });
+      if (error) return { success: false, error: `DDL error: ${error.message}` };
+      if (data && !data.success) return { success: false, error: data.error };
+      return { success: true, data: data?.data || "DDL executed successfully" };
+    } else if (isDml) {
+      const { data, error } = await ctx.supabase.rpc("agent_execute_dml", {
+        p_query: query,
+        p_wo_id: ctx.workOrderId,
+        p_agent_name: ctx.agentName,
+      });
+      if (error) return { success: false, error: `DML error: ${error.message}` };
+      if (data && !data.success) return { success: false, error: data.error };
+      return { success: true, data: data?.data || "DML executed successfully" };
+    } else {
+      // SELECT/WITH/EXPLAIN/SHOW — read-only query
+      const { data, error } = await ctx.supabase.rpc("agent_query", {
+        p_query: query,
+        p_wo_id: ctx.workOrderId,
+        p_agent_name: ctx.agentName,
+      });
+      if (error) return { success: false, error: `Query error: ${error.message}` };
+      if (data && !data.success) return { success: false, error: data.error };
+      const resultStr = JSON.stringify(data?.data || []);
+      const limited = resultStr.length > 8000 ? resultStr.slice(0, 8000) + "...(limited)" : resultStr;
+      return { success: true, data: limited };
+    }
+  } catch (e: any) {
+    await logError(ctx, "error", "wo-agent/execute_sql_scoped", "SCOPED_SQL_EXCEPTION", e.message, { query: query.substring(0, 500) });
+    return null; // Fall through to legacy path on exception
+  }
+}
+
 export async function handleExecuteSql(
   input: Record<string, any>,
   ctx: ToolContext
@@ -91,6 +180,26 @@ export async function handleExecuteSql(
     return { success: false, error: "Destructive DDL blocked. Use apply_migration for schema changes." };
   }
 
+  // Classify query type
+  const ddlPrefixes = ["CREATE ", "ALTER "];
+  const dmlPrefixes = ["INSERT ", "UPDATE ", "DELETE ", "DO "];
+  const configPrefixes = ["SET "];
+  const isCTEDml = upperQuery.startsWith("WITH ") &&
+    /\b(INSERT|UPDATE|DELETE)\b/.test(upperQuery);
+  const isDdl = ddlPrefixes.some(p => upperQuery.startsWith(p));
+  const isDml = dmlPrefixes.some(p => upperQuery.startsWith(p)) || isCTEDml;
+  const isConfig = configPrefixes.some(p => upperQuery.startsWith(p));
+  const isDmlOrDdl = isDdl || isDml || isConfig;
+
+  // Phase A4: Try scoped SQL RPCs if enabled
+  const scopedEnabled = await isScopedSqlEnabled(ctx.supabase);
+  if (scopedEnabled) {
+    const scopedResult = await executeScopedSql(query, upperQuery, isDdl, isDml, isConfig, ctx);
+    if (scopedResult !== null) return scopedResult;
+    // Fall through to legacy path if scoped RPC returned null (parse error, exception)
+  }
+
+  // Legacy path: hardcoded permission checks + run_sql/run_sql_void
   // WO-0186: Block bypass capability for non-master agents
   const MASTER_AGENTS = new Set(["ilmarinen"]);
   if (!MASTER_AGENTS.has(ctx.agentName)) {
@@ -108,15 +217,6 @@ export async function handleExecuteSql(
       return { success: false, error: `Agent ${ctx.agentName} has read-only SQL access. Write operations blocked.` };
     }
   }
-
-  // Detect DML/DDL: run_sql wraps in SELECT jsonb_agg(... FROM (query) t)
-  // which breaks INSERT/UPDATE/DELETE/CREATE/ALTER/DO/SET -- route those to run_sql_void
-  const dmlDdlPrefixes = ["INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DO ", "SET ", "WITH "];
-  // WITH can be CTE-SELECT (works in run_sql) or CTE-DML (needs run_sql_void)
-  // Detect CTE-DML: WITH ... INSERT/UPDATE/DELETE
-  const isCTEDml = upperQuery.startsWith("WITH ") &&
-    /\b(INSERT|UPDATE|DELETE)\b/.test(upperQuery);
-  const isDmlOrDdl = dmlDdlPrefixes.some(p => upperQuery.startsWith(p) && p !== "WITH ") || isCTEDml;
 
   try {
     if (isDmlOrDdl) {
