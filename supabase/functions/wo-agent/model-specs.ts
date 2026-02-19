@@ -215,37 +215,24 @@ async function applyOverrides(spec: ModelSpec, model: string, supabase: any): Pr
 /**
  * Load budget ratios from system_settings.context_budget_ratios.
  * Ratios define proportional allocation -- every budget is a function of the context window.
+ * No hardcoded fallbacks — system_settings is the single source of truth.
  */
 export async function loadBudgetRatios(supabase: any): Promise<BudgetRatios> {
-  try {
-    const { data } = await supabase
-      .from('system_settings')
-      .select('setting_value')
-      .eq('setting_key', 'context_budget_ratios')
-      .single();
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('setting_value')
+    .eq('setting_key', 'context_budget_ratios')
+    .single();
 
-    if (data?.setting_value) return data.setting_value as BudgetRatios;
-  } catch {
-    // Fall through to defaults
+  if (error) {
+    throw new Error(`[MODEL-SPECS] Failed to load budget ratios from system_settings: ${error.message}`);
   }
 
-  // Emergency defaults (only if system_settings load fails entirely)
-  // These match the initial DB seed values -- kept in sync, not authoritative
-  return {
-    reserve_for_output: 0,
-    reserve_for_messages: 0.15,
-    components: {
-      base_template: 0.28,
-      agent_profile: 0.05,
-      directives: 0.10,
-      tools: 0.07,
-      knowledge_base: 0.20,
-      memories: 0.05,
-      critical_lessons: 0.08,
-      promoted_lessons: 0.05,
-      user_message: 0.12,
-    },
-  };
+  if (!data?.setting_value) {
+    throw new Error(`[MODEL-SPECS] context_budget_ratios not found in system_settings. Seed it before running agents.`);
+  }
+
+  return data.setting_value as BudgetRatios;
 }
 
 /**
