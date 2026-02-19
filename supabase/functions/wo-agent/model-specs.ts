@@ -25,7 +25,8 @@ export interface PromptBudget {
 
 /**
  * Resolve model capabilities from provider APIs.
- * Chain: OpenRouter API -> system_settings cache -> conservative fallback
+ * Chain: OpenRouter API (primary) -> system_settings cache (only fallback)
+ * No hardcoded fallbacks — if both fail, the caller must handle the error.
  */
 export async function resolveModelSpec(
   model: string,
@@ -52,9 +53,8 @@ export async function resolveModelSpec(
     console.warn(`[MODEL-SPECS] Settings fallback failed:`, (e as Error).message);
   }
 
-  // 3. Emergency: conservative spec (only reached if both API and settings fail)
-  console.warn(`[MODEL-SPECS] All lookups failed for ${model}, using conservative fallback`);
-  return { contextWindow: 128000, maxOutput: 8192 };
+  // 3. Both sources failed — no hardcoded fallback. Throw so caller handles gracefully.
+  throw new Error(`[MODEL-SPECS] All lookups failed for ${model}. OpenRouter API unreachable and no cached spec in system_settings.`);
 }
 
 /**
