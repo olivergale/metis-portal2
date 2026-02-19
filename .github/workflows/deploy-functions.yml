@@ -126,7 +126,7 @@ jobs:
           # WO-0390: Public functions need --no-verify-jwt for anonymous access
           PUBLIC_FUNCTIONS="portal-chat"
           # Functions where 401 is expected (require service_role, not anon key)
-          JWT_PROTECTED_FUNCTIONS="kernel"
+          JWT_PROTECTED_FUNCTIONS="kernel verify"
           # Non-deployable directories
           SKIP_DIRS="wo-daemon _shared lib"
 
