@@ -337,9 +337,9 @@ export async function runAgentLoop(
   let turn = 0;
   let turnsTrimmed = 0;
   let lastInputTokens = 0;  // MR-002: Track last API input tokens for pressure detection
-  // MR-003: Budget-driven history — messageBudget is token allocation for conversation history
-  // Fallback: 15 pairs for remediation, 20 for normal (legacy behavior if no budget provided)
-  const FALLBACK_MAX_PAIRS = isRemediation ? 15 : 20;
+  // MR-003: Budget-driven history — messageBudget from context.ts (proportional to context window)
+  // If somehow not provided, derive from contextWindow (15% default ratio)
+  const historyBudget = messageBudget || Math.floor((contextWindow || 128000) * 0.15);
 
   while (true) {
     // Check checkpoint / timeout  -- checkpoint FIRST so long turns don't skip it
@@ -499,33 +499,23 @@ export async function runAgentLoop(
 
     turn++;
 
-    // MR-003: Budget-driven history management
-    // Estimate total tokens in conversation messages and trim when over budget
+    // MR-003: Budget-driven history management — trim when tokens exceed 85% of budget
     const msgTokens = estimateMessageTokens(messages);
-    const effectiveBudget = messageBudget || FALLBACK_MAX_PAIRS * 2 * 800; // ~800 tokens per msg fallback
-    const needsTrim = messageBudget
-      ? msgTokens > effectiveBudget * 0.85  // trim at 85% of budget (5-turn headroom)
-      : messages.length > 1 + FALLBACK_MAX_PAIRS * 2;  // legacy: count-based
-
-    if (needsTrim) {
-      // Target: trim to 60% of budget to leave room for growth
-      const targetTokens = messageBudget
-        ? Math.floor(effectiveBudget * 0.60)
-        : (1 + FALLBACK_MAX_PAIRS * 2) * 800;  // legacy fallback
+    if (msgTokens > historyBudget * 0.85) {
+      const targetTokens = Math.floor(historyBudget * 0.60);
 
       // Find trim count: remove oldest messages (after index 0) until under target
       let trimCount = 0;
       let trimmedTokens = 0;
-      for (let i = 1; i < messages.length - 2; i++) {  // keep first and last 2
+      for (let i = 1; i < messages.length - 2; i++) {
         const msgTok = estimateTokens(stringifyMessage(messages[i]));
         if (msgTokens - trimmedTokens - msgTok <= targetTokens) break;
         trimmedTokens += msgTok;
         trimCount++;
       }
-      // Minimum trim of 2 messages to avoid infinite re-triggering
       trimCount = Math.max(trimCount, Math.min(2, messages.length - 3));
 
-      // WO-0378: Ensure trimCount doesn't split a tool_use/tool_result pair
+      // WO-0378: Don't split tool_use/tool_result pairs
       const cutIdx = 1 + trimCount;
       if (cutIdx < messages.length) {
         const msgAtCut = messages[cutIdx];
@@ -535,29 +525,21 @@ export async function runAgentLoop(
         }
       }
 
-      // Summarize before discarding  -- extract tool calls, mutations, errors
       const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
-
-      // Remove old messages (preserve index 0 = original WO context)
       messages.splice(1, trimCount);
       turnsTrimmed += trimCount;
 
       // Insert or replace summary at index 1
-      const hasSummary = messages.length > 1 &&
-        messages[1].role === 'user' &&
-        typeof messages[1].content === 'string' &&
-        (messages[1].content as string).startsWith('## Execution History');
-
-      if (hasSummary) {
+      if (messages.length > 1 && messages[1].role === 'user' &&
+          typeof messages[1].content === 'string' &&
+          (messages[1].content as string).startsWith('## Execution History')) {
         messages[1] = { role: 'user', content: historySummary };
       } else {
         messages.splice(1, 0, { role: 'user', content: historySummary });
       }
 
-      if (messageBudget) {
-        const afterTokens = estimateMessageTokens(messages);
-        console.log(`[WO-AGENT] ${ctx.workOrderSlug} budget trim: ${trimCount} msgs removed, ${msgTokens}→${afterTokens} tokens (budget: ${effectiveBudget})`);
-      }
+      const afterTokens = estimateMessageTokens(messages);
+      console.log(`[WO-AGENT] ${ctx.workOrderSlug} trim: ${trimCount} msgs, ${msgTokens}→${afterTokens} tokens (budget: ${historyBudget})`);
     }
 
     // WO-0378: Repair any corrupted tool_use/tool_result pairs before API call
@@ -792,28 +774,36 @@ export async function runAgentLoop(
         },
       });
 
-      // Non-retryable: prompt too long  -- trim aggressively or fail immediately
+      // Non-retryable: prompt too long  -- emergency trim to 20% of budget or fail
       if (e.message?.includes('prompt is too long') || e.status === 400) {
-        // Try emergency trim: keep only first message + last 4 pairs
-        const emergencyMax = 1 + 4 * 2;
-        if (messages.length > emergencyMax) {
-          const trimCount = messages.length - emergencyMax;
+        const emergencyTarget = Math.floor(historyBudget * 0.20);
+        const currentTokens = estimateMessageTokens(messages);
+
+        if (messages.length > 3 && currentTokens > emergencyTarget) {
+          let trimCount = 0;
+          let trimmedTokens = 0;
+          for (let i = 1; i < messages.length - 2; i++) {
+            const msgTok = estimateTokens(stringifyMessage(messages[i]));
+            if (currentTokens - trimmedTokens - msgTok <= emergencyTarget) break;
+            trimmedTokens += msgTok;
+            trimCount++;
+          }
+          trimCount = Math.max(trimCount, Math.min(4, messages.length - 3));
+
           const historySummary = summarizeTrimmedMessages(messages, 1, trimCount);
           messages.splice(1, trimCount);
-          const hasSummary = messages.length > 1 &&
-            messages[1].role === 'user' &&
-            typeof messages[1].content === 'string' &&
-            (messages[1].content as string).startsWith('## Execution History');
-          if (hasSummary) {
+          if (messages.length > 1 && messages[1].role === 'user' &&
+              typeof messages[1].content === 'string' &&
+              (messages[1].content as string).startsWith('## Execution History')) {
             messages[1] = { role: 'user', content: historySummary };
           } else {
             messages.splice(1, 0, { role: 'user', content: historySummary });
           }
-          console.log(`[WO-AGENT] ${ctx.workOrderSlug} emergency trim: ${trimCount} messages removed, ${messages.length} remaining`);
+          const afterTokens = estimateMessageTokens(messages);
+          console.log(`[WO-AGENT] ${ctx.workOrderSlug} emergency trim: ${trimCount} msgs, ${currentTokens}→${afterTokens} tokens (target: ${emergencyTarget})`);
           consecutiveApiErrors++;
         } else {
-          // Already minimal  -- context is fundamentally too large, fail immediately
-          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further  -- system prompt + initial context exceeds model limit.`;
+          const reason = `Fatal: prompt too large (${e.message}). Cannot trim further — system prompt + initial context exceeds model limit.`;
           console.log(`[WO-AGENT] ${ctx.workOrderSlug} FATAL: ${reason}`);
           await logFailed(ctx, reason);
           return { status: "failed", turns: turn, summary: reason, toolCalls };
