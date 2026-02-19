@@ -35,6 +35,8 @@ export async function resolveModelSpec(
   try {
     const spec = await fetchOpenRouterSpec(model);
     if (spec) {
+      // Write-through cache: update system_settings with fresh values
+      cacheModelSpec(spec, model, supabase);
       // Apply system_settings overrides (e.g. 1M beta context for Claude)
       return await applyOverrides(spec, model, supabase);
     }
@@ -53,6 +55,60 @@ export async function resolveModelSpec(
   // 3. Emergency: conservative spec (only reached if both API and settings fail)
   console.warn(`[MODEL-SPECS] All lookups failed for ${model}, using conservative fallback`);
   return { contextWindow: 128000, maxOutput: 8192 };
+}
+
+/**
+ * Write-through cache: store fetched model spec to system_settings.
+ * Called without await (fire-and-forget) to avoid adding latency to critical path.
+ * Failures are logged but never break the main flow.
+ */
+async function cacheModelSpec(spec: ModelSpec, model: string, supabase: any): Promise<void> {
+  try {
+    // Read current cached values
+    const { data, error: fetchError } = await supabase
+      .from('system_settings')
+      .select('setting_value')
+      .eq('setting_key', 'model_context_windows')
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      console.warn(`[MODEL-SPECS] Cache read failed:`, fetchError.message);
+      return;
+    }
+
+    // Build updated value object
+    const currentValue = data?.setting_value?.value || {};
+    const currentMaxOutput = data?.setting_value?.max_output || {};
+
+    // Update with fresh values from OpenRouter
+    const bare = model.includes('/') ? model.split('/').pop()! : model;
+    currentValue[bare] = spec.contextWindow;
+    currentMaxOutput[bare] = spec.maxOutput;
+
+    // Upsert back to system_settings
+    const { error: upsertError } = await supabase
+      .from('system_settings')
+      .upsert({
+        setting_key: 'model_context_windows',
+        setting_value: {
+          value: currentValue,
+          max_output: currentMaxOutput,
+        },
+        last_modified_by: 'wo-agent',
+      }, {
+        onConflict: 'setting_key',
+      });
+
+    if (upsertError) {
+      console.warn(`[MODEL-SPECS] Cache write failed:`, upsertError.message);
+      return;
+    }
+
+    console.log(`[MODEL-SPECS] Cached spec for ${bare}: ${spec.contextWindow}t / ${spec.maxOutput}t`);
+  } catch (e) {
+    // Fire-and-forget: never propagate errors
+    console.warn(`[MODEL-SPECS] Cache update exception:`, (e as Error).message);
+  }
 }
 
 /**
