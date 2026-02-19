@@ -162,6 +162,25 @@ export async function dispatchTool(
 
   let result: ToolResult;
 
+  // D2: Permission check at dispatch entry point
+  // Check agent_tool_permissions for deny before executing any mutating tool
+  if (MUTATING_TOOLS.has(toolName)) {
+    try {
+      const { data: perm } = await ctx.supabase.rpc("check_agent_permission", {
+        p_agent_name: ctx.agentName,
+        p_tool_name: toolName,
+      });
+      if (perm && !perm.allowed && perm.permission === "deny") {
+        return {
+          success: false,
+          error: `Permission denied: agent '${ctx.agentName}' cannot use '${toolName}'. Reason: ${perm.reason || "denied by permission matrix"}`,
+        };
+      }
+    } catch {
+      // Permission check failed — allow through (fail-open for now)
+    }
+  }
+
   // Phase C: Check if tool should route through /verify edge proxy
   if (PROXY_ELIGIBLE_TOOLS.has(toolName)) {
     const proxyResult = await proxyViaVerify(toolName, toolInput, ctx);
