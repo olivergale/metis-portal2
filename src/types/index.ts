@@ -175,3 +175,52 @@ export interface AgentStats {
   current_wo_slug?: string;
   current_wo_status?: string;
 }
+
+// 9A: Kernel Dashboard types
+export interface KernelState {
+  description?: string;
+  is_terminal?: boolean;
+}
+
+export interface KernelTransition {
+  from_status: string;
+  event: string;
+  to_status: string;
+  guard_function?: string | null;
+  effects?: Record<string, unknown>;
+  enabled?: boolean;
+  description?: string;
+}
+
+export interface KernelInvariant {
+  name: string;
+  type: string;
+  check_function?: string;
+  description?: string;
+}
+
+export interface KernelEvent {
+  id: number;
+  stream_id: string;
+  event_type: string;
+  actor: string;
+  occurred_at: string;
+  hash: string;
+  previous_hash: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface KernelWOCount {
+  status: string;
+  count: number;
+}
+
+export interface KernelDashboard {
+  spec_version: string;
+  states: Record<string, KernelState>;
+  transitions: KernelTransition[];
+  invariants: KernelInvariant[];
+  state_machine: KernelTransition[];
+  recent_events: KernelEvent[];
+  wo_counts: KernelWOCount[];
+}

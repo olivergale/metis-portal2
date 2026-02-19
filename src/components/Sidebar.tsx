@@ -6,6 +6,7 @@ const navItems = [
   { to: '/logs',     icon: '☰', label: 'Logs' },
   { to: '/health',   icon: '♥', label: 'Health' },
   { to: '/chat',     icon: '✉', label: 'Chat' },
+  { to: '/kernel',   icon: '⬡', label: 'Kernel' },
 ];
 
 export default function Sidebar() {
