@@ -61,6 +61,17 @@ export interface ToolResult {
  * WO-0628: Sequential accountability - returns {success, mutation_id}
  * WO-0485: Mutation tracking for all mutating tool operations
  */
+/**
+ * Compute SHA-256 hash of a string using SubtleCrypto (available in Deno edge runtime)
+ */
+async function sha256(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function recordMutation(
   ctx: ToolContext,
   toolName: string,
@@ -69,7 +80,9 @@ async function recordMutation(
   action: string,
   success: boolean,
   errorMessage?: string,
-  context?: Record<string, any>
+  context?: Record<string, any>,
+  resultHash?: string,
+  proxyMode?: string
 ): Promise<{ success: boolean; mutation_id: string | null }> {
   const maxRetries = 3;
   let lastError: string | null = null;
@@ -93,6 +106,14 @@ async function recordMutation(
 
       if (context) {
         params.p_context = context;
+      }
+
+      // Provable execution: pass result hash and proxy mode
+      if (resultHash) {
+        params.p_result_hash = resultHash;
+      }
+      if (proxyMode) {
+        params.p_proxy_mode = proxyMode;
       }
 
       const result = await ctx.supabase.rpc("record_mutation", params);
@@ -332,6 +353,15 @@ export async function dispatchTool(
     const shouldRecord = !(toolName === "execute_sql" && action === "SELECT");
 
     if (shouldRecord) {
+      // Compute SHA-256 hash of result data for provable execution
+      let resultHash: string | undefined;
+      try {
+        const resultData = result.data != null ? JSON.stringify(result.data) : result.error || "";
+        resultHash = await sha256(resultData.substring(0, 10000));
+      } catch {
+        // Non-critical — proceed without hash
+      }
+
       await recordMutation(
         ctx,
         toolName,
@@ -340,7 +370,9 @@ export async function dispatchTool(
         action,
         result.success,
         result.error,
-        context
+        context,
+        resultHash,
+        "self_report"
       );
     }
   }
