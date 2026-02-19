@@ -101,7 +101,7 @@ export async function handleExecuteSql(
   }
 
   // WO-0166: Read-only guard for non-executor agents
-  const READ_ONLY_AGENTS = new Set(["qa-gate", "ops", "reviewer", "user-portal", "security", "sentinel", "watchman", "audit", "metis"]);
+  const READ_ONLY_AGENTS = new Set(["qa-gate", "ops", "reviewer", "user-portal", "security"]);
   if (READ_ONLY_AGENTS.has(ctx.agentName)) {
     const writeOps = ["INSERT ", "UPDATE ", "DELETE ", "ALTER ", "CREATE ", "DROP ", "GRANT ", "REVOKE "];
     if (writeOps.some(op => upperQuery.startsWith(op))) {

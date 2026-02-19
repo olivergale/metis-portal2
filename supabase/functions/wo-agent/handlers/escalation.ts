@@ -91,9 +91,9 @@ export async function attemptEscalation(
  * WO-0487: Suggest alternative approaches based on error class
  */
 export function getAlternativeApproaches(toolName: string, errorClass: string): string | null {
-  // GitHub edit failures -> use write instead
-  if (toolName === "github_edit_file" && errorClass === "github_match_failure") {
-    return "Use github_write_file to replace the entire file instead of github_edit_file";
+  // GitHub push failures -> retry with corrected content
+  if (toolName === "github_push_files" && errorClass === "github_match_failure") {
+    return "Read the current file via github_read_file first, then use github_push_files with full corrected content";
   }
 
   // SQL syntax errors -> review schema context
@@ -111,9 +111,9 @@ export function getAlternativeApproaches(toolName: string, errorClass: string): 
     return "Query information_schema or use read_table to verify object exists before mutation";
   }
 
-  // Encoding errors -> avoid special characters or use bytea
+  // Encoding errors -> use github_push_files (Git Data API, no base64 corruption)
   if (errorClass === "encoding_error") {
-    return "Check for UTF-8 corruption from github_edit_file; use github_write_file for clean rewrite";
+    return "Use github_push_files (Git Data API) which handles UTF-8 natively without base64 round-trip";
   }
 
   // Enforcement blocked -> use proper RPC with bypass

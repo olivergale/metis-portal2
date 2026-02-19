@@ -25,7 +25,7 @@ const DEFAULT_MODEL = "claude-opus-4-6"; // Fallback only  -- prefer agent_execu
 
 // Tools that modify state vs read-only
 const MUTATION_TOOLS = new Set([
-  'execute_sql', 'apply_migration', 'github_write_file', 'github_edit_file',
+  'execute_sql', 'apply_migration', 'github_push_files',
   'deploy_edge_function', 'resolve_qa_findings', 'update_qa_checklist',
   'delegate_subtask',
 ]);
@@ -646,7 +646,7 @@ export async function runAgentLoop(
             success: result.success,
             // WO-0387: Capture metadata for checkpoint accomplishments
             migrationName: toolBlock.name === 'apply_migration' && result.success ? (toolBlock.input as any)?.name : undefined,
-            filePath: (toolBlock.name === 'github_write_file' || toolBlock.name === 'github_edit_file') && result.success ? (toolBlock.input as any)?.path : undefined,
+            filePath: toolBlock.name === 'github_push_files' && result.success ? ((toolBlock.input as any)?.files || []).map((f: any) => f.path).join(', ') : undefined,
             progressNote: toolBlock.name === 'log_progress' && result.success ? String((toolBlock.input as any)?.content || '').slice(0, 100) : undefined,
           });
 
