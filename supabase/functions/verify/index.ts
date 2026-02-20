@@ -16,6 +16,7 @@
 //   POST /verify/receipt         — Generate receipt
 //   GET  /verify/receipt/:wo_id  — Get/verify receipt
 //   POST /verify/spec/derive    — LLM-based formal spec derivation
+//   POST /verify/spec/evaluate-external — Sandbox formal spec evaluation
 //   GET  /verify/health          — Health check
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -28,6 +29,7 @@ import { handleAssert } from "./handlers/assert.ts";
 import { handleSnapshot } from "./handlers/snapshot.ts";
 import { handleGetReceipt, handleGenerateReceipt } from "./handlers/receipt.ts";
 import { handleSpecDerive } from "./handlers/spec-derive.ts";
+import { handleSpecEvaluateExternal } from "./handlers/spec-evaluate.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -151,6 +153,10 @@ Deno.serve(async (req: Request) => {
       // Formal spec derivation (LLM-based)
       case "spec/derive":
         return withCors(await handleSpecDerive(body, supabase));
+
+      // Sandbox formal spec evaluation (Phase 4B)
+      case "spec/evaluate-external":
+        return withCors(await handleSpecEvaluateExternal(body, supabase));
 
       // Receipt handlers
       case "receipt":
