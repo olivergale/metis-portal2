@@ -43,8 +43,10 @@ export async function authenticateRequest(
     }
 
     // Fallback: anon key match (for internal system calls via pg_net)
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY");
-    if (token === anonKey) {
+    // pg_net sends both 'Authorization: Bearer <anon_key>' and 'apikey: <anon_key>'
+    // If the bearer token matches the apikey header, it's an internal system call
+    const apikeyHeader = req.headers.get("apikey");
+    if (apikeyHeader && token === apikeyHeader) {
       return {
         authenticated: true,
         user: { id: "system-internal", email: "system@supabase" },
