@@ -1,6 +1,7 @@
-// github-webhook/index.ts v1
-// WO-0220: GitHub App webhook handler for issue events
-// When issue gets labeled with 'endgame' or 'wo-create', auto-create WO via create_draft_work_order() RPC
+// github-webhook/index.ts v2
+// GitHub App webhook handler for issue + push events
+// - issues.labeled with 'endgame'/'wo-create' → auto-create WO via create_draft_work_order() RPC
+// - push events → index file changes into github_file_index for verification coverage
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -122,6 +123,58 @@ function extractTags(labels: Array<{ name: string }>): string[] {
         !name.startsWith("priority:")
       );
     });
+}
+
+/**
+ * Handle push events: index all changed files into github_file_index
+ */
+async function handlePushEvent(
+  event: any,
+  supabase: any
+): Promise<{ files_indexed: number; branch: string; commits: number }> {
+  const repo = event.repository?.full_name;
+  const branch = (event.ref || "").replace("refs/heads/", "");
+  const committer = event.sender?.login || "unknown";
+
+  if (!repo || !branch) {
+    console.warn("[WEBHOOK] Push event missing repo or ref");
+    return { files_indexed: 0, branch: branch || "unknown", commits: 0 };
+  }
+
+  const rows: Array<Record<string, unknown>> = [];
+  for (const commit of event.commits || []) {
+    const commitMsg = (commit.message || "").substring(0, 200);
+    for (const path of commit.added || []) {
+      rows.push({
+        repo, branch, file_path: path, commit_sha: commit.id,
+        change_type: "added", committer, commit_message: commitMsg, source: "webhook",
+      });
+    }
+    for (const path of commit.modified || []) {
+      rows.push({
+        repo, branch, file_path: path, commit_sha: commit.id,
+        change_type: "modified", committer, commit_message: commitMsg, source: "webhook",
+      });
+    }
+    for (const path of commit.removed || []) {
+      rows.push({
+        repo, branch, file_path: path, commit_sha: commit.id,
+        change_type: "removed", committer, commit_message: commitMsg, source: "webhook",
+      });
+    }
+  }
+
+  if (rows.length > 0) {
+    const { error } = await supabase.from("github_file_index")
+      .upsert(rows, { onConflict: "repo,branch,file_path,commit_sha" });
+    if (error) {
+      console.error("[WEBHOOK] Failed to index files:", error);
+    } else {
+      console.log(`[WEBHOOK] Indexed ${rows.length} files from ${event.commits?.length || 0} commits on ${repo}/${branch}`);
+    }
+  }
+
+  return { files_indexed: rows.length, branch, commits: event.commits?.length || 0 };
 }
 
 /**
@@ -264,16 +317,29 @@ Deno.serve(async (req) => {
     }
 
     // Parse event
-    const event: GitHubIssueEvent = JSON.parse(rawBody);
+    const event = JSON.parse(rawBody);
     const eventType = req.headers.get("x-github-event");
     const deliveryId = req.headers.get("x-github-delivery");
 
-    console.log(`[WEBHOOK] Event: ${eventType}, Delivery: ${deliveryId}, Action: ${event.action}`);
+    console.log(`[WEBHOOK] Event: ${eventType}, Delivery: ${deliveryId}`);
+
+    // Handle push events — index file changes for verification coverage
+    if (eventType === "push") {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      const result = await handlePushEvent(event, supabase);
+      return new Response(
+        JSON.stringify({ ok: true, ...result }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Only handle issues events with "labeled" action
     if (eventType !== "issues" || event.action !== "labeled") {
       return new Response(
-        JSON.stringify({ message: "Event ignored (not issues.labeled)" }),
+        JSON.stringify({ message: `Event ignored: ${eventType}.${event.action || 'unknown'}` }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

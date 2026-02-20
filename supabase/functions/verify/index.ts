@@ -15,6 +15,7 @@
 //   POST /verify/snapshot        — Capture before/after snapshot
 //   POST /verify/receipt         — Generate receipt
 //   GET  /verify/receipt/:wo_id  — Get/verify receipt
+//   POST /verify/github/tree-sync — Backfill github_file_index from repo tree
 //   POST /verify/spec/derive    — LLM-based formal spec derivation
 //   POST /verify/spec/evaluate-external — Sandbox formal spec evaluation
 //   GET  /verify/health          — Health check
@@ -22,7 +23,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { authenticateRequest, validateAgent } from "./lib/auth.ts";
-import { handlePush, handleCreateBranch, handleCreatePr } from "./handlers/github.ts";
+import { handlePush, handleCreateBranch, handleCreatePr, handleTreeSync } from "./handlers/github.ts";
 import { handleExec, handleWrite, handlePipeline, handleTest } from "./handlers/sandbox.ts";
 import { handleDeploy } from "./handlers/deploy.ts";
 import { handleAssert } from "./handlers/assert.ts";
@@ -127,6 +128,8 @@ Deno.serve(async (req: Request) => {
         return withCors(await handleCreateBranch(body, supabase));
       case "github/pr":
         return withCors(await handleCreatePr(body, supabase));
+      case "github/tree-sync":
+        return withCors(await handleTreeSync(body, supabase));
 
       // Sandbox handlers
       case "sandbox/exec":

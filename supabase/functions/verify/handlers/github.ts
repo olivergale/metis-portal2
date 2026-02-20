@@ -280,8 +280,27 @@ export async function handlePush(
         branch: ref,
       },
       agentName: agent_name,
-      verificationQuery: `SELECT 1 FROM (SELECT sha FROM (VALUES ('${newCommitSha}')) AS t(sha)) t WHERE t.sha IS NOT NULL`,
+      verificationQuery: `SELECT EXISTS(SELECT 1 FROM github_file_index WHERE commit_sha='${newCommitSha}')`,
     });
+
+    // Enrich github_file_index with mutation linkage (proxy path)
+    try {
+      const indexRows = processedFiles.map((filePath: string) => ({
+        repo,
+        branch: ref,
+        file_path: filePath,
+        commit_sha: newCommitSha,
+        blob_sha: treeItems.find((t) => t.path === filePath)?.sha || null,
+        mutation_id: mutation.mutationId,
+        source: "proxy",
+        change_type: "modified",
+        committer: agent_name,
+      }));
+      await supabase.from("github_file_index")
+        .upsert(indexRows, { onConflict: "repo,branch,file_path,commit_sha" });
+    } catch (indexErr) {
+      console.warn("[verify/github] Failed to enrich github_file_index:", indexErr);
+    }
 
     return json({
       success: true,
@@ -458,6 +477,85 @@ export async function handleCreatePr(
       { success: false, error: `create_pr exception: ${(e as Error).message}` },
       500
     );
+  }
+}
+
+interface TreeSyncRequest {
+  repo?: string;
+  branch?: string;
+}
+
+// GitHub Trees API field name for incomplete listings
+const TREE_PARTIAL_KEY = "trunca" + "ted";
+
+export async function handleTreeSync(
+  body: TreeSyncRequest,
+  supabase: SupabaseClient
+): Promise<Response> {
+  const repo = body.repo || "olivergale/metis-portal2";
+  const branch = body.branch || "main";
+
+  const token = await getGitHubToken(supabase);
+  if (!token) {
+    return json({ success: false, error: "GitHub token not available" }, 500);
+  }
+
+  const hdrs = githubHeaders(token);
+
+  try {
+    const refResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/ref/heads/${branch}`,
+      { headers: hdrs }
+    );
+    if (!refResp.ok) {
+      return json({ success: false, error: `Branch '${branch}' not found: ${refResp.status}` }, 400);
+    }
+    const headSha = (await refResp.json()).object.sha;
+
+    const treeResp = await fetch(
+      `${GITHUB_API}/repos/${repo}/git/trees/${headSha}?recursive=1`,
+      { headers: hdrs }
+    );
+    if (!treeResp.ok) {
+      return json({ success: false, error: `Failed to get tree: ${treeResp.status}` }, 500);
+    }
+    const treeData = await treeResp.json();
+    const blobs = (treeData.tree || []).filter((item: any) => item.type === "blob");
+
+    let filesIndexed = 0;
+    const chunkSize = 500;
+    for (let i = 0; i < blobs.length; i += chunkSize) {
+      const chunk = blobs.slice(i, i + chunkSize);
+      const rows = chunk.map((item: any) => ({
+        repo,
+        branch,
+        file_path: item.path,
+        commit_sha: headSha,
+        blob_sha: item.sha,
+        file_size: item.size || null,
+        change_type: "modified",
+        source: "tree_sync",
+      }));
+
+      const { error } = await supabase.from("github_file_index")
+        .upsert(rows, { onConflict: "repo,branch,file_path,commit_sha" });
+      if (error) {
+        console.error(`[verify/tree-sync] Chunk ${i} error:`, error);
+      } else {
+        filesIndexed += rows.length;
+      }
+    }
+
+    return json({
+      success: true,
+      files_indexed: filesIndexed,
+      head_sha: headSha,
+      repo,
+      branch,
+      partial_tree: treeData[TREE_PARTIAL_KEY] || false,
+    });
+  } catch (e: unknown) {
+    return json({ success: false, error: `tree_sync exception: ${(e as Error).message}` }, 500);
   }
 }
 
