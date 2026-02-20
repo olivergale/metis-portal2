@@ -42,6 +42,15 @@ export async function authenticateRequest(
       };
     }
 
+    // Fallback: anon key match (for internal system calls via pg_net)
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY");
+    if (token === anonKey) {
+      return {
+        authenticated: true,
+        user: { id: "system-internal", email: "system@supabase" },
+      };
+    }
+
     return { authenticated: false, error: "Invalid token" };
   } catch (err) {
     return { authenticated: false, error: (err as Error).message };
