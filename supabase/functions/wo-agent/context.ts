@@ -1,4 +1,5 @@
-// wo-agent/context.ts v15
+// wo-agent/context.ts v16
+// v16: Phase 11 — CMDB surface injection (discover_surfaces BFS for builder awareness)
 // v15: CB-001 proportional budget assembly (all budgets are functions of model context window, zero hardcoded values)
 // v14: CB-001 budget-first context assembly (per-component token budgets from model context window)
 // v13: MR-004 depth-aware remediation model override (chain_depth → model from system_settings)
@@ -468,6 +469,9 @@ export async function buildAgentContext(
     // Non-fatal: team_context may be empty or query may fail
   }
 
+  // Phase 11: CMDB surface injection — builder sees dependency graph
+  userMessage += await buildCmdbContext(supabase, workOrder, budget);
+
   // WO-MF-P25: Pipeline-phase aware adversarial prompt injection
   const woPipelinePhase = workOrder.pipeline_phase || "";
   const woTags2 = workOrder.tags || [];
@@ -803,6 +807,106 @@ async function buildManifoldContext(
   } catch {
     return "";
   }
+}
+
+/**
+ * Phase 11: CMDB surface injection — builder sees dependency graph
+ * Extracts key terms from WO objective/name, queries discover_surfaces() BFS,
+ * formats as context section capped at 20 surfaces.
+ */
+async function buildCmdbContext(
+  supabase: any,
+  workOrder: WorkOrder,
+  budget: PromptBudget
+): Promise<string> {
+  try {
+    // Extract function/table/edge-function names from objective + name
+    const text = `${workOrder.name || ""} ${workOrder.objective || ""}`;
+    const terms = extractCmdbTerms(text);
+    if (terms.length === 0) return "";
+
+    // Query discover_surfaces for up to 3 terms
+    const allSurfaces: Array<{ depth: number; relationship: string; object_type: string; object_name: string }> = [];
+    const seen = new Set<string>();
+
+    for (const term of terms.slice(0, 3)) {
+      try {
+        const { data, error } = await supabase.rpc("discover_surfaces", {
+          p_target: term,
+          p_depth: 2,
+        });
+        if (error || !data?.surfaces) continue;
+        for (const s of data.surfaces) {
+          const key = `${s.object_type}:${s.object_name}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            allSurfaces.push(s);
+          }
+        }
+      } catch {
+        // Non-fatal: term may not match any object
+      }
+    }
+
+    if (allSurfaces.length === 0) return "";
+
+    // Cap at 20 surfaces, sorted by depth then name
+    const capped = allSurfaces
+      .sort((a, b) => a.depth - b.depth || a.object_name.localeCompare(b.object_name))
+      .slice(0, 20);
+
+    let section = "\n\n## CMDB Context — Dependency Graph\n";
+    section += "Objects related to this work order (from CMDB `discover_surfaces` BFS):\n\n";
+    section += "| Depth | Relationship | Type | Name |\n";
+    section += "|-------|-------------|------|------|\n";
+    for (const s of capped) {
+      section += `| ${s.depth} | ${s.relationship} | ${s.object_type} | ${s.object_name} |\n`;
+    }
+    section += `\nTotal surfaces: ${allSurfaces.length}${allSurfaces.length > 20 ? " (showing top 20)" : ""}\n`;
+
+    // Clip to budget (use knowledge_base budget as proxy — CMDB context is similar in purpose)
+    return clipToTokenBudget(section, budget.components.knowledge_base || budget.promptBudget);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Extract function names, table names, and edge function identifiers from text.
+ * Returns unique terms suitable for discover_surfaces() queries.
+ */
+function extractCmdbTerms(text: string): string[] {
+  const terms = new Set<string>();
+
+  // Match function calls: word() or word_word()
+  const fnPattern = /\b([a-z][a-z0-9_]{2,})\s*\(\)/gi;
+  let m;
+  while ((m = fnPattern.exec(text)) !== null) {
+    terms.add(m[1].toLowerCase());
+  }
+
+  // Match backtick-quoted identifiers: `some_name`
+  const btPattern = /`([a-z][a-z0-9_]{2,})`/gi;
+  while ((m = btPattern.exec(text)) !== null) {
+    terms.add(m[1].toLowerCase());
+  }
+
+  // Match snake_case identifiers that look like DB objects (3+ chars, has underscore)
+  const scPattern = /\b([a-z][a-z0-9]*_[a-z0-9_]{2,})\b/gi;
+  while ((m = scPattern.exec(text)) !== null) {
+    const candidate = m[1].toLowerCase();
+    // Filter out common prose/non-object patterns
+    const exclude = new Set([
+      "work_order", "work_orders", "auto_start", "auto_approve",
+      "this_is", "can_be", "will_be", "should_be", "must_be",
+      "end_to", "one_of", "each_of", "all_of", "any_of",
+    ]);
+    if (!exclude.has(candidate)) {
+      terms.add(candidate);
+    }
+  }
+
+  return Array.from(terms);
 }
 
 /**
