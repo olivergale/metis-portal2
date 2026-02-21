@@ -288,3 +288,20 @@ jobs:
             echo "::error::Some functions failed smoke tests and were rolled back"
             exit 1
           fi
+
+      - name: Sync CMDB after deploy
+        if: steps.changed.outputs.count != '0' && !failure()
+        env:
+          SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "Syncing CMDB edge function call graph..."
+          RESULT=$(curl -s -X POST "$SUPABASE_URL/rest/v1/rpc/sync_edge_function_call_graph" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 30 2>/dev/null || echo '{"error":"timeout"}')
+          echo "CMDB sync result: $RESULT"
+          echo "### CMDB Sync" >> $GITHUB_STEP_SUMMARY
+          echo "Edge function call graph refreshed after deploy" >> $GITHUB_STEP_SUMMARY
