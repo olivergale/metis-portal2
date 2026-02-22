@@ -612,7 +612,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
   {
     name: "update_qa_checklist",
     description:
-      "Update a specific QA checklist item's status (pass/fail/na) with evidence. The qa_checklist lives on the work_orders table as JSONB. Each item has an id, criterion, status, and evidence field.",
+      "Update QA checklist item(s) status (pass/fail/na) with evidence. The qa_checklist lives on the work_orders table as JSONB. BATCH MODE (preferred): pass 'items' array to update all N items in one call. SINGLE MODE: pass checklist_item_id + status for one item.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -622,19 +622,32 @@ export const TOOL_DEFINITIONS: Tool[] = [
         },
         checklist_item_id: {
           type: "string",
-          description: "The id of the checklist item to update (from qa_checklist array)",
+          description: "[Single mode] The id of the checklist item to update (from qa_checklist array)",
         },
         status: {
           type: "string",
-          description: "New status for the item",
+          description: "[Single mode] New status for the item",
           enum: ["pass", "fail", "na"],
         },
         evidence_summary: {
           type: "string",
-          description: "Evidence supporting the status (e.g. SQL query result, verification details)",
+          description: "[Single mode] Evidence supporting the status (e.g. SQL query result, verification details)",
+        },
+        items: {
+          type: "array",
+          description: "[Batch mode] Array of items to update in one call. Use this to update ALL N checklist items at once instead of calling the tool N times.",
+          items: {
+            type: "object",
+            properties: {
+              checklist_item_id: { type: "string", description: "The id of the checklist item" },
+              status: { type: "string", enum: ["pass", "fail", "na"], description: "New status" },
+              evidence_summary: { type: "string", description: "Evidence supporting the status" },
+            },
+            required: ["checklist_item_id", "status"],
+          },
         },
       },
-      required: ["checklist_item_id", "status"],
+      required: [],
     },
   },
   {

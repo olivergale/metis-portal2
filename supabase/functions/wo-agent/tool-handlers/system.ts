@@ -327,13 +327,27 @@ export async function handleUpdateQaChecklist(
   ctx: ToolContext
 ): Promise<ToolResult> {
   const woId = input.work_order_id || ctx.workOrderId;
-  const { checklist_item_id, status, evidence_summary } = input;
+  const { checklist_item_id, status, evidence_summary, items } = input;
 
-  if (!checklist_item_id || !status) {
-    return { success: false, error: "Missing required: checklist_item_id, status" };
+  // Batch mode: items is an array of {checklist_item_id, status, evidence_summary}
+  // Single mode: checklist_item_id + status (backwards-compatible)
+  const isBatch = Array.isArray(items) && items.length > 0;
+
+  if (!isBatch && (!checklist_item_id || !status)) {
+    return { success: false, error: "Missing required: checklist_item_id + status, or items array" };
   }
-  if (!["pass", "fail", "na"].includes(status)) {
+  if (!isBatch && !["pass", "fail", "na"].includes(status)) {
     return { success: false, error: "status must be pass, fail, or na" };
+  }
+  if (isBatch) {
+    for (const it of items) {
+      if (!it.checklist_item_id || !it.status) {
+        return { success: false, error: `Each item requires checklist_item_id and status. Bad item: ${JSON.stringify(it)}` };
+      }
+      if (!["pass", "fail", "na"].includes(it.status)) {
+        return { success: false, error: `status must be pass, fail, or na. Got: ${it.status}` };
+      }
+    }
   }
 
   try {
@@ -349,15 +363,33 @@ export async function handleUpdateQaChecklist(
     }
 
     const checklist = wo.qa_checklist || [];
-    const item = checklist.find((c: any) => c.id === checklist_item_id);
-    if (!item) {
-      return { success: false, error: `Checklist item ${checklist_item_id} not found` };
-    }
+    const updatedIds: string[] = [];
+    const notFoundIds: string[] = [];
 
-    // Update the item
-    item.status = status;
-    item.evidence = evidence_summary || item.evidence;
-    item.evaluated_at = new Date().toISOString();
+    if (isBatch) {
+      // Batch update: apply all items in one pass
+      for (const it of items) {
+        const checklistItem = checklist.find((c: any) => c.id === it.checklist_item_id);
+        if (!checklistItem) {
+          notFoundIds.push(it.checklist_item_id);
+          continue;
+        }
+        checklistItem.status = it.status;
+        checklistItem.evidence = it.evidence_summary || checklistItem.evidence;
+        checklistItem.evaluated_at = new Date().toISOString();
+        updatedIds.push(it.checklist_item_id);
+      }
+    } else {
+      // Single item update (backwards-compatible)
+      const item = checklist.find((c: any) => c.id === checklist_item_id);
+      if (!item) {
+        return { success: false, error: `Checklist item ${checklist_item_id} not found` };
+      }
+      item.status = status;
+      item.evidence = evidence_summary || item.evidence;
+      item.evaluated_at = new Date().toISOString();
+      updatedIds.push(checklist_item_id);
+    }
 
     // Write back
     const { error: writeErr } = await ctx.supabase
@@ -369,6 +401,11 @@ export async function handleUpdateQaChecklist(
       return { success: false, error: `Update checklist failed: ${writeErr.message}` };
     }
 
+    if (isBatch) {
+      const msg = `Updated ${updatedIds.length}/${items.length} checklist items`
+        + (notFoundIds.length > 0 ? `. Not found: ${notFoundIds.join(", ")}` : "");
+      return { success: true, data: msg };
+    }
     return { success: true, data: `Checklist item ${checklist_item_id} -- ${status}` };
   } catch (e: any) {
     return { success: false, error: `update_qa_checklist exception: ${e.message}` };
