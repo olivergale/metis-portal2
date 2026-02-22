@@ -55,15 +55,14 @@ deno run --allow-net --allow-read --allow-write=/workspace --allow-env \
   /app/health-server.ts &
 HEALTH_PID=$!
 
-# 4. If SPRITE_MODE=agent and WO context is provided, start immediately
-if [ "$SPRITE_MODE" = "agent" ] && [ -n "$WO_ID" ]; then
-  echo "[sprite] Auto-starting agent loop for WO $WO_SLUG..."
-  echo "running" > /workspace/.sprite-status
+# 4. Start agent based on SPRITE_MODE
+if [ -n "$WO_ID" ]; then
+  if [ "$SPRITE_MODE" = "opencode" ]; then
+    # OpenCode mode — uses OpenCode CLI with MCP servers
+    echo "[sprite] Auto-starting OpenCode agent for WO $WO_SLUG..."
+    echo "running" > /workspace/.sprite-status
 
-  # The agent runner is a Deno script that imports agent-loop.ts
-  # and runs the tool-use loop with direct filesystem access
-  if [ -f "/app/sprite-agent.ts" ]; then
-    deno run --allow-all /app/sprite-agent.ts 2>&1 | tee /var/log/sprite/agent.log
+    /app/opencode-runner.sh 2>&1 | tee /var/log/sprite/agent.log
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 0 ]; then
@@ -71,8 +70,24 @@ if [ "$SPRITE_MODE" = "agent" ] && [ -n "$WO_ID" ]; then
     else
       echo "failed" > /workspace/.sprite-status
     fi
-  else
-    echo "[sprite] No sprite-agent.ts found — waiting for /run signal"
+
+  elif [ "$SPRITE_MODE" = "agent" ]; then
+    # Legacy mode — custom Deno agent loop
+    echo "[sprite] Auto-starting Deno agent loop for WO $WO_SLUG..."
+    echo "running" > /workspace/.sprite-status
+
+    if [ -f "/app/sprite-agent.ts" ]; then
+      deno run --allow-all /app/sprite-agent.ts 2>&1 | tee /var/log/sprite/agent.log
+      EXIT_CODE=$?
+
+      if [ $EXIT_CODE -eq 0 ]; then
+        echo "completed" > /workspace/.sprite-status
+      else
+        echo "failed" > /workspace/.sprite-status
+      fi
+    else
+      echo "[sprite] No sprite-agent.ts found — waiting for /run signal"
+    fi
   fi
 fi
 

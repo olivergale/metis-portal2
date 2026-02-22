@@ -30,13 +30,23 @@ RUN curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase
 # 5. Claude Code CLI (via npm)
 RUN npm install -g @anthropic-ai/claude-code
 
+# 6. OpenCode CLI (Go binary — AI coding agent with MCP support)
+RUN curl -fsSL https://opencode.ai/install | bash \
+  && OPENCODE_BIN=$(find / -name "opencode" -type f -executable 2>/dev/null | head -1) \
+  && if [ -n "$OPENCODE_BIN" ] && [ "$OPENCODE_BIN" != "/usr/local/bin/opencode" ]; then \
+       mv "$OPENCODE_BIN" /usr/local/bin/opencode; \
+     fi \
+  && chmod +x /usr/local/bin/opencode \
+  && opencode --version
+
 # Workspace setup
 RUN mkdir -p /workspace /workspace/.mutations /var/log/sprite
 
 # Copy sprite runtime files
 WORKDIR /app
 COPY entrypoint.sh mutation-watcher.sh health-server.ts sprite-agent.ts ./
-RUN chmod +x entrypoint.sh mutation-watcher.sh
+COPY opencode-runner.sh generate-agents-md.sh opencode.json AGENTS.md ./
+RUN chmod +x entrypoint.sh mutation-watcher.sh opencode-runner.sh generate-agents-md.sh
 
 EXPOSE 8080
 

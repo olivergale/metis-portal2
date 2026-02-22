@@ -6,7 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const FLY_API_BASE = "https://api.machines.dev/v1";
 const FLY_APP = "endgame-sprite";
-const SPRITE_IMAGE = "registry.fly.io/endgame-sprite:deployment-01KHRV5VBEBQCCDS6N5P15918K";
+const SPRITE_IMAGE = "registry.fly.io/endgame-sprite:deployment-01KJ1T4M1V4HYV31FXR24YPJRT";
 const REGION = "iad";
 
 interface DispatchPayload {
@@ -73,7 +73,7 @@ Deno.serve(async (req: Request) => {
     const { data: secrets } = await supabase
       .from("secrets")
       .select("key, value")
-      .in("key", ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "OPENROUTER_API_KEY"]);
+      .in("key", ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "OPENROUTER_API_KEY", "SUPABASE_ACCESS_TOKEN"]);
 
     const flyToken = settings?.find((s: { setting_key: string }) => s.setting_key === "fly_api_token")
       ?.setting_value?.replace(/^"/, "").replace(/"$/, "");
@@ -94,8 +94,9 @@ Deno.serve(async (req: Request) => {
     if (!secretMap["ANTHROPIC_API_KEY"]) secretMap["ANTHROPIC_API_KEY"] = Deno.env.get("ANTHROPIC_API_KEY") || "";
     if (!secretMap["GITHUB_TOKEN"]) secretMap["GITHUB_TOKEN"] = Deno.env.get("GITHUB_TOKEN") || "";
     if (!secretMap["OPENROUTER_API_KEY"]) secretMap["OPENROUTER_API_KEY"] = Deno.env.get("OPENROUTER_API_KEY") || "";
+    if (!secretMap["SUPABASE_ACCESS_TOKEN"]) secretMap["SUPABASE_ACCESS_TOKEN"] = Deno.env.get("SUPABASE_ACCESS_TOKEN") || "";
 
-    // Load agent model from agent_execution_profiles
+    // Load agent model + dispatch mode from agent_execution_profiles + dispatch config
     const { data: profile } = await supabase
       .from("agent_execution_profiles")
       .select("model")
@@ -103,6 +104,17 @@ Deno.serve(async (req: Request) => {
       .single();
 
     const agentModel = profile?.model || "minimax/minimax-m2.5";
+
+    // Check execution_dispatch_config for preferred dispatch type
+    const { data: dispatchConfig } = await supabase
+      .from("execution_dispatch_config")
+      .select("dispatch_type")
+      .eq("agent_name", "builder")
+      .eq("is_active", true)
+      .order("priority", { ascending: true })
+      .limit(1);
+
+    const spriteMode = dispatchConfig?.[0]?.dispatch_type === "opencode" ? "opencode" : "agent";
 
     // Build env vars for the Machine
     const envVars: Record<string, string> = {
@@ -114,8 +126,8 @@ Deno.serve(async (req: Request) => {
       WO_ACCEPTANCE_CRITERIA: woCtx.acceptance_criteria || "",
       WO_TAGS: JSON.stringify(woCtx.tags || []),
       WO_PRIORITY: woCtx.priority,
-      // Execution mode
-      SPRITE_MODE: "agent",
+      // Execution mode (opencode or agent based on dispatch config)
+      SPRITE_MODE: spriteMode,
       AGENT_MODEL: agentModel,
       // Supabase access (for mutations, transitions, tool calls)
       SUPABASE_URL: supabaseUrl,
@@ -126,6 +138,8 @@ Deno.serve(async (req: Request) => {
       // LLM access
       ANTHROPIC_API_KEY: secretMap["ANTHROPIC_API_KEY"] || "",
       OPENROUTER_API_KEY: secretMap["OPENROUTER_API_KEY"] || "",
+      // Supabase PAT for hosted MCP server (OpenCode mode)
+      SUPABASE_ACCESS_TOKEN: secretMap["SUPABASE_ACCESS_TOKEN"] || "",
     };
 
     // Create ephemeral Fly Machine

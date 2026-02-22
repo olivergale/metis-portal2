@@ -9,7 +9,7 @@ primary_region = "iad"
 
 [env]
   PORT = "8080"
-  SPRITE_MODE = "sandbox"  # Default to sandbox; override to "agent" for autonomous execution
+  SPRITE_MODE = "sandbox"  # "sandbox" (exec server), "agent" (Deno loop), "opencode" (OpenCode CLI)
 
 [http_service]
   internal_port = 8080
